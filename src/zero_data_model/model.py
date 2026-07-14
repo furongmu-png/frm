@@ -13,6 +13,8 @@ from .math_universe import MathematicalUniverse
 from .capabilities.nlp import TextEncoder, SemanticComparator, ZeroShotClassifier, TextGenerator
 from .capabilities.vision import ImageEncoder, FeatureExtractor, PatternRecognizer, ShapeAnalyzer
 from .capabilities.analytics import TimeSeriesForecaster, AnomalyDetector, PatternMiner, TrendAnalyzer
+from .hardware.parallel import ParallelExecutor
+from .hardware import accel as _accel
 
 
 class ZeroDataModel:
@@ -62,11 +64,27 @@ class ZeroDataModel:
         self.analytics_anomaly = AnomalyDetector(dim=dim, active_inference=self.active_inference)
         self.analytics_miner = PatternMiner(dim=dim, biological=self.biological, math_universe=self.math_universe)
         self.analytics_trend = TrendAnalyzer(dim=dim, math_universe=self.math_universe, category_engine=self.category_engine)
+        # Hardware acceleration: parallel module execution + GPU-aware arrays.
+        self.parallel_executor = ParallelExecutor()
         self.cycle_count = 0
+
+    @property
+    def hardware_info(self) -> dict:
+        """Report the active hardware backends for diagnostics."""
+        return {
+            "array_backend": _accel.backend_name(),
+            "gpu": _accel.has_gpu,
+            "quantum_backend": self.quantum_hybrid.quantum_backend_name,
+            "annealer_jit": getattr(self.quantum_hybrid.annealer, "jit", False),
+            **self.parallel_executor.info,
+        }
 
     def think(self, input_data: np.ndarray | None = None) -> Signal:
         """
         Process a thought cycle. If no input, self-generates from internal state.
+
+        Module ``process`` and ``predict`` steps run concurrently via the
+        parallel executor when multiple cores are available.
         """
         if input_data is None:
             signal = self._self_generate()
@@ -75,19 +93,20 @@ class ZeroDataModel:
             padded[: len(input_data)] = input_data[: self.dim]
             signal = Signal(data=padded)
 
-        results = []
-        for module in self.modules:
-            result = module.process(signal)
-            results.append(result)
+        # Parallel module processing.
+        results = self.parallel_executor.map_modules(self.modules, signal)
 
         integrated = self._integrate(results)
         reflection = self.consciousness.reflect()
 
-        pred_errors = []
+        # Parallel prediction.
+        preds = self.parallel_executor.map(
+            lambda m: m.predict(integrated), self.modules
+        )
+        pred_errors = [p.uncertainty for p in preds]
+        mean_err = float(np.mean(pred_errors)) if pred_errors else 0.0
         for module in self.modules:
-            pred = module.predict(integrated)
-            pred_errors.append(pred.uncertainty)
-            module.update(float(np.mean(pred_errors)))
+            module.update(mean_err)
 
         self.cycle_count += 1
         return Signal(

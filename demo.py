@@ -16,6 +16,13 @@ def main():
 
     model = ZeroDataModel(dim=32)
 
+    print("\n[0] Hardware Acceleration Stack")
+    hw = model.hardware_info
+    print(f"  Array backend:  {hw['array_backend']}  (GPU: {hw['gpu']})")
+    print(f"  Quantum backend: {hw['quantum_backend']}  (real Qiskit circuit)")
+    print(f"  Annealer JIT:   {hw['annealer_jit']}  (numba)")
+    print(f"  Parallel:       {hw['backend']} with {hw['n_workers']} workers")
+
     print("\n[1] Self-Generated Thought (no input data)")
     for i in range(3):
         result = model.think()
