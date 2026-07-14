@@ -12,6 +12,13 @@ import numpy as np
 from .base import Signal, Prediction, CognitiveModule
 from .hardware.quantum import get_quantum_backend, QuantumBackend
 
+# JIT kernels -- graceful fallback to pure numpy if numba missing.
+try:
+    from .hardware.kernels import _quantum_classical_forward
+    _HAS_KERNELS_JIT = True
+except ImportError:  # pragma: no cover - optional dependency
+    _HAS_KERNELS_JIT = False
+
 
 class VariationalQuantumCircuit:
     """Variational quantum circuit backed by Qiskit (or a simulator fallback).
@@ -151,7 +158,13 @@ class QuantumClassicalHybrid(CognitiveModule):
         quantum_features = self.quantum_circuit.evolve(x[: 2 * self.n_qubits])
         qf = np.zeros(self.dim)
         qf[: len(quantum_features)] = quantum_features[: self.dim]
-        classical = np.tanh(x @ self.classical_weights)
+        if _HAS_KERNELS_JIT:
+            classical = _quantum_classical_forward(
+                np.ascontiguousarray(x, dtype=float),
+                np.ascontiguousarray(self.classical_weights, dtype=float),
+            )
+        else:
+            classical = np.tanh(x @ self.classical_weights)
         combined = 0.3 * qf + 0.7 * classical
         return Signal(
             data=combined,
@@ -162,7 +175,13 @@ class QuantumClassicalHybrid(CognitiveModule):
         x = signal.data[: self.dim]
         if len(x) < self.dim:
             x = np.pad(x, (0, self.dim - len(x)))
-        predicted = np.tanh(x @ self.classical_weights)
+        if _HAS_KERNELS_JIT:
+            predicted = _quantum_classical_forward(
+                np.ascontiguousarray(x, dtype=float),
+                np.ascontiguousarray(self.classical_weights, dtype=float),
+            )
+        else:
+            predicted = np.tanh(x @ self.classical_weights)
         return Prediction(value=predicted, uncertainty=float(np.var(predicted)))
 
     def update(self, prediction_error: float) -> None:

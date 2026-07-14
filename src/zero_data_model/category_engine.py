@@ -6,6 +6,13 @@ import numpy as np
 from dataclasses import dataclass, field
 from .base import Signal, Prediction, CognitiveModule
 
+# JIT kernels -- graceful fallback to pure numpy if numba missing.
+try:
+    from .hardware.kernels import _cosine_similarity, _topos_classify
+    _HAS_JIT = True
+except ImportError:  # pragma: no cover - optional dependency
+    _HAS_JIT = False
+
 
 @dataclass
 class Category:
@@ -55,6 +62,11 @@ class ToposEngine:
         s = signal[: self.dim]
         if len(s) < self.dim:
             s = np.pad(s, (0, self.dim - len(s)))
+        if _HAS_JIT:
+            return _topos_classify(
+                np.ascontiguousarray(s, dtype=float),
+                np.ascontiguousarray(self.classifier, dtype=float),
+            )
         return 1.0 / (1.0 + np.exp(-s @ self.classifier))
 
 
@@ -96,6 +108,11 @@ class CategoryTheoryEngine(CognitiveModule):
             a = np.pad(a, (0, self.dim - len(a)))
         if len(b) < self.dim:
             b = np.pad(b, (0, self.dim - len(b)))
+        if _HAS_JIT:
+            return float(_cosine_similarity(
+                np.ascontiguousarray(a, dtype=float),
+                np.ascontiguousarray(b, dtype=float),
+            ))
         cos_sim = np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b) + 1e-8)
         return float(cos_sim)
 

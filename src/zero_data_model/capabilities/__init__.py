@@ -31,6 +31,37 @@ try:  # pragma: no cover - optional sibling module
 except ImportError:
     pass
 
+# Advanced capability modules (multilingual NLP, point clouds / video / depth,
+# causal inference / Bayesian updating / change-point detection). Same optional
+# import guard as the base modules so the package stays importable if a sibling
+# advanced module is removed.
+try:  # pragma: no cover - optional sibling module
+    from .nlp_advanced import (
+        MultiLingualEncoder,
+        SyntacticAnalyzer,
+        SentenceEncoder,
+    )
+except ImportError:
+    pass
+
+try:  # pragma: no cover - optional sibling module
+    from .vision_advanced import (
+        PointCloudEncoder,
+        VideoFrameAnalyzer,
+        DepthEstimator,
+    )
+except ImportError:
+    pass
+
+try:  # pragma: no cover - optional sibling module
+    from .analytics_advanced import (
+        CausalInference,
+        BayesianEstimator,
+        ChangePointDetector,
+    )
+except ImportError:
+    pass
+
 __all__ = [
     "DomainRules",
     "NLPRules",
@@ -48,4 +79,16 @@ __all__ = [
     "AnomalyDetector",
     "PatternMiner",
     "TrendAnalyzer",
+    # Advanced NLP capabilities.
+    "MultiLingualEncoder",
+    "SyntacticAnalyzer",
+    "SentenceEncoder",
+    # Advanced CV capabilities.
+    "PointCloudEncoder",
+    "VideoFrameAnalyzer",
+    "DepthEstimator",
+    # Advanced Analytics capabilities.
+    "CausalInference",
+    "BayesianEstimator",
+    "ChangePointDetector",
 ]

@@ -13,6 +13,22 @@ from .math_universe import MathematicalUniverse
 from .capabilities.nlp import TextEncoder, SemanticComparator, ZeroShotClassifier, TextGenerator
 from .capabilities.vision import ImageEncoder, FeatureExtractor, PatternRecognizer, ShapeAnalyzer
 from .capabilities.analytics import TimeSeriesForecaster, AnomalyDetector, PatternMiner, TrendAnalyzer
+from .capabilities.nlp_advanced import (
+    MultiLingualEncoder,
+    SyntacticAnalyzer,
+    SentenceEncoder,
+)
+from .capabilities.vision_advanced import (
+    PointCloudEncoder,
+    VideoFrameAnalyzer,
+    DepthEstimator,
+)
+from .capabilities.analytics_advanced import (
+    CausalInference,
+    BayesianEstimator,
+    ChangePointDetector,
+)
+from .capabilities.rules import NLPRules, VisionRules, AnalyticsRules
 from .hardware.parallel import ParallelExecutor
 from .hardware import accel as _accel
 
@@ -64,6 +80,21 @@ class ZeroDataModel:
         self.analytics_anomaly = AnomalyDetector(dim=dim, active_inference=self.active_inference)
         self.analytics_miner = PatternMiner(dim=dim, biological=self.biological, math_universe=self.math_universe)
         self.analytics_trend = TrendAnalyzer(dim=dim, math_universe=self.math_universe, category_engine=self.category_engine)
+        # Rule libraries reused by the advanced capabilities below.
+        self.nlp_rules = NLPRules()
+        self.vision_rules = VisionRules()
+        self.analytics_rules = AnalyticsRules()
+        # Advanced domain capabilities (reuse the existing core module
+        # instances: math_universe, biological, active_inference, rules).
+        self.nlp_multilingual = MultiLingualEncoder(dim=dim, rules=self.nlp_rules)
+        self.nlp_syntactic = SyntacticAnalyzer(dim=dim, rules=self.nlp_rules)
+        self.nlp_sentence_encoder = SentenceEncoder(dim=dim, rules=self.nlp_rules)
+        self.vision_point_cloud = PointCloudEncoder(dim=dim, math_universe=self.math_universe)
+        self.vision_video = VideoFrameAnalyzer(dim=dim, biological=self.biological, math_universe=self.math_universe)
+        self.vision_depth = DepthEstimator(dim=dim, math_universe=self.math_universe)
+        self.analytics_causal = CausalInference(dim=dim, active_inference=self.active_inference, rules=self.analytics_rules)
+        self.analytics_bayesian = BayesianEstimator(dim=dim, active_inference=self.active_inference)
+        self.analytics_changepoint = ChangePointDetector(dim=dim, active_inference=self.active_inference, rules=self.analytics_rules)
         # Hardware acceleration: parallel module execution + GPU-aware arrays.
         self.parallel_executor = ParallelExecutor()
         self.cycle_count = 0
@@ -202,3 +233,53 @@ class ZeroDataModel:
     def analyze_trend(self, series: np.ndarray) -> dict:
         """Analyze trend, regime, curvature, geodesic deviation, isomorphism."""
         return self.analytics_trend.analyze(series)
+
+    # --- Advanced NLP capabilities ---
+
+    def detect_script(self, text: str) -> str:
+        """Detect the dominant script of ``text`` (latin/cyrillic/cjk/arabic/mixed)."""
+        return self.nlp_multilingual.detect_script(text)
+
+    def encode_multilingual(self, text: str) -> np.ndarray:
+        """Encode ``text`` into a script-aware dim-length vector (L2-normalized)."""
+        return self.nlp_multilingual.encode(text)
+
+    def analyze_syntax(self, text: str) -> dict:
+        """Rule-based syntactic analysis (sentences, POS guesses, SVO hint)."""
+        return self.nlp_syntactic.analyze(text)
+
+    def encode_sentences(self, text: str) -> np.ndarray:
+        """Encode each sentence of ``text`` into its own dim-length vector."""
+        return self.nlp_sentence_encoder.encode(text)
+
+    # --- Advanced Vision capabilities ---
+
+    def encode_point_cloud(self, points: np.ndarray) -> np.ndarray:
+        """Encode a 3D point cloud (Nx3) into a dim-length L2-normalized vector."""
+        return self.vision_point_cloud.encode(points)
+
+    def analyze_video(self, frames) -> dict:
+        """Analyze a sequence of 2D frames (motion, keyframes, temporal encoding)."""
+        return self.vision_video.analyze(frames)
+
+    def estimate_depth(self, image: np.ndarray) -> dict:
+        """Estimate a monocular depth map from a single 2D image (rule-based)."""
+        return self.vision_depth.estimate(image)
+
+    # --- Advanced Analytics capabilities ---
+
+    def infer_cause(self, cause: np.ndarray, effect: np.ndarray, max_lag: int = 5) -> dict:
+        """Granger-style causal inference between two series (no statsmodels)."""
+        return self.analytics_causal.infer_cause(cause, effect, max_lag=max_lag)
+
+    def bayesian_update(self, obs) -> None:
+        """Online Bayesian posterior update from a single observation."""
+        self.analytics_bayesian.update(obs)
+
+    def bayesian_predictive(self) -> tuple[float, float]:
+        """Return ``(mean, std)`` of the Bayesian posterior predictive distribution."""
+        return self.analytics_bayesian.predictive()
+
+    def detect_change_points(self, series: np.ndarray) -> np.ndarray:
+        """Detect distributional change points in ``series`` (returns int indices)."""
+        return self.analytics_changepoint.detect(series)

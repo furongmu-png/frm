@@ -1,0 +1,7 @@
+# MANIFEST.in — extra files to include in the source distribution (sdist).
+include README.md
+include LICENSE
+include benchmark.py
+include demo.py
+recursive-include docs *
+recursive-include examples *

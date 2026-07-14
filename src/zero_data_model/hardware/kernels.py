@@ -1,0 +1,219 @@
+"""Numba-JIT numeric kernels for the zero-data cognitive model.
+
+Each kernel is a ``@njit(cache=True)`` function that takes only numpy arrays
+and primitive types, returning numpy arrays or scalars. When numba is not
+installed, pure-numpy reference implementations are exposed under the same
+names so callers can ``try: from .kernels import _foo`` and degrade
+gracefully.
+
+Kernel index
+------------
+- ``_predictive_layer_forward(x, W, b, activation)`` — forward pass with tanh/relu.
+- ``_cosine_similarity(a, b)`` — cosine similarity for find_isomorphism.
+- ``_topos_classify(x, classifier)`` — sigmoid(x @ classifier).
+- ``_cellular_automata_step(state, rule, size)`` — Wolfram rule over all cells in one JIT pass.
+- ``_morphogenetic_laplacian(grid)`` — 5-point Laplacian (no temporaries).
+- ``_kl_divergence(p_abs, q_abs)`` — KL divergence on already-|x|+eps inputs.
+- ``_betti_numbers(sorted_vals, max_radius)`` — gap-detection persistent homology loop.
+- ``_fractal_generate(x, scales, offsets, n_iterations)`` — fused matmul+tanh iterations.
+- ``_quantum_classical_forward(x, W)`` — tanh(x @ W) for QuantumClassicalHybrid.
+
+A module-level ``HAS_NUMBA`` flag is exported so callers can advertise which
+path is active (mirrors the existing ``hardware/quantum.py`` pattern).
+"""
+
+from __future__ import annotations
+
+import numpy as np
+
+try:  # pragma: no cover - optional dependency
+    from numba import njit
+
+    HAS_NUMBA = True
+except ImportError:  # pragma: no cover
+    HAS_NUMBA = False
+
+    def njit(*args, **kwargs):  # type: ignore[no-redef]
+        """Pure-numpy fallback decorator: returns the function unchanged."""
+
+        def _decorator(fn):
+            return fn
+
+        if len(args) == 1 and callable(args[0]) and not kwargs:
+            return args[0]
+        return _decorator
+
+
+# ---------------------------------------------------------------------------
+# PredictiveLayer forward pass
+# ---------------------------------------------------------------------------
+
+
+@njit(cache=True)
+def _predictive_layer_forward(x, W, b, activation):
+    """Forward pass: ``z = x @ W + b`` then tanh or relu (clip to >=0)."""
+    z = x @ W + b
+    if activation == "tanh":
+        return np.tanh(z)
+    return np.maximum(z, 0.0)
+
+
+# ---------------------------------------------------------------------------
+# Cosine similarity (find_isomorphism)
+# ---------------------------------------------------------------------------
+
+
+@njit(cache=True)
+def _cosine_similarity(a, b):
+    """Cosine similarity ``dot(a,b) / (|a||b| + 1e-8)`` — single JIT pass."""
+    dot = 0.0
+    norm_a = 0.0
+    norm_b = 0.0
+    n = len(a)
+    for i in range(n):
+        ai = a[i]
+        bi = b[i]
+        dot += ai * bi
+        norm_a += ai * ai
+        norm_b += bi * bi
+    return dot / (np.sqrt(norm_a) * np.sqrt(norm_b) + 1e-8)
+
+
+# ---------------------------------------------------------------------------
+# Topos classifier (sigmoid)
+# ---------------------------------------------------------------------------
+
+
+@njit(cache=True)
+def _topos_classify(x, classifier):
+    """Element-wise sigmoid of ``x @ classifier``."""
+    z = x @ classifier
+    out = np.empty_like(z)
+    n = len(z)
+    for i in range(n):
+        out[i] = 1.0 / (1.0 + np.exp(-z[i]))
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Cellular automaton — Wolfram rule over all cells in one JIT pass.
+# ---------------------------------------------------------------------------
+
+
+@njit(cache=True)
+def _cellular_automata_step(state, rule, size):
+    """Apply a Wolfram elementary CA rule to every cell, returning the new state.
+
+    Boundary is periodic (matches the original ``% size`` indexing).
+    """
+    new_state = np.zeros(size, dtype=state.dtype)
+    for i in range(size):
+        left = state[(i - 1) % size]
+        center = state[i]
+        right = state[(i + 1) % size]
+        index = (left << 2) | (center << 1) | right
+        new_state[i] = (rule >> index) & 1
+    return new_state
+
+
+# ---------------------------------------------------------------------------
+# Morphogenetic 5-point Laplacian (fused — no np.roll temporaries).
+# ---------------------------------------------------------------------------
+
+
+@njit(cache=True)
+def _morphogenetic_laplacian(grid):
+    """5-point periodic Laplacian on a 2D grid (matches np.roll boundary wrap)."""
+    n = grid.shape[0]
+    m = grid.shape[1]
+    laplacian = np.empty_like(grid)
+    for i in range(n):
+        ip1 = (i + 1) % n
+        im1 = (i - 1) % n
+        for j in range(m):
+            jp1 = (j + 1) % m
+            jm1 = (j - 1) % m
+            laplacian[i, j] = (
+                grid[ip1, j]
+                + grid[im1, j]
+                + grid[i, jp1]
+                + grid[i, jm1]
+                - 4.0 * grid[i, j]
+            )
+    return laplacian
+
+
+# ---------------------------------------------------------------------------
+# KL divergence (assumes inputs are already |x| + 1e-8).
+# ---------------------------------------------------------------------------
+
+
+@njit(cache=True)
+def _kl_divergence(p_abs, q_abs):
+    """KL(p || q) for already-absolute, eps-perturbed inputs.
+
+    The caller is responsible for ``p_abs = np.abs(p[:dim]) + 1e-8`` (and
+    likewise for ``q_abs``) — matching the original InformationGeometry.kl.
+    """
+    n = len(p_abs)
+    p_sum = 0.0
+    q_sum = 0.0
+    for i in range(n):
+        p_sum += p_abs[i]
+        q_sum += q_abs[i]
+    total = 0.0
+    for i in range(n):
+        p_norm = p_abs[i] / p_sum
+        q_norm = q_abs[i] / q_sum
+        total += p_norm * np.log(p_norm / q_norm)
+    return total
+
+
+# ---------------------------------------------------------------------------
+# Betti numbers via gap detection.
+# ---------------------------------------------------------------------------
+
+
+@njit(cache=True)
+def _betti_numbers(sorted_vals, max_radius):
+    """Compute (betti_0, betti_1) from sorted values + gap threshold."""
+    n_points = len(sorted_vals)
+    betti_0 = 1
+    threshold = max_radius / n_points
+    for i in range(1, n_points):
+        gap = sorted_vals[i] - sorted_vals[i - 1]
+        if gap > threshold:
+            betti_0 += 1
+    betti_1 = n_points - betti_0
+    if betti_1 < 0:
+        betti_1 = 0
+    return betti_0, betti_1
+
+
+# ---------------------------------------------------------------------------
+# Fractal generator — fused matmul + tanh over n_iterations.
+# ---------------------------------------------------------------------------
+
+
+@njit(cache=True)
+def _fractal_generate(x, scales, offsets, n_iterations, n_transforms):
+    """Iteratively apply ``x = tanh(scales[t % n_t] @ x + offsets[t % n_t])``."""
+    out = x.copy()
+    for it in range(n_iterations):
+        t_idx = it % n_transforms
+        # matmul of (dim, dim) @ (dim,) -> (dim,) plus bias.
+        new_out = scales[t_idx] @ out + offsets[t_idx]
+        for i in range(len(out)):
+            out[i] = np.tanh(new_out[i])
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Quantum-classical hybrid forward (tanh(x @ W)).
+# ---------------------------------------------------------------------------
+
+
+@njit(cache=True)
+def _quantum_classical_forward(x, W):
+    """``tanh(x @ W)`` for the QuantumClassicalHybrid classical path."""
+    return np.tanh(x @ W)

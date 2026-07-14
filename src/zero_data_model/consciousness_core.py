@@ -6,6 +6,13 @@ import numpy as np
 from dataclasses import dataclass, field
 from .base import Signal, Prediction, CognitiveModule
 
+# JIT kernels -- graceful fallback to pure numpy if numba missing.
+try:
+    from .hardware.kernels import _predictive_layer_forward
+    _HAS_JIT = True
+except ImportError:  # pragma: no cover - optional dependency
+    _HAS_JIT = False
+
 
 @dataclass
 class PredictiveLayer:
@@ -15,6 +22,13 @@ class PredictiveLayer:
     activation: str = "tanh"
 
     def predict(self, x: np.ndarray) -> np.ndarray:
+        if _HAS_JIT:
+            return _predictive_layer_forward(
+                np.ascontiguousarray(x, dtype=float),
+                np.ascontiguousarray(self.weights, dtype=float),
+                np.ascontiguousarray(self.bias, dtype=float),
+                self.activation,
+            )
         z = x @ self.weights + self.bias
         if self.activation == "tanh":
             return np.tanh(z)

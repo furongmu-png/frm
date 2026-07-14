@@ -6,6 +6,13 @@ import numpy as np
 import scipy.stats
 from .base import Signal, Prediction, CognitiveModule
 
+# JIT kernels -- graceful fallback to pure numpy if numba missing.
+try:
+    from .hardware.kernels import _kl_divergence, _betti_numbers, _fractal_generate
+    _HAS_JIT = True
+except ImportError:  # pragma: no cover - optional dependency
+    _HAS_JIT = False
+
 
 class InformationGeometry:
     """Fisher information metric and geodesics on probability simplices."""
@@ -30,6 +37,11 @@ class InformationGeometry:
     def kl_divergence(self, p: np.ndarray, q: np.ndarray) -> float:
         p_abs = np.abs(p[: self.dim]) + 1e-8
         q_abs = np.abs(q[: self.dim]) + 1e-8
+        if _HAS_JIT:
+            return float(_kl_divergence(
+                np.ascontiguousarray(p_abs, dtype=float),
+                np.ascontiguousarray(q_abs, dtype=float),
+            ))
         p_norm = p_abs / np.sum(p_abs)
         q_norm = q_abs / np.sum(q_abs)
         return float(np.sum(p_norm * np.log(p_norm / q_norm)))
@@ -45,6 +57,12 @@ class TopologicalAnalyzer:
         d = data.flatten()[: self.dim]
         sorted_vals = np.sort(d)
         n_points = len(sorted_vals)
+        if _HAS_JIT:
+            betti_0, betti_1 = _betti_numbers(
+                np.ascontiguousarray(sorted_vals, dtype=float),
+                float(max_radius),
+            )
+            return {0: int(betti_0), 1: int(betti_1)}
         betti_0 = 1
         for i in range(1, n_points):
             gap = sorted_vals[i] - sorted_vals[i - 1]
@@ -83,6 +101,16 @@ class FractalGenerator:
         x = initial[: self.dim].copy()
         if len(x) < self.dim:
             x = np.pad(x, (0, self.dim - len(x)))
+        if _HAS_JIT:
+            scales = np.stack([t[0] for t in self.transforms])
+            offsets = np.stack([t[1] for t in self.transforms])
+            return _fractal_generate(
+                np.ascontiguousarray(x, dtype=float),
+                np.ascontiguousarray(scales, dtype=float),
+                np.ascontiguousarray(offsets, dtype=float),
+                int(n_iterations),
+                int(len(self.transforms)),
+            )
         for _ in range(n_iterations):
             transform = self.transforms[_ % len(self.transforms)]
             x = transform[0] @ x + transform[1]

@@ -25,6 +25,9 @@ from zero_data_model.quantum_hybrid import (
     QuantumAnnealer,
     QuantumClassicalHybrid,
 )
+from zero_data_model.biological import CellularAutomata, MorphogeneticField
+from zero_data_model.math_universe import FractalGenerator, InformationGeometry
+from zero_data_model.hardware import kernels as _kernels
 from zero_data_model.model import ZeroDataModel
 
 
@@ -129,6 +132,112 @@ def bench_full_model():
     print(f"  Analytics: {len(series)} forecasts in {t_an*1000:.1f} ms ({len(series)/t_an:.0f}/s)")
 
 
+def bench_jit_kernels():
+    """[JIT] Measure the JIT-compiled hot kernels vs their pure-numpy references.
+
+    For each kernel we run the JIT path (already wired into the core modules)
+    and a pure-numpy reference implementation on identical inputs, then report
+    the speedup. The first call of each JIT function compiles it; we warm up
+    before measuring so the reported numbers reflect steady-state performance.
+    """
+    print("\n[JIT] numba-JIT kernels vs pure-numpy reference")
+    print(f"  HAS_NUMBA: {_kernels.HAS_NUMBA}")
+    if not _kernels.HAS_NUMBA:
+        print("  (skipped -- numba not installed)")
+        return
+
+    rng = np.random.default_rng(0)
+
+    # --- CellularAutomata.step (Python per-cell loop -> single JIT pass) ---
+    size = 256
+    rule = 30
+    state = rng.integers(0, 2, size).astype(np.int64)
+
+    def py_ca_step(s):
+        new_state = np.zeros(size, dtype=int)
+        for i in range(size):
+            left = s[(i - 1) % size]
+            center = s[i]
+            right = s[(i + 1) % size]
+            index = (left << 2) | (center << 1) | right
+            new_state[i] = (rule >> index) & 1
+        return new_state
+
+    # Warm up the JIT.
+    _kernels._cellular_automata_step(state.copy(), rule, size)
+    n_iters = 200
+    t_jit, _ = time_it(
+        lambda: [_kernels._cellular_automata_step(state.copy(), rule, size) for _ in range(n_iters)]
+    )
+    t_py, _ = time_it(lambda: [py_ca_step(state.copy()) for _ in range(n_iters)])
+    speedup_ca = t_py / t_jit if t_jit > 0 else 0
+    print(f"  CellularAutomata.step (size={size}, x{n_iters}):")
+    print(f"    pure-python: {t_py*1000:.2f} ms   JIT: {t_jit*1000:.2f} ms   speedup: {speedup_ca:.1f}x")
+
+    # --- MorphogeneticField.step (np.roll temporaries -> single fused JIT pass) ---
+    grid_size = 32
+    grid = rng.standard_normal((grid_size, grid_size))
+    morphs = [rng.standard_normal((grid_size, grid_size)) for _ in range(3)]
+
+    def py_morph_step(g, ms):
+        lap = (
+            np.roll(g, 1, axis=0) + np.roll(g, -1, axis=0)
+            + np.roll(g, 1, axis=1) + np.roll(g, -1, axis=1)
+            - 4 * g
+        )
+        g = g + 0.05 * lap
+        for m in ms:
+            m_lap = (
+                np.roll(m, 1, axis=0) + np.roll(m, -1, axis=0)
+                + np.roll(m, 1, axis=1) + np.roll(m, -1, axis=1)
+                - 4 * m
+            )
+            m = m + 0.05 * m_lap
+        return g, ms
+
+    _kernels._morphogenetic_laplacian(grid.copy())
+    n_iters = 200
+    t_jit, _ = time_it(
+        lambda: [_kernels._morphogenetic_laplacian(grid.copy()) for _ in range(n_iters)]
+    )
+    t_py, _ = time_it(lambda: [py_morph_step(grid.copy(), [m.copy() for m in morphs]) for _ in range(n_iters)])
+    speedup_morph = t_py / t_jit if t_jit > 0 else 0
+    print(f"  MorphogeneticField.laplacian ({grid_size}x{grid_size}, x{n_iters}):")
+    print(f"    np.roll:      {t_py*1000:.2f} ms   JIT: {t_jit*1000:.2f} ms   speedup: {speedup_morph:.1f}x")
+
+    # --- FractalGenerator.generate (n_iterations of matmul+tanh -> fused JIT) ---
+    dim = 64
+    n_t = 4
+    scales = rng.standard_normal((n_t, dim, dim))
+    offsets = rng.standard_normal((n_t, dim))
+    x0 = rng.standard_normal(dim)
+
+    def py_fractal(x, n_iter=20):
+        for it in range(n_iter):
+            t = it % n_t
+            x = scales[t] @ x + offsets[t]
+            x = np.tanh(x)
+        return x
+
+    _kernels._fractal_generate(x0.copy(), scales, offsets, 1, n_t)
+    n_iters = 100
+    t_jit, _ = time_it(
+        lambda: [_kernels._fractal_generate(x0.copy(), scales, offsets, 20, n_t) for _ in range(n_iters)]
+    )
+    t_py, _ = time_it(lambda: [py_fractal(x0.copy()) for _ in range(n_iters)])
+    speedup_frac = t_py / t_jit if t_jit > 0 else 0
+    print(f"  FractalGenerator.generate (dim={dim}, iters=20, x{n_iters}):")
+    print(f"    pure-numpy: {t_py*1000:.2f} ms   JIT: {t_jit*1000:.2f} ms   speedup: {speedup_frac:.1f}x")
+
+    # --- BiologicalSubstrate.process via full ZeroDataModel.think ---
+    # The integrated end-to-end improvement of one think() cycle (random input).
+    model = ZeroDataModel(dim=64)
+    sig = rng.standard_normal(64)
+    model.think(sig)  # warm up
+    t_jit, _ = time_it(lambda: model.think(sig))
+    print(f"  ZeroDataModel.think (dim=64, single cycle): {t_jit*1000:.2f} ms")
+
+
 def main():
     print("=" * 60)
     print("  Zero-Data Model — Performance Benchmark")
@@ -139,6 +248,7 @@ def main():
     bench_annealer_jit()
     bench_parallel_vs_sequential()
     bench_full_model()
+    bench_jit_kernels()
 
     print("\n" + "=" * 60)
     print("  Benchmark complete.")

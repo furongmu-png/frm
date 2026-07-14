@@ -5,6 +5,13 @@ from __future__ import annotations
 import numpy as np
 from .base import Signal, Prediction, CognitiveModule, KnowledgeStore
 
+# JIT kernels -- graceful fallback to pure numpy if numba missing.
+try:
+    from .hardware.kernels import _cellular_automata_step, _morphogenetic_laplacian
+    _HAS_JIT = True
+except ImportError:  # pragma: no cover - optional dependency
+    _HAS_JIT = False
+
 
 class DNAStorage(KnowledgeStore):
     """DNA-inspired knowledge storage using quaternary encoding (A=0, T=1, C=2, G=3)."""
@@ -62,18 +69,26 @@ class MorphogeneticField:
         self.diffusion_rate = 0.05
 
     def step(self) -> None:
-        laplacian = (
-            np.roll(self.grid, 1, axis=0) + np.roll(self.grid, -1, axis=0)
-            + np.roll(self.grid, 1, axis=1) + np.roll(self.grid, -1, axis=1)
-            - 4 * self.grid
-        )
+        if _HAS_JIT:
+            laplacian = _morphogenetic_laplacian(
+                np.ascontiguousarray(self.grid, dtype=float)
+            )
+        else:
+            laplacian = (
+                np.roll(self.grid, 1, axis=0) + np.roll(self.grid, -1, axis=0)
+                + np.roll(self.grid, 1, axis=1) + np.roll(self.grid, -1, axis=1)
+                - 4 * self.grid
+            )
         self.grid += self.diffusion_rate * laplacian
         for m in self.morphogens:
-            m_lap = (
-                np.roll(m, 1, axis=0) + np.roll(m, -1, axis=0)
-                + np.roll(m, 1, axis=1) + np.roll(m, -1, axis=1)
-                - 4 * m
-            )
+            if _HAS_JIT:
+                m_lap = _morphogenetic_laplacian(np.ascontiguousarray(m, dtype=float))
+            else:
+                m_lap = (
+                    np.roll(m, 1, axis=0) + np.roll(m, -1, axis=0)
+                    + np.roll(m, 1, axis=1) + np.roll(m, -1, axis=1)
+                    - 4 * m
+                )
             m += self.diffusion_rate * m_lap
 
     def develop(self, n_steps: int = 50) -> np.ndarray:
@@ -97,6 +112,14 @@ class CellularAutomata:
         return (self.rule >> index) & 1
 
     def step(self) -> None:
+        if _HAS_JIT:
+            # JIT path: all cells updated in one pass -- the biggest win.
+            self.state = _cellular_automata_step(
+                np.ascontiguousarray(self.state),
+                int(self.rule),
+                int(self.size),
+            )
+            return
         new_state = np.zeros(self.size, dtype=int)
         for i in range(self.size):
             left = self.state[(i - 1) % self.size]
