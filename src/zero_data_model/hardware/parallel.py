@@ -8,8 +8,9 @@ core or when joblib is missing, so behaviour is always correct.
 from __future__ import annotations
 
 import os
+from collections.abc import Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Callable, Iterable, TypeVar
+from typing import TypeVar
 
 try:  # pragma: no cover - optional dependency
     from joblib import Parallel, delayed

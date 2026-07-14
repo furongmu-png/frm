@@ -9,8 +9,6 @@ to JSON cleanly (FastAPI / pydantic cannot serialize numpy directly).
 
 from __future__ import annotations
 
-from typing import Optional
-
 import numpy as np
 from fastapi import Body, FastAPI, HTTPException
 from pydantic import BaseModel
@@ -20,7 +18,7 @@ from .persistence import ModelSerializer
 
 # Module-level singleton. Lazily initialized so importing the module is cheap
 # and the first request pays the construction cost.
-_model: Optional[ZeroDataModel] = None
+_model: ZeroDataModel | None = None
 
 
 def get_model() -> ZeroDataModel:
@@ -43,7 +41,7 @@ def set_model(model: ZeroDataModel) -> None:
 
 
 class ThinkRequest(BaseModel):
-    input: Optional[list[float]] = None
+    input: list[float] | None = None
 
 
 class ClassifyRequest(BaseModel):
@@ -155,7 +153,7 @@ def create_app() -> FastAPI:
         return HealthResponse(status="ok", hardware_info=model.hardware_info)
 
     @app.post("/think", response_model=ThinkResponse)
-    def think(req: Optional[ThinkRequest] = Body(default=None)) -> ThinkResponse:
+    def think(req: ThinkRequest | None = Body(default=None)) -> ThinkResponse:  # noqa: B008
         """Run one thought cycle. With no ``input`` the model self-generates."""
         model = get_model()
         body = req or ThinkRequest()
@@ -247,7 +245,7 @@ def create_app() -> FastAPI:
         try:
             ModelSerializer.save(model, req.path)
         except OSError as exc:
-            raise HTTPException(status_code=400, detail=f"save failed: {exc}")
+            raise HTTPException(status_code=400, detail=f"save failed: {exc}") from exc
         return SaveResponse(saved=True)
 
     @app.post("/load", response_model=LoadResponse)
@@ -256,9 +254,9 @@ def create_app() -> FastAPI:
         try:
             new_model = ModelSerializer.load(req.path)
         except FileNotFoundError as exc:
-            raise HTTPException(status_code=404, detail=str(exc))
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
         except (KeyError, ValueError) as exc:
-            raise HTTPException(status_code=400, detail=f"load failed: {exc}")
+            raise HTTPException(status_code=400, detail=f"load failed: {exc}") from exc
         set_model(new_model)
         return LoadResponse(loaded=True)
 

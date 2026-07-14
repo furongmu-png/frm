@@ -14,9 +14,9 @@ import numpy as np
 import pytest
 
 from zero_data_model.capabilities.vision_advanced import (
+    DepthEstimator,
     PointCloudEncoder,
     VideoFrameAnalyzer,
-    DepthEstimator,
 )
 
 

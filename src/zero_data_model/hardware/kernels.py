@@ -17,6 +17,7 @@ Kernel index
 - ``_betti_numbers(sorted_vals, max_radius)`` — gap-detection persistent homology loop.
 - ``_fractal_generate(x, scales, offsets, n_iterations)`` — fused matmul+tanh iterations.
 - ``_quantum_classical_forward(x, W)`` — tanh(x @ W) for QuantumClassicalHybrid.
+- ``_skewness(data)`` — Fisher-Pearson biased sample skewness (replaces scipy.stats.skew).
 
 A module-level ``HAS_NUMBA`` flag is exported so callers can advertise which
 path is active (mirrors the existing ``hardware/quantum.py`` pattern).
@@ -217,3 +218,41 @@ def _fractal_generate(x, scales, offsets, n_iterations, n_transforms):
 def _quantum_classical_forward(x, W):
     """``tanh(x @ W)`` for the QuantumClassicalHybrid classical path."""
     return np.tanh(x @ W)
+
+
+# ---------------------------------------------------------------------------
+# Sample skewness (replaces scipy.stats.skew in TopologicalAnalyzer).
+# ---------------------------------------------------------------------------
+
+
+@njit(cache=True)
+def _skewness(data):
+    """Fisher-Pearson biased sample skewness, matching ``scipy.stats.skew(data)``.
+
+    Computes ``g1 = (m3 / n) / (m2 / n) ** 1.5`` where ``m2`` and ``m3`` are the
+    second and third central moments — i.e. scipy's default (``bias=True``)
+    estimator, to within ~1e-15. Returns ``0.0`` for ``n < 3`` or for a constant
+    input (zero variance), which also fixes the NaN scipy produces in that case.
+
+    When numba is unavailable the ``njit`` decorator degrades to a no-op, so this
+    same body serves as the pure-numpy fallback.
+    """
+    n = len(data)
+    if n < 3:
+        return 0.0
+    mean = 0.0
+    for i in range(n):
+        mean += data[i]
+    mean /= n
+    m2 = 0.0  # sum of squared deviations
+    m3 = 0.0  # sum of cubed deviations
+    for i in range(n):
+        diff = data[i] - mean
+        m2 += diff * diff
+        m3 += diff * diff * diff
+    if m2 == 0.0:
+        # Constant array: zero variance -> skewness undefined; return 0.0
+        # (avoids the NaN scipy.stats.skew yields here).
+        return 0.0
+    # Biased sample skewness g1 (scipy.stats.skew default, bias=True).
+    return (m3 / n) / ((m2 / n) ** 1.5)

@@ -1,7 +1,8 @@
 # tests/test_category_engine.py
 import numpy as np
-from zero_data_model.category_engine import CategoryTheoryEngine, Category, Functor
+
 from zero_data_model.base import Signal
+from zero_data_model.category_engine import Category, CategoryTheoryEngine
 
 
 def test_category_creation():

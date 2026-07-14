@@ -12,10 +12,10 @@ from __future__ import annotations
 import time
 
 import numpy as np
+import scipy.stats
 
-from zero_data_model.hardware import kernels
 from zero_data_model.biological import CellularAutomata
-
+from zero_data_model.hardware import kernels
 
 # ---------------------------------------------------------------------------
 # Kernel equivalence vs. pure-numpy reference
@@ -165,7 +165,7 @@ def test_fractal_generate_matches_python_loop():
         np.ascontiguousarray(scales, dtype=float),
         np.ascontiguousarray(offsets, dtype=float),
         int(n_iterations),
-        int(4),
+        4,
     )
     np.testing.assert_allclose(got, expected, atol=1e-6)
 
@@ -180,6 +180,36 @@ def test_quantum_classical_forward_matches_numpy():
         np.ascontiguousarray(W, dtype=float),
     )
     np.testing.assert_allclose(got, expected, atol=1e-6)
+
+
+def test_skewness_matches_scipy():
+    """_skewness must match scipy.stats.skew default (bias=True) to < 1e-10."""
+    rng = np.random.default_rng(10)
+    for n in (3, 5, 16, 64, 100, 500):
+        data = rng.standard_normal(n)
+        expected = float(scipy.stats.skew(data))
+        got = float(kernels._skewness(np.ascontiguousarray(data, dtype=float)))
+        assert abs(expected - got) < 1e-10, (
+            f"n={n}: scipy={expected!r}, kernel={got!r}, diff={abs(expected - got)!r}"
+        )
+
+
+def test_skewness_constant_array_no_nan():
+    """A constant array has zero variance -> skewness must be 0.0, never NaN.
+
+    This also covers the pre-existing bug where scipy.stats.skew returned NaN
+    on constant input inside TopologicalAnalyzer.topological_features.
+    """
+    got = float(kernels._skewness(np.ascontiguousarray(np.ones(10), dtype=float)))
+    assert got == 0.0
+    assert np.isfinite(got)
+
+
+def test_skewness_small_array():
+    """Arrays with n < 3 must return 0.0 (skewness undefined)."""
+    assert float(kernels._skewness(np.ascontiguousarray(np.array([1.0, 2.0]), dtype=float))) == 0.0
+    assert float(kernels._skewness(np.ascontiguousarray(np.array([5.0]), dtype=float))) == 0.0
+    assert float(kernels._skewness(np.ascontiguousarray(np.array([], dtype=float)))) == 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -282,9 +312,9 @@ def test_jit_kernels_module_imports_with_numba_present():
 def test_core_modules_advertise_jit_path():
     """The 6 core modules should expose a JIT flag indicating the kernel path."""
     from zero_data_model import (
-        consciousness_core,
-        category_engine,
         biological,
+        category_engine,
+        consciousness_core,
         math_universe,
         quantum_hybrid,
     )

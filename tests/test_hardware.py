@@ -1,26 +1,22 @@
 # tests/test_hardware.py
 """Tests for the hardware acceleration layer: Qiskit backend, parallel executor, accel."""
-import time
 
 import numpy as np
 
 from zero_data_model.hardware import (
-    xp,
-    has_gpu,
+    ParallelExecutor,
+    QuantumBackend,
+    SimulatorQuantumBackend,
+    asnumpy,
     backend_name,
     to_gpu,
-    to_cpu,
-    asnumpy,
-    QuantumBackend,
-    QiskitQuantumBackend,
-    SimulatorQuantumBackend,
-    ParallelExecutor,
+    xp,
 )
 from zero_data_model.hardware.quantum import get_quantum_backend
 from zero_data_model.quantum_hybrid import (
-    VariationalQuantumCircuit,
     QuantumAnnealer,
     QuantumClassicalHybrid,
+    VariationalQuantumCircuit,
 )
 
 

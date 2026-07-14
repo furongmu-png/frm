@@ -12,8 +12,8 @@ from __future__ import annotations
 
 import numpy as np
 
-from ..math_universe import MathematicalUniverse
 from ..biological import BiologicalSubstrate
+from ..math_universe import MathematicalUniverse
 from .rules import VisionRules
 
 
@@ -248,7 +248,6 @@ class DepthEstimator:
                 # Rolling std with a sliding window of `window` pixels.
                 csum = np.cumsum(np.insert(row, 0, 0.0))
                 csum_sq = np.cumsum(np.insert(row ** 2, 0, 0.0))
-                n_w = w - window + 1
                 sums = csum[window:] - csum[:-window]
                 sums_sq = csum_sq[window:] - csum_sq[:-window]
                 means = sums / window
@@ -333,10 +332,11 @@ class DepthEstimator:
         # Normalize to [0, 1] for stability.
         d_min = float(depth.min())
         d_max = float(depth.max())
-        if d_max - d_min > 1e-8:
-            depth = (depth - d_min) / (d_max - d_min)
-        else:
-            depth = np.zeros_like(depth)
+        depth = (
+            (depth - d_min) / (d_max - d_min)
+            if d_max - d_min > 1e-8
+            else np.zeros_like(depth)
+        )
 
         return {
             "depth_map": depth,

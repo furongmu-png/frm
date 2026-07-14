@@ -33,7 +33,8 @@ def main() -> None:
     sim = model.find_analogies(text_vec, image_vec)
     print(f"    find_analogies(text_vec, image_vec) = {sim:.4f}")
     print(f"    cosine in [-1, 1]; finite = {bool(np.isfinite(sim))}")
-    print(f"    self-check  image <-> image       = {model.find_analogies(image_vec, image_vec):.4f}")
+    self_sim = model.find_analogies(image_vec, image_vec)
+    print(f"    self-check  image <-> image       = {self_sim:.4f}")
 
     # 2. Series <-> text transfer (forecast used as the series embedding).
     print("\n[2] Time-Series <-> Text transfer")
@@ -41,7 +42,7 @@ def main() -> None:
     series_embedding = model.forecast(series, horizon=64)
     science_vec = model.encode_text("energy force quantum field")
     sim2 = model.find_analogies(series_embedding, science_vec)
-    print(f"    series (upward trend) forecast-embedding vs science text")
+    print("    series (upward trend) forecast-embedding vs science text")
     print(f"    find_analogies = {sim2:.4f}")
 
     # 3. Category-theory isomorphism between an NLP-like and a CV-like problem.
@@ -50,7 +51,7 @@ def main() -> None:
     cv_problem = model.encode_image(rng.random((12, 12)))         # CV-like vector
     iso = model.find_analogies(nlp_problem, cv_problem)
     print(f"    isomorphism score = {iso:.4f}")
-    print(f"    (1.0 = structurally identical, 0.0 = orthogonal)")
+    print("    (1.0 = structurally identical, 0.0 = orthogonal)")
 
     print("\nHardware backends:", model.hardware_info)
 

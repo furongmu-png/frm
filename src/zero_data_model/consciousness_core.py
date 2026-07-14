@@ -2,9 +2,12 @@
 """Consciousness-inspired cognitive core using Global Workspace Theory and Predictive Processing."""
 
 from __future__ import annotations
+
+from dataclasses import dataclass
+
 import numpy as np
-from dataclasses import dataclass, field
-from .base import Signal, Prediction, CognitiveModule
+
+from .base import CognitiveModule, Prediction, Signal
 
 # JIT kernels -- graceful fallback to pure numpy if numba missing.
 try:
@@ -51,7 +54,7 @@ class SelfModel:
         if len(self.history) > 100:
             self.history.pop(0)
         self.state = 0.9 * self.state + 0.1 * np.mean(
-            [h for h in self.history[-10:]], axis=0
+            list(self.history[-10:]), axis=0
         ) if self.history else self.state
         self.confidence = min(1.0, len(self.history) / 50.0)
 

@@ -6,7 +6,9 @@ that the zero-data capabilities compose with self-generated representations.
 """
 
 from __future__ import annotations
+
 from dataclasses import dataclass, field
+
 import numpy as np
 
 

@@ -60,6 +60,4 @@ jobs:
           fail_ci_if_error: false
 
       - name: Lint with ruff
-        # Non-blocking until existing lint debt is cleaned up.
-        continue-on-error: true
         run: ruff check src/ tests/

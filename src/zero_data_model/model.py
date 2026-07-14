@@ -2,35 +2,42 @@
 """ZeroDataModel — Full system integration."""
 
 from __future__ import annotations
+
 import numpy as np
-from .base import Signal
-from .consciousness_core import ConsciousnessCore
+
 from .active_inference import ActiveInferenceEngine
-from .category_engine import CategoryTheoryEngine
-from .quantum_hybrid import QuantumClassicalHybrid
+from .base import Signal
 from .biological import BiologicalSubstrate
-from .math_universe import MathematicalUniverse
-from .capabilities.nlp import TextEncoder, SemanticComparator, ZeroShotClassifier, TextGenerator
-from .capabilities.vision import ImageEncoder, FeatureExtractor, PatternRecognizer, ShapeAnalyzer
-from .capabilities.analytics import TimeSeriesForecaster, AnomalyDetector, PatternMiner, TrendAnalyzer
-from .capabilities.nlp_advanced import (
-    MultiLingualEncoder,
-    SyntacticAnalyzer,
-    SentenceEncoder,
-)
-from .capabilities.vision_advanced import (
-    PointCloudEncoder,
-    VideoFrameAnalyzer,
-    DepthEstimator,
+from .capabilities.analytics import (
+    AnomalyDetector,
+    PatternMiner,
+    TimeSeriesForecaster,
+    TrendAnalyzer,
 )
 from .capabilities.analytics_advanced import (
-    CausalInference,
     BayesianEstimator,
+    CausalInference,
     ChangePointDetector,
 )
-from .capabilities.rules import NLPRules, VisionRules, AnalyticsRules
-from .hardware.parallel import ParallelExecutor
+from .capabilities.nlp import SemanticComparator, TextEncoder, TextGenerator, ZeroShotClassifier
+from .capabilities.nlp_advanced import (
+    MultiLingualEncoder,
+    SentenceEncoder,
+    SyntacticAnalyzer,
+)
+from .capabilities.rules import AnalyticsRules, NLPRules, VisionRules
+from .capabilities.vision import FeatureExtractor, ImageEncoder, PatternRecognizer, ShapeAnalyzer
+from .capabilities.vision_advanced import (
+    DepthEstimator,
+    PointCloudEncoder,
+    VideoFrameAnalyzer,
+)
+from .category_engine import CategoryTheoryEngine
+from .consciousness_core import ConsciousnessCore
 from .hardware import accel as _accel
+from .hardware.parallel import ParallelExecutor
+from .math_universe import MathematicalUniverse
+from .quantum_hybrid import QuantumClassicalHybrid
 
 
 class ZeroDataModel:
@@ -54,7 +61,9 @@ class ZeroDataModel:
     def __init__(self, dim: int = 64):
         self.dim = dim
         self.consciousness = ConsciousnessCore(dim=dim)
-        self.active_inference = ActiveInferenceEngine(state_dim=dim, obs_dim=dim, action_dim=dim // 2)
+        self.active_inference = ActiveInferenceEngine(
+            state_dim=dim, obs_dim=dim, action_dim=dim // 2
+        )
         self.category_engine = CategoryTheoryEngine(dim=dim)
         self.quantum_hybrid = QuantumClassicalHybrid(dim=dim)
         self.biological = BiologicalSubstrate(dim=dim)
@@ -69,17 +78,38 @@ class ZeroDataModel:
         ]
         # Domain capabilities built on top of the core modules.
         self.nlp_text_encoder = TextEncoder(dim=dim)
-        self.nlp_comparator = SemanticComparator(self.nlp_text_encoder, self.math_universe, self.category_engine)
-        self.nlp_classifier = ZeroShotClassifier(dim=dim, active_inference=self.active_inference, category_engine=self.category_engine)
-        self.nlp_generator = TextGenerator(dim=dim, biological=self.biological, math_universe=self.math_universe)
+        self.nlp_comparator = SemanticComparator(
+            self.nlp_text_encoder, self.math_universe, self.category_engine
+        )
+        self.nlp_classifier = ZeroShotClassifier(
+            dim=dim,
+            active_inference=self.active_inference,
+            category_engine=self.category_engine,
+        )
+        self.nlp_generator = TextGenerator(
+            dim=dim, biological=self.biological, math_universe=self.math_universe
+        )
         self.vision_encoder = ImageEncoder(dim=dim, math_universe=self.math_universe)
         self.vision_features = FeatureExtractor(dim=dim, biological=self.biological)
-        self.vision_recognizer = PatternRecognizer(dim=dim, active_inference=self.active_inference, consciousness=self.consciousness, encoder=self.vision_encoder)
+        self.vision_recognizer = PatternRecognizer(
+            dim=dim,
+            active_inference=self.active_inference,
+            consciousness=self.consciousness,
+            encoder=self.vision_encoder,
+        )
         self.vision_analyzer = ShapeAnalyzer(dim=dim, category_engine=self.category_engine)
-        self.analytics_forecaster = TimeSeriesForecaster(dim=dim, active_inference=self.active_inference, quantum_hybrid=self.quantum_hybrid)
+        self.analytics_forecaster = TimeSeriesForecaster(
+            dim=dim,
+            active_inference=self.active_inference,
+            quantum_hybrid=self.quantum_hybrid,
+        )
         self.analytics_anomaly = AnomalyDetector(dim=dim, active_inference=self.active_inference)
-        self.analytics_miner = PatternMiner(dim=dim, biological=self.biological, math_universe=self.math_universe)
-        self.analytics_trend = TrendAnalyzer(dim=dim, math_universe=self.math_universe, category_engine=self.category_engine)
+        self.analytics_miner = PatternMiner(
+            dim=dim, biological=self.biological, math_universe=self.math_universe
+        )
+        self.analytics_trend = TrendAnalyzer(
+            dim=dim, math_universe=self.math_universe, category_engine=self.category_engine
+        )
         # Rule libraries reused by the advanced capabilities below.
         self.nlp_rules = NLPRules()
         self.vision_rules = VisionRules()
@@ -89,12 +119,24 @@ class ZeroDataModel:
         self.nlp_multilingual = MultiLingualEncoder(dim=dim, rules=self.nlp_rules)
         self.nlp_syntactic = SyntacticAnalyzer(dim=dim, rules=self.nlp_rules)
         self.nlp_sentence_encoder = SentenceEncoder(dim=dim, rules=self.nlp_rules)
-        self.vision_point_cloud = PointCloudEncoder(dim=dim, math_universe=self.math_universe)
-        self.vision_video = VideoFrameAnalyzer(dim=dim, biological=self.biological, math_universe=self.math_universe)
+        self.vision_point_cloud = PointCloudEncoder(
+            dim=dim, math_universe=self.math_universe
+        )
+        self.vision_video = VideoFrameAnalyzer(
+            dim=dim, biological=self.biological, math_universe=self.math_universe
+        )
         self.vision_depth = DepthEstimator(dim=dim, math_universe=self.math_universe)
-        self.analytics_causal = CausalInference(dim=dim, active_inference=self.active_inference, rules=self.analytics_rules)
-        self.analytics_bayesian = BayesianEstimator(dim=dim, active_inference=self.active_inference)
-        self.analytics_changepoint = ChangePointDetector(dim=dim, active_inference=self.active_inference, rules=self.analytics_rules)
+        self.analytics_causal = CausalInference(
+            dim=dim, active_inference=self.active_inference, rules=self.analytics_rules
+        )
+        self.analytics_bayesian = BayesianEstimator(
+            dim=dim, active_inference=self.active_inference
+        )
+        self.analytics_changepoint = ChangePointDetector(
+            dim=dim,
+            active_inference=self.active_inference,
+            rules=self.analytics_rules,
+        )
         # Hardware acceleration: parallel module execution + GPU-aware arrays.
         self.parallel_executor = ParallelExecutor()
         self.cycle_count = 0

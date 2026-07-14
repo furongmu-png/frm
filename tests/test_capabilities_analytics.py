@@ -12,11 +12,10 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from zero_data_model.capabilities.rules import AnalyticsRules
 from zero_data_model.capabilities.analytics import (
-    TimeSeriesForecaster,
     AnomalyDetector,
     PatternMiner,
+    TimeSeriesForecaster,
     TrendAnalyzer,
 )
 

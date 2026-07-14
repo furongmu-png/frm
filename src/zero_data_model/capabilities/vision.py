@@ -12,12 +12,11 @@ from __future__ import annotations
 
 import numpy as np
 
-from ..base import Signal
-from ..math_universe import MathematicalUniverse
-from ..biological import BiologicalSubstrate
 from ..active_inference import ActiveInferenceEngine
-from ..consciousness_core import ConsciousnessCore
+from ..biological import BiologicalSubstrate
 from ..category_engine import CategoryTheoryEngine
+from ..consciousness_core import ConsciousnessCore
+from ..math_universe import MathematicalUniverse
 from .rules import VisionRules
 
 
@@ -207,7 +206,12 @@ class PatternRecognizer:
 class ShapeAnalyzer:
     """Analyze geometric/topological shape properties using category theory + rules."""
 
-    def __init__(self, dim: int = 64, category_engine: CategoryTheoryEngine | None = None, rules: VisionRules | None = None):
+    def __init__(
+        self,
+        dim: int = 64,
+        category_engine: CategoryTheoryEngine | None = None,
+        rules: VisionRules | None = None,
+    ):
         self.dim = dim
         self.rules = rules or VisionRules()
         self.category_engine = category_engine
@@ -278,7 +282,12 @@ class ShapeAnalyzer:
                         y, x = stack.pop()
                         for dy, dx in ((1, 0), (-1, 0), (0, 1), (0, -1)):
                             ny, nx = y + dy, x + dx
-                            if 0 <= ny < h and 0 <= nx < w and binary[ny, nx] == 1 and not visited[ny, nx]:
+                            if (
+                                0 <= ny < h
+                                and 0 <= nx < w
+                                and binary[ny, nx] == 1
+                                and not visited[ny, nx]
+                            ):
                                 visited[ny, nx] = True
                                 stack.append((ny, nx))
         return count

@@ -1,7 +1,8 @@
 # tests/test_quantum_hybrid.py
 import numpy as np
-from zero_data_model.quantum_hybrid import QuantumClassicalHybrid, SimulatedQuantumCircuit
+
 from zero_data_model.base import Signal
+from zero_data_model.quantum_hybrid import QuantumClassicalHybrid, SimulatedQuantumCircuit
 
 
 def test_quantum_circuit_evolve():

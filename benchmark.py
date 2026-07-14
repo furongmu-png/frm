@@ -6,6 +6,7 @@ the speedup is measurable. Run: python benchmark.py
 """
 
 import sys
+
 sys.path.insert(0, "src")
 
 import time
@@ -13,22 +14,17 @@ import time
 import numpy as np
 
 from zero_data_model.hardware import (
+    ParallelExecutor,
+    SimulatorQuantumBackend,
     backend_name,
     has_gpu,
-    QiskitQuantumBackend,
-    SimulatorQuantumBackend,
-    ParallelExecutor,
 )
-from zero_data_model.hardware.quantum import get_quantum_backend
-from zero_data_model.quantum_hybrid import (
-    VariationalQuantumCircuit,
-    QuantumAnnealer,
-    QuantumClassicalHybrid,
-)
-from zero_data_model.biological import CellularAutomata, MorphogeneticField
-from zero_data_model.math_universe import FractalGenerator, InformationGeometry
 from zero_data_model.hardware import kernels as _kernels
+from zero_data_model.hardware.quantum import get_quantum_backend
 from zero_data_model.model import ZeroDataModel
+from zero_data_model.quantum_hybrid import (
+    QuantumAnnealer,
+)
 
 
 def time_it(fn, n_runs=3, **kw):
@@ -57,7 +53,7 @@ def bench_quantum_backend():
     t_sim, _ = time_it(lambda: sim.evolve_and_measure(params, entangling), n_runs=3)
     print(f"  Simulator fallback:                       {t_sim*1000:.2f} ms")
     if name == "qiskit":
-        print(f"  Qiskit is real quantum circuit execution via StatevectorSampler.")
+        print("  Qiskit is real quantum circuit execution via StatevectorSampler.")
     return name
 
 
@@ -109,7 +105,12 @@ def bench_full_model():
     model.classify_text("code data model")
     model.forecast(np.arange(20, dtype=float))
 
-    texts = ["algorithm network compute", "tree river mountain", "love joy hope", "energy force mass"] * 5
+    texts = [
+        "algorithm network compute",
+        "tree river mountain",
+        "love joy hope",
+        "energy force mass",
+    ] * 5
     t0 = time.perf_counter()
     for t in texts:
         model.classify_text(t)
@@ -127,9 +128,12 @@ def bench_full_model():
         model.forecast(s, horizon=5)
     t_an = time.perf_counter() - t0
 
-    print(f"  NLP:      {len(texts)} classifications in {t_nlp*1000:.1f} ms ({len(texts)/t_nlp:.0f}/s)")
-    print(f"  CV:       {len(imgs)} pattern recognitions in {t_cv*1000:.1f} ms ({len(imgs)/t_cv:.0f}/s)")
-    print(f"  Analytics: {len(series)} forecasts in {t_an*1000:.1f} ms ({len(series)/t_an:.0f}/s)")
+    n_nlp = len(texts)
+    n_cv = len(imgs)
+    n_an = len(series)
+    print(f"  NLP:       {n_nlp} classifications in {t_nlp*1000:.1f} ms ({n_nlp/t_nlp:.0f}/s)")
+    print(f"  CV:        {n_cv} pattern recognitions in {t_cv*1000:.1f} ms ({n_cv/t_cv:.0f}/s)")
+    print(f"  Analytics: {n_an} forecasts in {t_an*1000:.1f} ms ({n_an/t_an:.0f}/s)")
 
 
 def bench_jit_kernels():
@@ -172,7 +176,10 @@ def bench_jit_kernels():
     t_py, _ = time_it(lambda: [py_ca_step(state.copy()) for _ in range(n_iters)])
     speedup_ca = t_py / t_jit if t_jit > 0 else 0
     print(f"  CellularAutomata.step (size={size}, x{n_iters}):")
-    print(f"    pure-python: {t_py*1000:.2f} ms   JIT: {t_jit*1000:.2f} ms   speedup: {speedup_ca:.1f}x")
+    print(
+        f"    pure-python: {t_py*1000:.2f} ms   "
+        f"JIT: {t_jit*1000:.2f} ms   speedup: {speedup_ca:.1f}x"
+    )
 
     # --- MorphogeneticField.step (np.roll temporaries -> single fused JIT pass) ---
     grid_size = 32
@@ -200,10 +207,15 @@ def bench_jit_kernels():
     t_jit, _ = time_it(
         lambda: [_kernels._morphogenetic_laplacian(grid.copy()) for _ in range(n_iters)]
     )
-    t_py, _ = time_it(lambda: [py_morph_step(grid.copy(), [m.copy() for m in morphs]) for _ in range(n_iters)])
+    t_py, _ = time_it(
+        lambda: [py_morph_step(grid.copy(), [m.copy() for m in morphs]) for _ in range(n_iters)]
+    )
     speedup_morph = t_py / t_jit if t_jit > 0 else 0
     print(f"  MorphogeneticField.laplacian ({grid_size}x{grid_size}, x{n_iters}):")
-    print(f"    np.roll:      {t_py*1000:.2f} ms   JIT: {t_jit*1000:.2f} ms   speedup: {speedup_morph:.1f}x")
+    print(
+        f"    np.roll:      {t_py*1000:.2f} ms   "
+        f"JIT: {t_jit*1000:.2f} ms   speedup: {speedup_morph:.1f}x"
+    )
 
     # --- FractalGenerator.generate (n_iterations of matmul+tanh -> fused JIT) ---
     dim = 64
@@ -222,12 +234,18 @@ def bench_jit_kernels():
     _kernels._fractal_generate(x0.copy(), scales, offsets, 1, n_t)
     n_iters = 100
     t_jit, _ = time_it(
-        lambda: [_kernels._fractal_generate(x0.copy(), scales, offsets, 20, n_t) for _ in range(n_iters)]
+        lambda: [
+            _kernels._fractal_generate(x0.copy(), scales, offsets, 20, n_t)
+            for _ in range(n_iters)
+        ]
     )
     t_py, _ = time_it(lambda: [py_fractal(x0.copy()) for _ in range(n_iters)])
     speedup_frac = t_py / t_jit if t_jit > 0 else 0
     print(f"  FractalGenerator.generate (dim={dim}, iters=20, x{n_iters}):")
-    print(f"    pure-numpy: {t_py*1000:.2f} ms   JIT: {t_jit*1000:.2f} ms   speedup: {speedup_frac:.1f}x")
+    print(
+        f"    pure-numpy: {t_py*1000:.2f} ms   "
+        f"JIT: {t_jit*1000:.2f} ms   speedup: {speedup_frac:.1f}x"
+    )
 
     # --- BiologicalSubstrate.process via full ZeroDataModel.think ---
     # The integrated end-to-end improvement of one think() cycle (random input).

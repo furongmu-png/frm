@@ -1,0 +1,36 @@
+# docker-compose.dev.yml — development override / standalone dev service.
+# Standalone use:  docker compose -f docker-compose.dev.yml up
+# Layered use:     docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+#
+# This file uses the bare python:3.12-slim image directly (no Dockerfile build)
+# and mounts the local src/ and web/ directories read-only so that uvicorn's
+# --reload picks up host-side edits without rebuilding. The entrypoint installs
+# the runtime extras on container start so the image stays generic.
+
+services:
+  zero-data-model:
+    # Use the official slim image directly instead of building from Dockerfile.
+    image: python:3.12-slim
+    ports:
+      - "8000:8000"
+    environment:
+      PYTHONUNBUFFERED: "1"
+    working_dir: /app
+    # Install runtime extras, then launch the hot-reloading dev server.
+    # Project metadata is mounted below so `pip install -e .` works.
+    entrypoint: ["/bin/sh", "-c"]
+    command: >
+      pip install --no-cache-dir -e ".[web,quantum,jit,parallel]"
+      && python -m uvicorn zero_data_model.api:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      # Local source mounted read-only; edits on host trigger uvicorn reload.
+      - ./src:/app/src:ro
+      - ./web:/app/web:ro
+      # Project metadata required by `pip install -e .`.
+      - ./pyproject.toml:/app/pyproject.toml:ro
+      - ./README.md:/app/README.md:ro
+      - ./LICENSE:/app/LICENSE:ro
+      - ./MANIFEST.in:/app/MANIFEST.in:ro
+      # Persistence mount (matches the production compose).
+      - ./data:/app/data
+    restart: unless-stopped

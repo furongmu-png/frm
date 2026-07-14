@@ -2,13 +2,19 @@
 """Mathematical Universe Layer — Information Geometry, Topological Data Analysis, Fractals."""
 
 from __future__ import annotations
+
 import numpy as np
-import scipy.stats
-from .base import Signal, Prediction, CognitiveModule
+
+from .base import CognitiveModule, Prediction, Signal
 
 # JIT kernels -- graceful fallback to pure numpy if numba missing.
 try:
-    from .hardware.kernels import _kl_divergence, _betti_numbers, _fractal_generate
+    from .hardware.kernels import (
+        _betti_numbers,
+        _fractal_generate,
+        _kl_divergence,
+        _skewness,
+    )
     _HAS_JIT = True
 except ImportError:  # pragma: no cover - optional dependency
     _HAS_JIT = False
@@ -79,7 +85,20 @@ class TopologicalAnalyzer:
         d = data.flatten()[: self.dim]
         features[2] = np.mean(d)
         features[3] = np.std(d)
-        features[4] = float(scipy.stats.skew(d)) if len(d) > 2 else 0.0
+        if _HAS_JIT:
+            features[4] = float(_skewness(np.ascontiguousarray(d, dtype=float)))
+        else:
+            # Pure-numpy fallback: biased sample skewness (matches scipy.stats.skew default).
+            n = len(d)
+            if n < 3:
+                features[4] = 0.0
+            else:
+                diff = d - np.mean(d)
+                m2 = np.mean(diff ** 2)
+                if m2 == 0.0:
+                    features[4] = 0.0
+                else:
+                    features[4] = float(np.mean(diff ** 3) / (m2 ** 1.5))
         return features
 
 
@@ -124,7 +143,11 @@ class FractalGenerator:
         return {
             "mean": float(np.mean(d)),
             "std": float(np.std(d)),
-            "self_similarity": float(np.corrcoef(d[: self.dim // 2], d[self.dim // 2:])[0, 1]) if self.dim >= 2 else 0.0,
+            "self_similarity": (
+                float(np.corrcoef(d[: self.dim // 2], d[self.dim // 2:])[0, 1])
+                if self.dim >= 2
+                else 0.0
+            ),
         }
 
 

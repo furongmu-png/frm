@@ -1,7 +1,8 @@
 # tests/test_consciousness_core.py
 import numpy as np
-from zero_data_model.consciousness_core import ConsciousnessCore, GlobalWorkspace, SelfModel
+
 from zero_data_model.base import Signal
+from zero_data_model.consciousness_core import ConsciousnessCore, GlobalWorkspace, SelfModel
 
 
 def test_consciousness_core_process():

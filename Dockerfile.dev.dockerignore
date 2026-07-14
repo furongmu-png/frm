@@ -1,0 +1,34 @@
+# Dockerfile.dev.dockerignore
+#
+# BuildKit uses this file (named <Dockerfile>.dockerignore) INSTEAD of the
+# root .dockerignore when building with `docker build -f Dockerfile.dev`.
+# Unlike the root .dockerignore, this one does NOT exclude tests/, examples/,
+# docs/, or the benchmark/profile scripts, because the dev image is meant to
+# run the full test suite and dev tooling. Only build caches and version-
+# control cruft are excluded to keep the dev context lean.
+
+.git
+.gitignore
+.ruff_cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/
+.venv/
+venv/
+env/
+data/
+
+# Docker meta files are not needed inside the dev image either.
+Dockerfile
+Dockerfile.dev
+docker-compose.yml
+docker-compose.dev.yml
+.dockerignore
+Dockerfile.dev.dockerignore

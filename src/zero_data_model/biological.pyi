@@ -1,0 +1,79 @@
+from __future__ import annotations
+
+import numpy as np
+
+from .base import CognitiveModule, KnowledgeStore, Prediction, Signal
+
+class DNAStorage(KnowledgeStore):
+    """DNA-inspired knowledge storage using quaternary encoding (A=0, T=1, C=2, G=3)."""
+
+    capacity: int
+
+    def __init__(self, capacity: int = 1024) -> None: ...
+
+    def _encode(self, data: np.ndarray) -> np.ndarray: ...
+
+    def _decode(
+        self, encoded: np.ndarray, original_min: float, original_max: float
+    ) -> np.ndarray: ...
+
+    def store(self, key: str, value: np.ndarray) -> None: ...
+
+    def retrieve(self, key: str) -> np.ndarray | None: ...
+
+    def generate(self, query: Signal) -> Signal:
+        """Self-generate knowledge by recombining stored sequences."""
+        ...
+
+
+class MorphogeneticField:
+    """Self-organizing structure development inspired by morphogenesis."""
+
+    grid_size: int
+    grid: np.ndarray
+    morphogens: list[np.ndarray]
+    diffusion_rate: float
+
+    def __init__(self, grid_size: int = 16, n_signals: int = 3) -> None: ...
+
+    def step(self) -> None: ...
+
+    def develop(self, n_steps: int = 50) -> np.ndarray: ...
+
+
+class CellularAutomata:
+    """Cellular automaton for distributed computation."""
+
+    size: int
+    rule: int
+    state: np.ndarray
+
+    def __init__(self, size: int = 64, rule: int = 30) -> None: ...
+
+    def _apply_rule(self, left: int, center: int, right: int) -> int: ...
+
+    def step(self) -> None: ...
+
+    def evolve(self, n_steps: int = 50) -> np.ndarray: ...
+
+
+class BiologicalSubstrate(CognitiveModule):
+    """
+    Biological computation substrate.
+    - DNA storage with crossover-based self-generation
+    - Morphogenetic field for self-organization
+    - Cellular automata for distributed computation
+    """
+
+    dim: int
+    dna_storage: DNAStorage
+    morphogenetic: MorphogeneticField
+    automata: CellularAutomata
+
+    def __init__(self, dim: int = 64) -> None: ...
+
+    def process(self, signal: Signal) -> Signal: ...
+
+    def predict(self, signal: Signal) -> Prediction: ...
+
+    def update(self, prediction_error: float) -> None: ...

@@ -1,6 +1,7 @@
 # tests/test_active_inference.py
 import numpy as np
-from zero_data_model.active_inference import ActiveInferenceEngine, MarkovBlanket, GenerativeModel
+
+from zero_data_model.active_inference import ActiveInferenceEngine, GenerativeModel, MarkovBlanket
 from zero_data_model.base import Signal
 
 

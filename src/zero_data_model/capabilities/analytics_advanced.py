@@ -11,6 +11,7 @@ free energy.
 
 from __future__ import annotations
 
+import contextlib
 import math
 
 import numpy as np
@@ -141,10 +142,9 @@ class CausalInference:
 
         # Blend: 70% lagged correlation + 30% partial correlation (rule-based
         # shrinkage toward the conditional-independence-adjusted estimate).
-        if math.isfinite(partial):
-            causal_strength = 0.7 * best_corr + 0.3 * partial
-        else:
-            causal_strength = best_corr
+        causal_strength = (
+            0.7 * best_corr + 0.3 * partial if math.isfinite(partial) else best_corr
+        )
         causal_strength = float(np.clip(causal_strength, -1.0, 1.0))
 
         # Rule-based p-value approximation from sample size + |r|.
@@ -248,10 +248,8 @@ class BayesianEstimator:
             self._update_normal(float(observation))
             return
         # Fallback: try to coerce to float (e.g. numpy scalars).
-        try:
+        with contextlib.suppress(TypeError, ValueError):
             self._update_normal(float(observation))
-        except (TypeError, ValueError):
-            pass
 
     def posterior_mean(self) -> float:
         """Return the posterior mean of the dominant updated model.

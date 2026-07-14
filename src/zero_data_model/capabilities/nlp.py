@@ -11,11 +11,11 @@ from __future__ import annotations
 
 import numpy as np
 
-from ..base import Signal
-from ..math_universe import MathematicalUniverse
-from ..biological import BiologicalSubstrate
 from ..active_inference import ActiveInferenceEngine
+from ..base import Signal
+from ..biological import BiologicalSubstrate
 from ..category_engine import CategoryTheoryEngine
+from ..math_universe import MathematicalUniverse
 from .rules import NLPRules
 
 
@@ -75,7 +75,7 @@ class TextEncoder:
 
         # 3b. topic-membership indicators from rules.topic_keywords.
         topics = sorted(self.rules.topic_keywords.keys())
-        topic_counts = {t: 0 for t in topics}
+        topic_counts = dict.fromkeys(topics, 0)
         for tok in tokens:
             for topic in topics:
                 if tok in self.rules.topic_keywords[topic]:

@@ -14,8 +14,8 @@ import numpy as np
 import pytest
 
 from zero_data_model.capabilities.analytics_advanced import (
-    CausalInference,
     BayesianEstimator,
+    CausalInference,
     ChangePointDetector,
 )
 

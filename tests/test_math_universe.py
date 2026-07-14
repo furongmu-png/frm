@@ -1,7 +1,13 @@
 # tests/test_math_universe.py
 import numpy as np
-from zero_data_model.math_universe import MathematicalUniverse, InformationGeometry, TopologicalAnalyzer, FractalGenerator
+
 from zero_data_model.base import Signal
+from zero_data_model.math_universe import (
+    FractalGenerator,
+    InformationGeometry,
+    MathematicalUniverse,
+    TopologicalAnalyzer,
+)
 
 
 def test_fisher_metric():

@@ -123,7 +123,7 @@ class ModelSerializer:
         if not os.path.isfile(config_path):
             raise FileNotFoundError(f"Missing config.json in: {path}")
 
-        with open(config_path, "r", encoding="utf-8") as f:
+        with open(config_path, encoding="utf-8") as f:
             config = json.load(f)
 
         # Build a fresh model of the same dim, then overwrite every saved

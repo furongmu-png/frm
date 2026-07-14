@@ -13,8 +13,8 @@ import numpy as np
 
 from zero_data_model.capabilities.nlp_advanced import (
     MultiLingualEncoder,
-    SyntacticAnalyzer,
     SentenceEncoder,
+    SyntacticAnalyzer,
 )
 
 

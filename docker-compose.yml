@@ -1,0 +1,26 @@
+# docker-compose.yml — production-style service for the zero-data cognitive model.
+# Build and run with:  docker compose up -d --build
+# The API will be available at http://localhost:8000/
+
+services:
+  zero-data-model:
+    # Build the image from the Dockerfile in the current directory.
+    build: .
+    # Map host port 8000 to container port 8000 (EXPOSE in Dockerfile).
+    ports:
+      - "8000:8000"
+    environment:
+      # Flush stdout/stderr immediately so logs appear without buffering.
+      PYTHONUNBUFFERED: "1"
+    volumes:
+      # Optional persistence mount: model save/load endpoints can write here.
+      - ./data:/app/data
+    # Survive restarts / host reboots, but stop if explicitly stopped.
+    restart: unless-stopped
+    healthcheck:
+      # Hit the root health endpoint. curl is installed in the Dockerfile.
+      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s

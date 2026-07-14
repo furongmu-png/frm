@@ -13,12 +13,11 @@ from __future__ import annotations
 
 import numpy as np
 
-from ..base import Signal
 from ..active_inference import ActiveInferenceEngine
-from ..quantum_hybrid import QuantumClassicalHybrid
 from ..biological import BiologicalSubstrate
-from ..math_universe import MathematicalUniverse
 from ..category_engine import CategoryTheoryEngine
+from ..math_universe import MathematicalUniverse
+from ..quantum_hybrid import QuantumClassicalHybrid
 from .rules import AnalyticsRules
 
 
@@ -265,10 +264,7 @@ class TrendAnalyzer:
             regime = "flat"
 
         # Second-derivative mean (curvature).
-        if n >= 3:
-            curvature = float(np.mean(np.diff(data, n=2)))
-        else:
-            curvature = 0.0
+        curvature = float(np.mean(np.diff(data, n=2))) if n >= 3 else 0.0
 
         # KL divergence between the abs-valued, normalized halves.
         mid = n // 2

@@ -2,8 +2,10 @@
 """Biological Computation Substrate — DNA storage, morphogenetic fields, cellular automata."""
 
 from __future__ import annotations
+
 import numpy as np
-from .base import Signal, Prediction, CognitiveModule, KnowledgeStore
+
+from .base import CognitiveModule, KnowledgeStore, Prediction, Signal
 
 # JIT kernels -- graceful fallback to pure numpy if numba missing.
 try:
@@ -21,7 +23,8 @@ class DNAStorage(KnowledgeStore):
         self._store: dict[str, np.ndarray] = {}
 
     def _encode(self, data: np.ndarray) -> np.ndarray:
-        quantized = np.clip(np.round((data - data.min()) / (data.max() - data.min() + 1e-8) * 3).astype(int), 0, 3)
+        normalized = (data - data.min()) / (data.max() - data.min() + 1e-8)
+        quantized = np.clip(np.round(normalized * 3).astype(int), 0, 3)
         return quantized
 
     def _decode(self, encoded: np.ndarray, original_min: float, original_max: float) -> np.ndarray:
@@ -172,4 +175,5 @@ class BiologicalSubstrate(CognitiveModule):
         return Prediction(value=predicted[: self.dim], uncertainty=float(np.var(predicted)))
 
     def update(self, prediction_error: float) -> None:
-        self.morphogenetic.diffusion_rate = max(0.001, self.morphogenetic.diffusion_rate + prediction_error * 0.01)
+        new_rate = self.morphogenetic.diffusion_rate + prediction_error * 0.01
+        self.morphogenetic.diffusion_rate = max(0.001, new_rate)

@@ -1,0 +1,42 @@
+# Build artifacts and caches
+.git
+.gitignore
+.ruff_cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Packaging outputs
+dist/
+build/
+*.egg-info/
+
+# Not needed in the runtime image
+docs/
+tests/
+examples/
+
+# Top-level scripts not required at runtime
+benchmark.py
+profile_hotspots.py
+demo.py
+
+# CI / tooling
+.github/
+
+# Docker meta files (avoid recursive context surprises)
+Dockerfile
+Dockerfile.dev
+docker-compose.yml
+docker-compose.dev.yml
+.dockerignore
+
+# Local data and virtualenvs
+data/
+.venv/
+venv/
+env/

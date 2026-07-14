@@ -25,6 +25,16 @@ class QuantumBackend:
 
     name: str = "base"
 
+    @property
+    def is_real_hardware(self) -> bool:
+        """True only when the backend executes on physical quantum hardware.
+
+        Simulators (including the local Qiskit ``StatevectorSampler``) return
+        ``False``; the IBM Quantum backend overrides this to report the actual
+        hardware availability.
+        """
+        return False
+
     def evolve_and_measure(
         self, params: np.ndarray, entangling: np.ndarray, n_shots: int = 1024
     ) -> np.ndarray:
@@ -52,7 +62,7 @@ class QiskitQuantumBackend(QuantumBackend):
         self.n_layers = n_layers
         self._sampler = StatevectorSampler()
 
-    def _build_circuit(self, params: np.ndarray, entangling: np.ndarray) -> "QuantumCircuit":
+    def _build_circuit(self, params: np.ndarray, entangling: np.ndarray) -> QuantumCircuit:
         """Build the parameterized ansatz circuit.
 
         ``params`` has shape (n_layers, n_qubits, 2); the two angles per qubit
@@ -112,7 +122,6 @@ class SimulatorQuantumBackend(QuantumBackend):
         cos = np.cos(theta / 2)
         sin = np.sin(theta / 2)
         result = np.zeros_like(state)
-        half = len(state) // 2
         result[0::2] = cos * state[0::2] - sin * state[1::2]
         result[1::2] = sin * state[0::2] + cos * state[1::2]
         return result
@@ -139,11 +148,27 @@ class SimulatorQuantumBackend(QuantumBackend):
         return probs / s
 
 
-def get_quantum_backend(n_qubits: int = 8, n_layers: int = 3, prefer: str | None = None) -> QuantumBackend:
+def get_quantum_backend(
+    n_qubits: int = 8, n_layers: int = 3, prefer: str | None = None
+) -> QuantumBackend:
     """Factory: pick the best available quantum backend.
 
-    ``prefer`` may be 'qiskit', 'simulator', or None (auto-detect).
+    ``prefer`` may be 'qiskit', 'simulator', 'ibm', 'ibm_quantum', or None
+    (auto-detect). When IBM hardware is requested but ``qiskit-ibm-runtime``
+    is missing or no token is configured, the factory falls back to the
+    local Qiskit simulator (or the pure-NumPy simulator if Qiskit is absent).
     """
+    if prefer in ("ibm", "ibm_quantum"):
+        try:
+            from .ibm_quantum import IBMQuantumBackend
+
+            return IBMQuantumBackend(n_qubits=n_qubits, n_layers=n_layers)
+        except Exception:
+            # IBM runtime missing or init failed: fall back to the local
+            # Qiskit simulator (per spec), then the pure-NumPy simulator.
+            if _HAS_QISKIT:
+                return QiskitQuantumBackend(n_qubits=n_qubits, n_layers=n_layers)
+            return SimulatorQuantumBackend(n_qubits=n_qubits, n_layers=n_layers)
     if (prefer is None or prefer == "qiskit") and _HAS_QISKIT:
         return QiskitQuantumBackend(n_qubits=n_qubits, n_layers=n_layers)
     return SimulatorQuantumBackend(n_qubits=n_qubits, n_layers=n_layers)

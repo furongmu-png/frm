@@ -1,7 +1,13 @@
 # tests/test_biological.py
 import numpy as np
-from zero_data_model.biological import BiologicalSubstrate, DNAStorage, MorphogeneticField, CellularAutomata
+
 from zero_data_model.base import Signal
+from zero_data_model.biological import (
+    BiologicalSubstrate,
+    CellularAutomata,
+    DNAStorage,
+    MorphogeneticField,
+)
 
 
 def test_dna_store_retrieve():

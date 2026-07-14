@@ -15,7 +15,6 @@ import numpy as np
 from .nlp import TextEncoder
 from .rules import NLPRules
 
-
 # Unicode block ranges used for rule-based script detection. Each entry maps a
 # script name to a tuple of (low, high) codepoint inclusive bounds; ranges are
 # ordered from most-specific to least so the first match wins for any char.
@@ -181,10 +180,7 @@ class SyntacticAnalyzer:
             cleaned = cleaned.replace(ch, " ")
         raw_tokens = [t for t in cleaned.split() if t]
 
-        if raw_tokens:
-            avg_word_length = float(np.mean([len(t) for t in raw_tokens]))
-        else:
-            avg_word_length = 0.0
+        avg_word_length = float(np.mean([len(t) for t in raw_tokens])) if raw_tokens else 0.0
 
         # POS guesses per token (lowercased word -> POS string).
         pos_guesses: dict[str, str] = {}

@@ -1,7 +1,7 @@
 # tests/test_model.py
 import numpy as np
+
 from zero_data_model.model import ZeroDataModel
-from zero_data_model.base import Signal
 
 
 def test_model_creation():
@@ -133,4 +133,10 @@ def test_model_analyze_trend():
     model = ZeroDataModel(dim=16)
     out = model.analyze_trend(np.arange(50, dtype=float))
     assert out["regime"] == "up"
-    assert set(out.keys()) == {"trend_slope", "regime", "curvature", "geodesic_deviation", "isomorphism_score"}
+    assert set(out.keys()) == {
+        "trend_slope",
+        "regime",
+        "curvature",
+        "geodesic_deviation",
+        "isomorphism_score",
+    }

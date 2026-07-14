@@ -2,9 +2,12 @@
 """Active Inference Engine based on Free Energy Principle."""
 
 from __future__ import annotations
+
+from dataclasses import dataclass
+
 import numpy as np
-from dataclasses import dataclass, field
-from .base import Signal, Prediction, CognitiveModule
+
+from .base import CognitiveModule, Prediction, Signal
 
 
 @dataclass
@@ -140,7 +143,8 @@ class ActiveInferenceEngine(CognitiveModule):
         return Signal(data=output, metadata={"free_energy": free_energy, "action": action.tolist()})
 
     def predict(self, signal: Signal) -> Prediction:
-        predicted_obs = self.generative_model.predict_observation(self.generative_model.belief_state)
+        gm = self.generative_model
+        predicted_obs = gm.predict_observation(gm.belief_state)
         return Prediction(value=predicted_obs, uncertainty=float(np.var(predicted_obs)))
 
     def update(self, prediction_error: float) -> None:

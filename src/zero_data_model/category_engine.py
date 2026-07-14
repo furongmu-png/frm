@@ -2,9 +2,12 @@
 """Category Theory Foundation for cross-domain reasoning."""
 
 from __future__ import annotations
-import numpy as np
+
 from dataclasses import dataclass, field
-from .base import Signal, Prediction, CognitiveModule
+
+import numpy as np
+
+from .base import CognitiveModule, Prediction, Signal
 
 # JIT kernels -- graceful fallback to pure numpy if numba missing.
 try:
@@ -116,7 +119,9 @@ class CategoryTheoryEngine(CognitiveModule):
         cos_sim = np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b) + 1e-8)
         return float(cos_sim)
 
-    def transfer_solution(self, source_cat: str, target_cat: str, solution: np.ndarray) -> np.ndarray:
+    def transfer_solution(
+        self, source_cat: str, target_cat: str, solution: np.ndarray
+    ) -> np.ndarray:
         """Transfer a solution between domains via functor."""
         for functor in self.functors:
             if functor.source == source_cat and functor.target == target_cat:
@@ -126,7 +131,7 @@ class CategoryTheoryEngine(CognitiveModule):
     def process(self, signal: Signal) -> Signal:
         truth = self.topos.classify(signal.data)
         for cat_name, cat in self.categories.items():
-            for obj_name, obj_repr in cat.objects.items():
+            for _obj_name, obj_repr in cat.objects.items():
                 similarity = self.find_isomorphism(signal.data, obj_repr)
                 if similarity > 0.8:
                     for functor in self.functors:

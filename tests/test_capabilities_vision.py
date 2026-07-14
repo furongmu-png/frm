@@ -7,8 +7,8 @@ import numpy as np
 
 from zero_data_model.capabilities.rules import VisionRules
 from zero_data_model.capabilities.vision import (
-    ImageEncoder,
     FeatureExtractor,
+    ImageEncoder,
     PatternRecognizer,
     ShapeAnalyzer,
 )

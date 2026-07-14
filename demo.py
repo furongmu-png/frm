@@ -2,9 +2,11 @@
 """Demo: Zero-Data Model in action — no external data required."""
 
 import sys
+
 sys.path.insert(0, "src")
 
 import numpy as np
+
 from zero_data_model.model import ZeroDataModel
 
 
@@ -24,7 +26,7 @@ def main():
     print(f"  Parallel:       {hw['backend']} with {hw['n_workers']} workers")
 
     print("\n[1] Self-Generated Thought (no input data)")
-    for i in range(3):
+    for _i in range(3):
         result = model.think()
         print(f"  Cycle {result.metadata['cycle']}: "
               f"output norm={np.linalg.norm(result.data):.4f}, "
@@ -60,7 +62,8 @@ def main():
     print("-" * 60)
 
     print("\n[6] NLP: Text Encoding & Semantic Similarity")
-    t1, t2, t3 = "code data model algorithm", "code data model algorithm", "tree river mountain ocean"
+    t1, t2 = "code data model algorithm", "code data model algorithm"
+    t3 = "tree river mountain ocean"
     sim_same = model.text_similarity(t1, t2)
     sim_diff = model.text_similarity(t1, t3)
     print(f"  similarity('{t1}', '{t2}') = {sim_same:.4f}  (identical)")
@@ -123,7 +126,8 @@ def main():
     anomalies = model.detect_anomalies(anomaly_series)
     print(f"  Series:    {anomaly_series}")
     print(f"  Anomalies: {anomalies}")
-    print(f"  Detected {int(anomalies.sum())} anomaly point(s) at index {np.where(anomalies)[0].tolist()}")
+    print(f"  Detected {int(anomalies.sum())} anomaly point(s) at "
+          f"index {np.where(anomalies)[0].tolist()}")
 
     print("\n[15] Analytics: Pattern Mining")
     mined = model.mine_patterns(series)
@@ -137,7 +141,8 @@ def main():
     trend = model.analyze_trend(up_series)
     print(f"  Up-trend series -> regime='{trend['regime']}'")
     print(f"  Slope={trend['trend_slope']:.4f}, Curvature={trend['curvature']:.4f}")
-    print(f"  Geodesic deviation={trend['geodesic_deviation']:.4f}, Isomorphism={trend['isomorphism_score']:.4f}")
+    print(f"  Geodesic deviation={trend['geodesic_deviation']:.4f}, "
+          f"Isomorphism={trend['isomorphism_score']:.4f}")
 
     print("\n" + "=" * 60)
     print("  Demo complete. No external data was fed to the model.")

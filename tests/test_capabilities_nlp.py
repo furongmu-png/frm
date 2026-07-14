@@ -12,10 +12,10 @@ from __future__ import annotations
 import numpy as np
 
 from zero_data_model.capabilities.nlp import (
-    TextEncoder,
     SemanticComparator,
-    ZeroShotClassifier,
+    TextEncoder,
     TextGenerator,
+    ZeroShotClassifier,
 )
 
 

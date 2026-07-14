@@ -1,9 +1,11 @@
 """Domain capabilities built on top of the zero-data core modules."""
 
-from .rules import DomainRules, NLPRules, VisionRules, AnalyticsRules
+import contextlib
+
+from .rules import AnalyticsRules, DomainRules, NLPRules, VisionRules
 from .vision import (
-    ImageEncoder,
     FeatureExtractor,
+    ImageEncoder,
     PatternRecognizer,
     ShapeAnalyzer,
 )
@@ -11,56 +13,46 @@ from .vision import (
 # Sibling capability modules (NLP, Analytics) are not implemented yet.
 # Guard their imports so this package stays importable; the names below are
 # only exported once the corresponding modules exist.
-try:  # pragma: no cover - optional sibling module
+with contextlib.suppress(ImportError):  # pragma: no cover - optional sibling module
     from .nlp import (
-        TextEncoder,
         SemanticComparator,
-        ZeroShotClassifier,
+        TextEncoder,
         TextGenerator,
+        ZeroShotClassifier,
     )
-except ImportError:
-    pass
 
-try:  # pragma: no cover - optional sibling module
+with contextlib.suppress(ImportError):  # pragma: no cover - optional sibling module
     from .analytics import (
-        TimeSeriesForecaster,
         AnomalyDetector,
         PatternMiner,
+        TimeSeriesForecaster,
         TrendAnalyzer,
     )
-except ImportError:
-    pass
 
 # Advanced capability modules (multilingual NLP, point clouds / video / depth,
 # causal inference / Bayesian updating / change-point detection). Same optional
 # import guard as the base modules so the package stays importable if a sibling
 # advanced module is removed.
-try:  # pragma: no cover - optional sibling module
+with contextlib.suppress(ImportError):  # pragma: no cover - optional sibling module
     from .nlp_advanced import (
         MultiLingualEncoder,
-        SyntacticAnalyzer,
         SentenceEncoder,
+        SyntacticAnalyzer,
     )
-except ImportError:
-    pass
 
-try:  # pragma: no cover - optional sibling module
+with contextlib.suppress(ImportError):  # pragma: no cover - optional sibling module
     from .vision_advanced import (
+        DepthEstimator,
         PointCloudEncoder,
         VideoFrameAnalyzer,
-        DepthEstimator,
     )
-except ImportError:
-    pass
 
-try:  # pragma: no cover - optional sibling module
+with contextlib.suppress(ImportError):  # pragma: no cover - optional sibling module
     from .analytics_advanced import (
-        CausalInference,
         BayesianEstimator,
+        CausalInference,
         ChangePointDetector,
     )
-except ImportError:
-    pass
 
 __all__ = [
     "DomainRules",

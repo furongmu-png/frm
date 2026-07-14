@@ -2,9 +2,11 @@
 """Base classes for the zero-data model system."""
 
 from __future__ import annotations
+
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
+
 import numpy as np
 
 

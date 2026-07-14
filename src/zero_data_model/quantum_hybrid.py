@@ -8,9 +8,11 @@ with numba when installed for faster optimization.
 """
 
 from __future__ import annotations
+
 import numpy as np
-from .base import Signal, Prediction, CognitiveModule
-from .hardware.quantum import get_quantum_backend, QuantumBackend
+
+from .base import CognitiveModule, Prediction, Signal
+from .hardware.quantum import QuantumBackend, get_quantum_backend
 
 # JIT kernels -- graceful fallback to pure numpy if numba missing.
 try:
@@ -41,6 +43,18 @@ class VariationalQuantumCircuit:
     @property
     def backend_name(self) -> str:
         return self.backend.name
+
+    @property
+    def is_real_quantum_hardware(self) -> bool:
+        """True when the backend is real IBM Quantum hardware.
+
+        Combines the backend's identity (``name == "ibm_quantum"``) with the
+        backend's own availability flag so simulator fallbacks (no token,
+        missing runtime, or a failed job) always report ``False``.
+        """
+        return self.backend.name == "ibm_quantum" and bool(
+            getattr(self.backend, "is_real_hardware", False)
+        )
 
     def evolve(self, input_state: np.ndarray) -> np.ndarray:
         """Run the variational ansatz; returns a normalized state vector.

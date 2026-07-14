@@ -41,31 +41,31 @@ except ImportError:  # pragma: no cover - optional dependency
 
 def _collect_target_functions():
     """Collect the hot functions/methods to be profiled."""
-    from zero_data_model.consciousness_core import (
-        ConsciousnessCore,
-        PredictiveLayer,
-        GlobalWorkspace,
-    )
     from zero_data_model.active_inference import (
         ActiveInferenceEngine,
         GenerativeModel,
+    )
+    from zero_data_model.biological import (
+        BiologicalSubstrate,
+        CellularAutomata,
+        MorphogeneticField,
     )
     from zero_data_model.category_engine import (
         CategoryTheoryEngine,
         ToposEngine,
     )
-    from zero_data_model.quantum_hybrid import QuantumClassicalHybrid
-    from zero_data_model.biological import (
-        BiologicalSubstrate,
-        MorphogeneticField,
-        CellularAutomata,
+    from zero_data_model.consciousness_core import (
+        ConsciousnessCore,
+        GlobalWorkspace,
+        PredictiveLayer,
     )
     from zero_data_model.math_universe import (
-        MathematicalUniverse,
-        InformationGeometry,
-        TopologicalAnalyzer,
         FractalGenerator,
+        InformationGeometry,
+        MathematicalUniverse,
+        TopologicalAnalyzer,
     )
+    from zero_data_model.quantum_hybrid import QuantumClassicalHybrid
 
     # Bound method references resolved against pre-built instances for clean
     # line-by-line reporting.
@@ -113,8 +113,14 @@ def _collect_target_functions():
 
     # Math universe hot loops.
     targets.append(("InformationGeometry.kl_divergence", InformationGeometry.kl_divergence))
-    targets.append(("TopologicalAnalyzer.compute_betti_numbers", TopologicalAnalyzer.compute_betti_numbers))
-    targets.append(("TopologicalAnalyzer.topological_features", TopologicalAnalyzer.topological_features))
+    targets.append((
+        "TopologicalAnalyzer.compute_betti_numbers",
+        TopologicalAnalyzer.compute_betti_numbers,
+    ))
+    targets.append((
+        "TopologicalAnalyzer.topological_features",
+        TopologicalAnalyzer.topological_features,
+    ))
     targets.append(("FractalGenerator.generate", FractalGenerator.generate))
     targets.append(("MathematicalUniverse.process", MathematicalUniverse.process))
 
@@ -123,8 +129,9 @@ def _collect_target_functions():
 
 def run_line_profiler():
     """Run line_profiler against all target functions for one think() cycle."""
-    from zero_data_model.model import ZeroDataModel
     from line_profiler import LineProfiler
+
+    from zero_data_model.model import ZeroDataModel
 
     targets, _ = _collect_target_functions()
 
@@ -138,7 +145,7 @@ def run_line_profiler():
     sig_data = rng.standard_normal(64)
 
     lp = LineProfiler()
-    for name, fn in targets:
+    for _name, fn in targets:
         lp.add_function(fn)
     lp.add_function(model.think)
 
@@ -156,8 +163,8 @@ def run_line_profiler():
 
 def run_coarse_timing():
     """Fallback: time each module's process() and the full think() cycle."""
-    from zero_data_model.model import ZeroDataModel
     from zero_data_model.base import Signal
+    from zero_data_model.model import ZeroDataModel
 
     model = ZeroDataModel(dim=64)
     rng = np.random.default_rng(0)

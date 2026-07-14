@@ -1,0 +1,32 @@
+# syntax=docker/dockerfile:1
+#
+# Dockerfile.dev — image for running the test suite and dev tooling in a
+# container. Installs the [dev] extras (pytest, pytest-cov, ruff, line_profiler)
+# plus quantum/jit/parallel/web so all tests can run.
+# Build:  docker build -f Dockerfile.dev -t zero-data-model-dev .
+# Run:    docker run --rm zero-data-model-dev
+
+FROM python:3.12-slim
+
+# Build tools may be needed by some test/dev dependencies (e.g. compiling
+# line_profiler extensions). gcc + headers are installed in a single layer
+# with cache cleanup to limit image bloat.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends gcc python3-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy the whole project (tests included) so pytest can discover them.
+# The root .dockerignore excludes tests/ (for the lean runtime image), so a
+# companion Dockerfile.dev.dockerignore (honored by BuildKit) keeps tests/ in
+# the dev build context. Build with BuildKit: DOCKER_BUILDKIT=1 docker build
+# -f Dockerfile.dev -t zero-data-model-dev .
+COPY . .
+
+# Install with dev + runtime extras so ruff/pytest/coverage + web/quantum/jit/
+# parallel are all available.
+RUN pip install --no-cache-dir ".[dev,quantum,jit,parallel,web]"
+
+# Default: run the full test suite quietly. Override with `docker run ... <cmd>`.
+CMD ["python", "-m", "pytest", "tests/", "-q"]

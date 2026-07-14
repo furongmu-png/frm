@@ -1,7 +1,8 @@
 # tests/test_base.py
 import numpy as np
 import pytest
-from zero_data_model.base import Signal, Prediction, CognitiveModule, KnowledgeStore
+
+from zero_data_model.base import CognitiveModule, KnowledgeStore, Prediction, Signal
 
 
 def test_signal_creation():

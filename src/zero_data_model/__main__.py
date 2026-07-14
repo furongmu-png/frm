@@ -3,19 +3,28 @@
 Prints the installed version and runs a quick zero-data demo: one
 ``think()`` cycle, a zero-shot text classification, and a hardware
 backend report. Use ``--version`` to print only the version string.
+Pass ``--mcp`` to start the MCP server instead of the mini-demo.
 """
 
 from __future__ import annotations
 
 import argparse
 import sys
-from typing import Sequence
+from collections.abc import Sequence
 
 
 def _print_version() -> int:
     from . import __version__
 
     print(__version__)
+    return 0
+
+
+def _run_mcp() -> int:
+    # Imported lazily so ``--version`` does not pay the import cost.
+    from .mcp_server import ZeroDataMCPServer
+
+    ZeroDataMCPServer().run()
     return 0
 
 
@@ -74,10 +83,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         action="store_true",
         help="Print the installed zero-data-model version and exit.",
     )
+    parser.add_argument(
+        "--mcp",
+        action="store_true",
+        help="Start the MCP server exposing the model's tools to AI agents "
+        "(requires the optional `mcp` package for live serving).",
+    )
     args = parser.parse_args(argv)
 
     if args.version:
         return _print_version()
+    if args.mcp:
+        return _run_mcp()
     return _run_demo()
 
 
