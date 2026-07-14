@@ -10,19 +10,27 @@ from .category_engine import CategoryTheoryEngine
 from .quantum_hybrid import QuantumClassicalHybrid
 from .biological import BiologicalSubstrate
 from .math_universe import MathematicalUniverse
+from .capabilities.nlp import TextEncoder, SemanticComparator, ZeroShotClassifier, TextGenerator
+from .capabilities.vision import ImageEncoder, FeatureExtractor, PatternRecognizer, ShapeAnalyzer
+from .capabilities.analytics import TimeSeriesForecaster, AnomalyDetector, PatternMiner, TrendAnalyzer
 
 
 class ZeroDataModel:
     """
     A self-sufficient cognitive system requiring no external data.
 
-    Architecture:
+    Core Architecture:
     - Consciousness Core: perception, attention, self-reflection
     - Active Inference: free energy minimization, epistemic foraging
     - Category Theory: cross-domain reasoning, isomorphism detection
     - Quantum-Classical Hybrid: parallel exploration, optimization
     - Biological Substrate: DNA storage, morphogenesis, cellular automata
     - Mathematical Universe: information geometry, topology, fractals
+
+    Domain Capabilities (compose the core modules + rule priors):
+    - NLP: text encoding, semantic similarity, zero-shot classification, text generation
+    - Vision: image encoding, feature extraction, pattern recognition, shape analysis
+    - Analytics: time-series forecasting, anomaly detection, pattern mining, trend analysis
     """
 
     def __init__(self, dim: int = 64):
@@ -41,6 +49,19 @@ class ZeroDataModel:
             self.biological,
             self.math_universe,
         ]
+        # Domain capabilities built on top of the core modules.
+        self.nlp_text_encoder = TextEncoder(dim=dim)
+        self.nlp_comparator = SemanticComparator(self.nlp_text_encoder, self.math_universe, self.category_engine)
+        self.nlp_classifier = ZeroShotClassifier(dim=dim, active_inference=self.active_inference, category_engine=self.category_engine)
+        self.nlp_generator = TextGenerator(dim=dim, biological=self.biological, math_universe=self.math_universe)
+        self.vision_encoder = ImageEncoder(dim=dim, math_universe=self.math_universe)
+        self.vision_features = FeatureExtractor(dim=dim, biological=self.biological)
+        self.vision_recognizer = PatternRecognizer(dim=dim, active_inference=self.active_inference, consciousness=self.consciousness, encoder=self.vision_encoder)
+        self.vision_analyzer = ShapeAnalyzer(dim=dim, category_engine=self.category_engine)
+        self.analytics_forecaster = TimeSeriesForecaster(dim=dim, active_inference=self.active_inference, quantum_hybrid=self.quantum_hybrid)
+        self.analytics_anomaly = AnomalyDetector(dim=dim, active_inference=self.active_inference)
+        self.analytics_miner = PatternMiner(dim=dim, biological=self.biological, math_universe=self.math_universe)
+        self.analytics_trend = TrendAnalyzer(dim=dim, math_universe=self.math_universe, category_engine=self.category_engine)
         self.cycle_count = 0
 
     def think(self, input_data: np.ndarray | None = None) -> Signal:
@@ -108,3 +129,57 @@ class ZeroDataModel:
     def generate_knowledge(self, query: str = "") -> Signal:
         """Self-generate knowledge without external data."""
         return self._self_generate()
+
+    # --- NLP capabilities ---
+
+    def encode_text(self, text: str) -> np.ndarray:
+        """Encode text into a fixed-dim vector (zero-data)."""
+        return self.nlp_text_encoder.encode(text)
+
+    def text_similarity(self, a: str, b: str) -> float:
+        """Compute semantic similarity between two texts in [0, 1]."""
+        return self.nlp_comparator.similarity(a, b)
+
+    def classify_text(self, text: str) -> tuple[str, float]:
+        """Zero-shot classify text into a topic (tech/nature/emotion/science)."""
+        return self.nlp_classifier.classify(text)
+
+    def generate_text(self, seed: str, length: int = 32) -> str:
+        """Generate text from a seed with no external data."""
+        return self.nlp_generator.generate(seed, length=length)
+
+    # --- Vision capabilities ---
+
+    def encode_image(self, image: np.ndarray) -> np.ndarray:
+        """Encode a 2D image into a fixed-dim vector (zero-data)."""
+        return self.vision_encoder.encode(image)
+
+    def extract_image_features(self, image: np.ndarray) -> dict:
+        """Extract rule-based features (edges, texture, morphology, stats)."""
+        return self.vision_features.extract(image)
+
+    def recognize_pattern(self, image: np.ndarray) -> tuple[str, float]:
+        """Recognize a shape/pattern via self-synthesized prototypes."""
+        return self.vision_recognizer.recognize(image)
+
+    def analyze_shape(self, image: np.ndarray) -> dict:
+        """Analyze geometric/topological shape properties."""
+        return self.vision_analyzer.analyze(image)
+
+    # --- Analytics capabilities ---
+
+    def forecast(self, series: np.ndarray, horizon: int = 5) -> np.ndarray:
+        """Forecast future values of a 1D series (zero-data)."""
+        return self.analytics_forecaster.forecast(series, horizon=horizon)
+
+    def detect_anomalies(self, series: np.ndarray) -> np.ndarray:
+        """Detect anomalies in a 1D series (returns bool mask)."""
+        return self.analytics_anomaly.detect(series)
+
+    def mine_patterns(self, series: np.ndarray) -> dict:
+        """Mine structural patterns (self-similarity, topology, CA rule, periodicity)."""
+        return self.analytics_miner.mine(series)
+
+    def analyze_trend(self, series: np.ndarray) -> dict:
+        """Analyze trend, regime, curvature, geodesic deviation, isomorphism."""
+        return self.analytics_trend.analyze(series)
