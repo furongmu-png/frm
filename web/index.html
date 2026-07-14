@@ -1,0 +1,653 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Zero-Data Cognitive Model</title>
+<style>
+  :root {
+    --bg: #f6f7f9;
+    --card: #ffffff;
+    --border: #e1e4e8;
+    --text: #1f2328;
+    --muted: #57606a;
+    --accent: #2563eb;
+    --accent-hover: #1d4ed8;
+    --ok: #1a7f37;
+    --warn: #b45309;
+    --err: #cf222e;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: var(--sans);
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.5;
+  }
+  header {
+    background: var(--card);
+    border-bottom: 1px solid var(--border);
+    padding: 16px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  header h1 {
+    margin: 0;
+    font-size: 18px;
+    font-weight: 600;
+  }
+  header h1 .subtitle {
+    color: var(--muted);
+    font-weight: 400;
+    font-size: 13px;
+    margin-left: 6px;
+  }
+  #status {
+    display: flex;
+    gap: 14px;
+    flex-wrap: wrap;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  #status .badge {
+    background: #f0f3f7;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 3px 8px;
+    font-family: var(--mono);
+  }
+  #status .badge .k { color: var(--muted); margin-right: 4px; }
+  #status .badge .v { color: var(--text); font-weight: 600; }
+  #status .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    display: inline-block; margin-right: 6px;
+    background: var(--muted);
+  }
+  #status .dot.ok { background: var(--ok); }
+  #status .dot.err { background: var(--err); }
+
+  nav.tabs {
+    display: flex;
+    background: var(--card);
+    border-bottom: 1px solid var(--border);
+    padding: 0 24px;
+    gap: 4px;
+  }
+  nav.tabs button {
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    padding: 12px 16px;
+    font: inherit;
+    font-weight: 500;
+    color: var(--muted);
+    cursor: pointer;
+  }
+  nav.tabs button:hover { color: var(--text); }
+  nav.tabs button.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+  }
+
+  main {
+    padding: 24px;
+    max-width: 1100px;
+    margin: 0 auto;
+  }
+  .panel {
+    display: none;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: 16px;
+  }
+  .panel.active { display: grid; }
+
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+  }
+  .card h2 {
+    margin: 0 0 12px 0;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text);
+  }
+  .card h2 .hint {
+    color: var(--muted);
+    font-weight: 400;
+    font-size: 12px;
+    margin-left: 6px;
+  }
+  label {
+    display: block;
+    font-size: 12px;
+    color: var(--muted);
+    margin: 8px 0 4px;
+  }
+  input[type="text"], input[type="number"], textarea {
+    width: 100%;
+    padding: 7px 9px;
+    font: inherit;
+    font-size: 13px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: #fff;
+    color: var(--text);
+    outline: none;
+  }
+  textarea {
+    font-family: var(--mono);
+    font-size: 12px;
+    resize: vertical;
+    min-height: 90px;
+  }
+  input:focus, textarea:focus { border-color: var(--accent); }
+  button.primary {
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    padding: 8px 14px;
+    font: inherit;
+    font-weight: 500;
+    cursor: pointer;
+    margin-top: 10px;
+  }
+  button.primary:hover { background: var(--accent-hover); }
+  button.primary:disabled { background: #94a3b8; cursor: not-allowed; }
+  .row { display: flex; gap: 8px; align-items: flex-end; }
+  .row > * { flex: 1; }
+
+  .out {
+    margin-top: 12px;
+    padding: 10px 12px;
+    background: #f8fafc;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 13px;
+    min-height: 24px;
+    color: var(--text);
+    word-break: break-word;
+    white-space: pre-wrap;
+    font-family: var(--mono);
+  }
+  .out.empty { color: var(--muted); font-style: italic; }
+  .out .label { color: var(--muted); font-weight: 600; margin-right: 6px; font-style: normal; }
+  .out .big { font-size: 22px; font-weight: 700; color: var(--accent); }
+  .out .pill {
+    display: inline-block;
+    background: #e0e7ff;
+    color: var(--accent);
+    border-radius: 12px;
+    padding: 1px 8px;
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .out .err { color: var(--err); }
+
+  canvas.chart {
+    width: 100%;
+    height: 180px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: #fff;
+    margin-top: 10px;
+    display: block;
+  }
+  .legend {
+    display: flex;
+    gap: 14px;
+    margin-top: 6px;
+    font-size: 11px;
+    color: var(--muted);
+  }
+  .legend span.swatch {
+    display: inline-block;
+    width: 10px; height: 10px;
+    border-radius: 2px;
+    margin-right: 4px;
+    vertical-align: middle;
+  }
+  .footer {
+    text-align: center;
+    color: var(--muted);
+    font-size: 11px;
+    margin: 24px 0 8px;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>
+    Zero-Data Cognitive Model
+    <span class="subtitle">REST control panel</span>
+  </h1>
+  <div id="status">
+    <span><span class="dot" id="dot"></span><span id="status-text">checking…</span></span>
+    <span class="badge"><span class="k">array</span><span class="v" id="hw-array">—</span></span>
+    <span class="badge"><span class="k">quantum</span><span class="v" id="hw-quantum">—</span></span>
+    <span class="badge"><span class="k">gpu</span><span class="v" id="hw-gpu">—</span></span>
+    <span class="badge"><span class="k">workers</span><span class="v" id="hw-workers">—</span></span>
+    <button class="primary" id="refresh-btn" style="margin:0;padding:4px 10px;font-size:12px;">refresh</button>
+  </div>
+</header>
+
+<nav class="tabs">
+  <button class="active" data-tab="nlp">NLP</button>
+  <button data-tab="vision">Vision</button>
+  <button data-tab="analytics">Analytics</button>
+</nav>
+
+<main>
+
+  <!-- NLP -->
+  <section class="panel active" id="panel-nlp">
+    <div class="card">
+      <h2>Classify <span class="hint">/classify</span></h2>
+      <label for="cls-text">Text</label>
+      <textarea id="cls-text" rows="3">the algorithm computes the network</textarea>
+      <button class="primary" id="cls-btn">Classify</button>
+      <div class="out empty" id="cls-out">Result will appear here.</div>
+    </div>
+
+    <div class="card">
+      <h2>Similarity <span class="hint">/similarity</span></h2>
+      <label for="sim-a">Text A</label>
+      <input type="text" id="sim-a" value="code data model">
+      <label for="sim-b">Text B</label>
+      <input type="text" id="sim-b" value="model data code">
+      <button class="primary" id="sim-btn">Compare</button>
+      <div class="out empty" id="sim-out">Result will appear here.</div>
+    </div>
+
+    <div class="card">
+      <h2>Generate <span class="hint">/generate</span></h2>
+      <label for="gen-seed">Seed</label>
+      <input type="text" id="gen-seed" value="hello">
+      <label for="gen-len">Length</label>
+      <input type="number" id="gen-len" value="32" min="1" max="256">
+      <button class="primary" id="gen-btn">Generate</button>
+      <div class="out empty" id="gen-out">Result will appear here.</div>
+    </div>
+  </section>
+
+  <!-- Vision -->
+  <section class="panel" id="panel-vision">
+    <div class="card">
+      <h2>Recognize pattern <span class="hint">/recognize</span></h2>
+      <p style="font-size:12px;color:var(--muted);margin:0 0 8px 0;">
+        Paste a 2D grayscale array. Rows separated by newlines, values by
+        commas (e.g. <code style="font-family:var(--mono);">0,0,0,1,0</code>).
+        Non-numeric tokens are skipped.
+      </p>
+      <textarea id="rec-img" rows="8" placeholder="0,0,0,0,0&#10;0,1,1,1,0&#10;0,1,1,1,0&#10;0,1,1,1,0&#10;0,0,0,0,0">0,0,0,0,0
+0,1,1,1,0
+0,1,1,1,0
+0,1,1,1,0
+0,0,0,0,0</textarea>
+      <button class="primary" id="rec-btn">Recognize</button>
+      <div class="out empty" id="rec-out">Result will appear here.</div>
+    </div>
+
+    <div class="card">
+      <h2>Image preview</h2>
+      <canvas id="rec-canvas" class="chart" width="320" height="180" style="height:180px;"></canvas>
+      <div class="legend"><span><span class="swatch" style="background:#000;"></span>0 (min)</span><span><span class="swatch" style="background:#fff;border:1px solid var(--border);"></span>max</span></div>
+    </div>
+  </section>
+
+  <!-- Analytics -->
+  <section class="panel" id="panel-analytics">
+    <div class="card">
+      <h2>Forecast <span class="hint">/forecast</span></h2>
+      <label for="fc-series">Series (comma or whitespace separated)</label>
+      <textarea id="fc-series" rows="3">1, 2, 3, 4, 5, 6, 7, 8, 9, 10</textarea>
+      <div class="row">
+        <div>
+          <label for="fc-horizon">Horizon</label>
+          <input type="number" id="fc-horizon" value="5" min="1" max="50">
+        </div>
+      </div>
+      <button class="primary" id="fc-btn">Forecast</button>
+      <canvas id="fc-canvas" class="chart" width="600" height="180"></canvas>
+      <div class="legend">
+        <span><span class="swatch" style="background:#2563eb;"></span>observed</span>
+        <span><span class="swatch" style="background:#b45309;"></span>forecast</span>
+      </div>
+      <div class="out empty" id="fc-out">Result will appear here.</div>
+    </div>
+
+    <div class="card">
+      <h2>Anomalies <span class="hint">/anomalies</span></h2>
+      <label for="an-series">Series (comma or whitespace separated)</label>
+      <textarea id="an-series" rows="3">1, 1, 1, 1, 1, 99, 1, 1, 1, 1, 1</textarea>
+      <button class="primary" id="an-btn">Detect</button>
+      <canvas id="an-canvas" class="chart" width="600" height="180"></canvas>
+      <div class="legend">
+        <span><span class="swatch" style="background:#1f2328;"></span>series</span>
+        <span><span class="swatch" style="background:#cf222e;"></span>flagged point</span>
+      </div>
+      <div class="out empty" id="an-out">Result will appear here.</div>
+    </div>
+
+    <div class="card">
+      <h2>Trend <span class="hint">/trend</span></h2>
+      <label for="tr-series">Series (comma or whitespace separated)</label>
+      <textarea id="tr-series" rows="3">1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15</textarea>
+      <button class="primary" id="tr-btn">Analyze</button>
+      <div class="out empty" id="tr-out">Result will appear here.</div>
+    </div>
+  </section>
+
+</main>
+
+<div class="footer">Calls http://localhost:8000 — start the API with
+  <code style="font-family:var(--mono);">python -m zero_data_model.api</code>
+  or
+  <code style="font-family:var(--mono);">uvicorn zero_data_model.api:app --port 8000</code>.
+</div>
+
+<script>
+  const API = "http://localhost:8000";
+
+  // ----- Helpers ----------------------------------------------------------
+  function setOut(id, html) {
+    const el = document.getElementById(id);
+    el.classList.remove("empty");
+    el.innerHTML = html;
+  }
+  function setOutErr(id, msg) {
+    const el = document.getElementById(id);
+    el.classList.remove("empty");
+    el.innerHTML = `<span class="err">${msg}</span>`;
+  }
+  function parseSeries(text) {
+    return text.split(/[\s,;]+/)
+      .map(s => parseFloat(s))
+      .filter(n => Number.isFinite(n));
+  }
+  // Parse a 2D array from a textarea: rows on separate lines, values comma/space separated.
+  function parseImage(text) {
+    const rows = text.split(/\n+/).map(line =>
+      line.split(/[\s,;]+/)
+          .map(s => parseFloat(s))
+          .filter(n => Number.isFinite(n))
+    ).filter(r => r.length > 0);
+    if (rows.length === 0) return null;
+    const width = Math.max(...rows.map(r => r.length));
+    // Pad ragged rows with zeros.
+    return rows.map(r => {
+      while (r.length < width) r.push(0);
+      return r;
+    });
+  }
+
+  async function postJSON(path, body) {
+    const r = await fetch(API + path, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) {
+      let detail = "";
+      try { detail = (await r.json()).detail || ""; } catch (_) {}
+      throw new Error(`${r.status} ${r.statusText}${detail ? ": " + detail : ""}`);
+    }
+    return await r.json();
+  }
+
+  // ----- Header status ----------------------------------------------------
+  async function refreshStatus() {
+    const dot = document.getElementById("dot");
+    const text = document.getElementById("status-text");
+    dot.className = "dot";
+    text.textContent = "checking…";
+    try {
+      const r = await fetch(API + "/");
+      if (!r.ok) throw new Error(`${r.status}`);
+      const body = await r.json();
+      const hw = body.hardware_info || {};
+      document.getElementById("hw-array").textContent = hw.array_backend || "—";
+      document.getElementById("hw-quantum").textContent = hw.quantum_backend || "—";
+      document.getElementById("hw-gpu").textContent = hw.gpu ? "yes" : "no";
+      document.getElementById("hw-workers").textContent = hw.n_workers || "—";
+      dot.className = "dot ok";
+      text.textContent = "online";
+    } catch (e) {
+      dot.className = "dot err";
+      text.textContent = "offline";
+    }
+  }
+
+  // ----- Tabs -------------------------------------------------------------
+  document.querySelectorAll("nav.tabs button").forEach(btn => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll("nav.tabs button").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      document.querySelectorAll(".panel").forEach(p => p.classList.remove("active"));
+      document.getElementById("panel-" + btn.dataset.tab).classList.add("active");
+    });
+  });
+
+  // ----- NLP --------------------------------------------------------------
+  document.getElementById("cls-btn").addEventListener("click", async () => {
+    const text = document.getElementById("cls-text").value;
+    try {
+      const r = await postJSON("/classify", {text});
+      setOut("cls-out",
+        `<span class="label">topic</span><span class="pill">${r.topic}</span>
+         <span class="label" style="margin-left:12px;">confidence</span><span class="big">${(r.confidence * 100).toFixed(1)}%</span>`);
+    } catch (e) { setOutErr("cls-out", "Error: " + e.message); }
+  });
+
+  document.getElementById("sim-btn").addEventListener("click", async () => {
+    const a = document.getElementById("sim-a").value;
+    const b = document.getElementById("sim-b").value;
+    try {
+      const r = await postJSON("/similarity", {a, b});
+      setOut("sim-out", `<span class="label">similarity</span><span class="big">${(r.similarity * 100).toFixed(1)}%</span>`);
+    } catch (e) { setOutErr("sim-out", "Error: " + e.message); }
+  });
+
+  document.getElementById("gen-btn").addEventListener("click", async () => {
+    const seed = document.getElementById("gen-seed").value;
+    const length = parseInt(document.getElementById("gen-len").value, 10) || 32;
+    try {
+      const r = await postJSON("/generate", {seed, length});
+      setOut("gen-out", `<span class="label">text</span>${escapeHtml(r.text)}`);
+    } catch (e) { setOutErr("gen-out", "Error: " + e.message); }
+  });
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+    }[c]));
+  }
+
+  // ----- Vision -----------------------------------------------------------
+  function drawImage(canvas, grid) {
+    const ctx = canvas.getContext("2d");
+    const W = canvas.width, H = canvas.height;
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(0, 0, W, H);
+    if (!grid || grid.length === 0) return;
+    let min = Infinity, max = -Infinity;
+    for (const row of grid) for (const v of row) {
+      if (v < min) min = v; if (v > max) max = v;
+    }
+    const rows = grid.length;
+    const cols = Math.max(...grid.map(r => r.length));
+    const cellW = W / cols, cellH = H / rows;
+    const range = (max - min) || 1;
+    for (let y = 0; y < rows; y++) {
+      for (let x = 0; x < cols; x++) {
+        const v = grid[y][x] || 0;
+        const t = (v - min) / range; // 0..1
+        const c = Math.round(t * 255);
+        ctx.fillStyle = `rgb(${c},${c},${c})`;
+        ctx.fillRect(x * cellW, y * cellH, Math.ceil(cellW), Math.ceil(cellH));
+      }
+    }
+  }
+
+  document.getElementById("rec-btn").addEventListener("click", async () => {
+    const text = document.getElementById("rec-img").value;
+    const img = parseImage(text);
+    if (!img) { setOutErr("rec-out", "Could not parse a non-empty 2D array."); return; }
+    drawImage(document.getElementById("rec-canvas"), img);
+    try {
+      const r = await postJSON("/recognize", {image: img});
+      setOut("rec-out",
+        `<span class="label">shape</span><span class="pill">${r.shape}</span>
+         <span class="label" style="margin-left:12px;">confidence</span><span class="big">${(r.confidence * 100).toFixed(1)}%</span>`);
+    } catch (e) { setOutErr("rec-out", "Error: " + e.message); }
+  });
+
+  // ----- Analytics: forecast ---------------------------------------------
+  function drawForecast(canvas, observed, forecast) {
+    const ctx = canvas.getContext("2d");
+    const W = canvas.width, H = canvas.height;
+    ctx.clearRect(0, 0, W, H);
+    const pad = 12;
+    const data = observed.concat(forecast);
+    if (data.length === 0) return;
+    let min = Math.min(...data), max = Math.max(...data);
+    if (min === max) { min -= 1; max += 1; }
+    const x = i => pad + (i / Math.max(1, data.length - 1)) * (W - 2 * pad);
+    const y = v => H - pad - ((v - min) / (max - min)) * (H - 2 * pad);
+
+    // Axis baseline.
+    ctx.strokeStyle = "#e1e4e8";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(pad, H - pad);
+    ctx.lineTo(W - pad, H - pad);
+    ctx.stroke();
+
+    // Observed (blue).
+    ctx.strokeStyle = "#2563eb";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    observed.forEach((v, i) => {
+      const px = x(i), py = y(v);
+      if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+    });
+    ctx.stroke();
+
+    // Forecast (amber) + connector from last observed.
+    if (forecast.length > 0) {
+      ctx.strokeStyle = "#b45309";
+      ctx.lineWidth = 2;
+      ctx.setLineDash([4, 3]);
+      ctx.beginPath();
+      const startX = x(observed.length - 1);
+      const startY = y(observed[observed.length - 1]);
+      ctx.moveTo(startX, startY);
+      forecast.forEach((v, i) => ctx.lineTo(x(observed.length + i), y(v)));
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Forecast dots.
+      ctx.fillStyle = "#b45309";
+      forecast.forEach((v, i) => {
+        ctx.beginPath();
+        ctx.arc(x(observed.length + i), y(v), 3, 0, Math.PI * 2);
+        ctx.fill();
+      });
+    }
+  }
+
+  document.getElementById("fc-btn").addEventListener("click", async () => {
+    const series = parseSeries(document.getElementById("fc-series").value);
+    const horizon = parseInt(document.getElementById("fc-horizon").value, 10) || 5;
+    if (series.length === 0) { setOutErr("fc-out", "Series is empty."); return; }
+    try {
+      const r = await postJSON("/forecast", {series, horizon});
+      drawForecast(document.getElementById("fc-canvas"), series, r.forecast);
+      setOut("fc-out",
+        `<span class="label">next ${r.forecast.length}:</span>${r.forecast.map(v => v.toFixed(3)).join(", ")}`);
+    } catch (e) { setOutErr("fc-out", "Error: " + e.message); }
+  });
+
+  // ----- Analytics: anomalies --------------------------------------------
+  function drawAnomalies(canvas, series, mask) {
+    const ctx = canvas.getContext("2d");
+    const W = canvas.width, H = canvas.height;
+    ctx.clearRect(0, 0, W, H);
+    const pad = 12;
+    if (series.length === 0) return;
+    let min = Math.min(...series), max = Math.max(...series);
+    if (min === max) { min -= 1; max += 1; }
+    const x = i => pad + (i / Math.max(1, series.length - 1)) * (W - 2 * pad);
+    const y = v => H - pad - ((v - min) / (max - min)) * (H - 2 * pad);
+
+    ctx.strokeStyle = "#e1e4e8";
+    ctx.beginPath();
+    ctx.moveTo(pad, H - pad);
+    ctx.lineTo(W - pad, H - pad);
+    ctx.stroke();
+
+    // Connecting line.
+    ctx.strokeStyle = "#1f2328";
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    series.forEach((v, i) => {
+      const px = x(i), py = y(v);
+      if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+    });
+    ctx.stroke();
+
+    // Points: red if flagged.
+    series.forEach((v, i) => {
+      ctx.fillStyle = mask[i] ? "#cf222e" : "#1f2328";
+      ctx.beginPath();
+      ctx.arc(x(i), y(v), mask[i] ? 5 : 2.5, 0, Math.PI * 2);
+      ctx.fill();
+    });
+  }
+
+  document.getElementById("an-btn").addEventListener("click", async () => {
+    const series = parseSeries(document.getElementById("an-series").value);
+    if (series.length === 0) { setOutErr("an-out", "Series is empty."); return; }
+    try {
+      const r = await postJSON("/anomalies", {series});
+      drawAnomalies(document.getElementById("an-canvas"), series, r.anomalies);
+      const count = r.anomalies.filter(Boolean).length;
+      setOut("an-out",
+        `<span class="label">flagged</span>${count} / ${r.anomalies.length}
+         <span class="label" style="margin-left:12px;">mask</span>${r.anomalies.map(b => b ? "1" : "0").join("")}`);
+    } catch (e) { setOutErr("an-out", "Error: " + e.message); }
+  });
+
+  // ----- Analytics: trend -------------------------------------------------
+  document.getElementById("tr-btn").addEventListener("click", async () => {
+    const series = parseSeries(document.getElementById("tr-series").value);
+    if (series.length === 0) { setOutErr("tr-out", "Series is empty."); return; }
+    try {
+      const r = await postJSON("/trend", {series});
+      const regimeColor = r.regime === "up" ? "#1a7f37"
+                       : r.regime === "down" ? "#cf222e" : "#57606a";
+      setOut("tr-out",
+        `<span class="label">regime</span><span class="pill" style="background:#e0e7ff;color:${regimeColor};">${r.regime}</span>
+         <span class="label" style="margin-left:12px;">slope</span>${r.trend_slope.toFixed(4)}
+         <span class="label" style="margin-left:12px;">curvature</span>${r.curvature.toFixed(4)}
+         <span class="label" style="margin-left:12px;">geo. dev.</span>${r.geodesic_deviation.toFixed(4)}
+         <span class="label" style="margin-left:12px;">isomorphism</span>${r.isomorphism_score.toFixed(4)}`);
+    } catch (e) { setOutErr("tr-out", "Error: " + e.message); }
+  });
+
+  // ----- Boot -------------------------------------------------------------
+  document.getElementById("refresh-btn").addEventListener("click", refreshStatus);
+  refreshStatus();
+</script>
+
+</body>
+</html>
