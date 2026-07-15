@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import os
 import threading
 
 import numpy as np
@@ -69,6 +70,23 @@ class ZeroDataModel:
         # analytics methods (classify_text, detect_anomalies, ...) use the
         # now-pure ``compute_free_energy`` and do not touch the RNG, so they
         # remain safe to call concurrently with each other.
+        #
+        # When a seed is set, also pin the BLAS thread count to 1 (B-CRIT-01):
+        # multi-threaded BLAS (OpenBLAS/MKL) parallelises matmuls across cores
+        # and the thread-local work partition is not deterministic across
+        # runs, which breaks reproducibility even when the numpy RNG is
+        # seeded. ``setdefault`` only takes effect when the variable is not
+        # already set in the environment, and only before numpy initialises
+        # its BLAS context -- so this is best-effort for processes that
+        # construct a seeded model before any heavy numpy work.
+        if seed is not None:
+            for _var in (
+                "OMP_NUM_THREADS",
+                "OPENBLAS_NUM_THREADS",
+                "MKL_NUM_THREADS",
+                "NUMEXPR_NUM_THREADS",
+            ):
+                os.environ.setdefault(_var, "1")
         self._seed = seed
         if seed is not None:
             np.random.seed(seed)
@@ -192,6 +210,14 @@ class ZeroDataModel:
         The whole cycle is serialized by ``self._lock`` (Fix 7) so concurrent
         ``think`` calls do not race on the legacy global numpy RNG or on
         shared module state.
+
+        C-7: Per-module prediction uncertainties are computed from the input
+        signal (not the integrated signal) and used to weight the integration
+        via ``softmax(1/uncertainty)``. Modules that are more confident about
+        the input contribute more to the integrated output, and the same
+        predictions drive the ``update()`` step — avoiding a redundant second
+        predict pass and aligning with predictive-processing theory (bottom-up
+        prediction errors drive both integration and learning).
         """
         with self._lock:
             # When a seed is set, re-seed the global numpy RNG from the
@@ -211,13 +237,24 @@ class ZeroDataModel:
             # Parallel module processing.
             results = self.parallel_executor.map_modules(self.modules, signal)
 
-            integrated = self._integrate(results)
+            # C-7: Predict from the INPUT signal to obtain per-module
+            # uncertainties, which then weight the integration. Modules that
+            # are more confident (lower uncertainty) about the input contribute
+            # more to the integrated output. The same predictions drive the
+            # ``update()`` step below, avoiding a redundant second predict
+            # pass. ``ConsciousnessCore.predict`` reuses its process cache,
+            # so this call is cheap for that module.
+            preds = self.parallel_executor.map(
+                lambda m: m.predict(signal), self.modules
+            )
+            uncertainties = np.array(
+                [max(float(p.uncertainty), 1e-8) for p in preds]
+            )
+
+            # C-7: Weighted integration by inverse uncertainty.
+            integrated = self._integrate(results, uncertainties)
             reflection = self.consciousness.reflect()
 
-            # Parallel prediction.
-            preds = self.parallel_executor.map(
-                lambda m: m.predict(integrated), self.modules
-            )
             # Per-module prediction error (Fix 16): the original code passed
             # every module the same mean error; pass each module its own
             # ``pred.uncertainty`` so update() is meaningfully per-module.
@@ -243,13 +280,46 @@ class ZeroDataModel:
             combined = np.pad(combined, (0, self.dim - len(combined)))
         return Signal(data=combined[: self.dim], metadata={"self_generated": True})
 
-    def _integrate(self, signals: list[Signal]) -> Signal:
-        """Integrate signals from all modules."""
+    def _integrate(
+        self,
+        signals: list[Signal],
+        uncertainties: np.ndarray | None = None,
+    ) -> Signal:
+        """Integrate signals from all modules.
+
+        C-7: When ``uncertainties`` is provided (one per module), weight each
+        module's output by ``softmax(1 / uncertainty)`` so more confident
+        modules (lower prediction uncertainty) contribute more to the
+        integrated signal. When ``uncertainties`` is None (backward-compatible
+        path used by callers that do not compute predictions), fall back to
+        the original equal-weight mean.
+
+        The softmax normalises weights to sum to 1 and is numerically stable
+        when some uncertainties are very small (via max-subtraction). When all
+        uncertainties are equal, softmax(1/c) produces uniform weights — the
+        same result as the equal-weight mean — so the weighted path is a
+        strict generalisation of the original behaviour.
+        """
         max_len = max(len(s.data) for s in signals)
         padded = np.zeros((len(signals), max_len))
         for i, s in enumerate(signals):
             padded[i, : len(s.data)] = s.data
-        mean_signal = np.mean(padded, axis=0)
+
+        if uncertainties is None or len(uncertainties) != len(signals):
+            # Equal-weight mean (backward-compatible path).
+            mean_signal = np.mean(padded, axis=0)
+        else:
+            # C-7: Inverse-uncertainty weighting via softmax(1/uncertainty).
+            # Confident modules (low uncertainty) weigh more; the softmax
+            # normalises weights to sum to 1 and is numerically stable when
+            # some uncertainties are very small (via max-subtraction).
+            inv_unc = 1.0 / np.asarray(uncertainties, dtype=float)
+            inv_unc = inv_unc - np.max(inv_unc)  # numerical stability
+            weights = np.exp(inv_unc)
+            weights = weights / (np.sum(weights) + 1e-12)
+            # Weighted sum: each row weighted by its module's confidence.
+            mean_signal = (weights[:, None] * padded).sum(axis=0)
+
         return Signal(data=mean_signal[: self.dim], metadata={"integrated": True})
 
     def solve(self, problem: np.ndarray) -> Signal:
@@ -294,15 +364,18 @@ class ZeroDataModel:
 
     def text_similarity(self, a: str, b: str) -> float:
         """Compute semantic similarity between two texts in [0, 1]."""
-        return self.nlp_comparator.similarity(a, b)
+        with self._lock:
+            return self.nlp_comparator.similarity(a, b)
 
     def classify_text(self, text: str) -> tuple[str, float]:
         """Zero-shot classify text into a topic (tech/nature/emotion/science)."""
-        return self.nlp_classifier.classify(text)
+        with self._lock:
+            return self.nlp_classifier.classify(text)
 
     def generate_text(self, seed: str, length: int = 32) -> str:
         """Generate text from a seed with no external data."""
-        return self.nlp_generator.generate(seed, length=length)
+        with self._lock:
+            return self.nlp_generator.generate(seed, length=length)
 
     # --- Vision capabilities ---
 
@@ -312,33 +385,40 @@ class ZeroDataModel:
 
     def extract_image_features(self, image: np.ndarray) -> dict:
         """Extract rule-based features (edges, texture, morphology, stats)."""
-        return self.vision_features.extract(image)
+        with self._lock:
+            return self.vision_features.extract(image)
 
     def recognize_pattern(self, image: np.ndarray) -> tuple[str, float]:
         """Recognize a shape/pattern via self-synthesized prototypes."""
-        return self.vision_recognizer.recognize(image)
+        with self._lock:
+            return self.vision_recognizer.recognize(image)
 
     def analyze_shape(self, image: np.ndarray) -> dict:
         """Analyze geometric/topological shape properties."""
-        return self.vision_analyzer.analyze(image)
+        with self._lock:
+            return self.vision_analyzer.analyze(image)
 
     # --- Analytics capabilities ---
 
     def forecast(self, series: np.ndarray, horizon: int = 5) -> np.ndarray:
         """Forecast future values of a 1D series (zero-data)."""
-        return self.analytics_forecaster.forecast(series, horizon=horizon)
+        with self._lock:
+            return self.analytics_forecaster.forecast(series, horizon=horizon)
 
     def detect_anomalies(self, series: np.ndarray) -> np.ndarray:
         """Detect anomalies in a 1D series (returns bool mask)."""
-        return self.analytics_anomaly.detect(series)
+        with self._lock:
+            return self.analytics_anomaly.detect(series)
 
     def mine_patterns(self, series: np.ndarray) -> dict:
         """Mine structural patterns (self-similarity, topology, CA rule, periodicity)."""
-        return self.analytics_miner.mine(series)
+        with self._lock:
+            return self.analytics_miner.mine(series)
 
     def analyze_trend(self, series: np.ndarray) -> dict:
         """Analyze trend, regime, curvature, geodesic deviation, isomorphism."""
-        return self.analytics_trend.analyze(series)
+        with self._lock:
+            return self.analytics_trend.analyze(series)
 
     # --- Advanced NLP capabilities ---
 
@@ -352,11 +432,13 @@ class ZeroDataModel:
 
     def analyze_syntax(self, text: str) -> dict:
         """Rule-based syntactic analysis (sentences, POS guesses, SVO hint)."""
-        return self.nlp_syntactic.analyze(text)
+        with self._lock:
+            return self.nlp_syntactic.analyze(text)
 
     def encode_sentences(self, text: str) -> np.ndarray:
         """Encode each sentence of ``text`` into its own dim-length vector."""
-        return self.nlp_sentence_encoder.encode(text)
+        with self._lock:
+            return self.nlp_sentence_encoder.encode(text)
 
     # --- Advanced Vision capabilities ---
 
@@ -364,28 +446,34 @@ class ZeroDataModel:
         """Encode a 3D point cloud (Nx3) into a dim-length L2-normalized vector."""
         return self.vision_point_cloud.encode(points)
 
-    def analyze_video(self, frames) -> dict:
+    def analyze_video(self, frames: list[np.ndarray] | np.ndarray) -> dict:
         """Analyze a sequence of 2D frames (motion, keyframes, temporal encoding)."""
-        return self.vision_video.analyze(frames)
+        with self._lock:
+            return self.vision_video.analyze(frames)
 
     def estimate_depth(self, image: np.ndarray) -> dict:
         """Estimate a monocular depth map from a single 2D image (rule-based)."""
-        return self.vision_depth.estimate(image)
+        with self._lock:
+            return self.vision_depth.estimate(image)
 
     # --- Advanced Analytics capabilities ---
 
     def infer_cause(self, cause: np.ndarray, effect: np.ndarray, max_lag: int = 5) -> dict:
         """Granger-style causal inference between two series (no statsmodels)."""
-        return self.analytics_causal.infer_cause(cause, effect, max_lag=max_lag)
+        with self._lock:
+            return self.analytics_causal.infer_cause(cause, effect, max_lag=max_lag)
 
-    def bayesian_update(self, obs) -> None:
+    def bayesian_update(self, obs: float | np.ndarray) -> None:
         """Online Bayesian posterior update from a single observation."""
-        self.analytics_bayesian.update(obs)
+        with self._lock:
+            self.analytics_bayesian.update(obs)
 
     def bayesian_predictive(self) -> tuple[float, float]:
         """Return ``(mean, std)`` of the Bayesian posterior predictive distribution."""
-        return self.analytics_bayesian.predictive()
+        with self._lock:
+            return self.analytics_bayesian.predictive()
 
     def detect_change_points(self, series: np.ndarray) -> np.ndarray:
         """Detect distributional change points in ``series`` (returns int indices)."""
-        return self.analytics_changepoint.detect(series)
+        with self._lock:
+            return self.analytics_changepoint.detect(series)

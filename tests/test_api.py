@@ -34,7 +34,11 @@ def client(tmp_path):
         prev_limiter_enabled = api_module.limiter.enabled
         api_module.limiter.enabled = False
     app = create_app()
-    with TestClient(app) as c:
+    # TrustedHostMiddleware (S-MED-13) rejects non-allow-listed Host headers.
+    # The TestClient defaults to ``http://testserver``; point it at
+    # ``localhost`` (which is in the default ZDM_ALLOWED_HOSTS allow-list) so
+    # the host-header check passes without each test having to set the env var.
+    with TestClient(app, base_url="http://localhost") as c:
         yield c
     # Reset the singleton so other tests get a fresh lazy-init dim=32 model.
     api_module._model = None
@@ -196,8 +200,11 @@ def test_post_save_and_load_roundtrip(client):
     snap = "snap_via_api"
 
     r = client.post("/save", json={"name": snap})
-    assert r.status_code == 200
+    assert r.status_code == 201
     assert r.json()["saved"] is True
+    assert r.json()["name"] == snap
+    # 201 Created must advertise the canonical resource URI (Q-LOW-13).
+    assert r.headers["Location"] == f"/load/{snap}"
 
     # Run a couple more think() cycles so the in-memory model diverges.
     client.post("/think")
@@ -388,7 +395,9 @@ def test_api_key_required_when_set(tmp_path, monkeypatch):
 
     monkeypatch.setenv("ZDM_API_KEY", "test-secret-xyz")
     app = _create_app()
-    with TestClient(app) as c:
+    # Use ``localhost`` so TrustedHostMiddleware (S-MED-13) accepts the
+    # request; the default ``testserver`` host is not in the allow-list.
+    with TestClient(app, base_url="http://localhost") as c:
         # Without the header -> 401.
         r = c.get("/")
         assert r.status_code == 401

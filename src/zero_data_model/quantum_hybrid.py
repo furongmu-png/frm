@@ -88,19 +88,26 @@ SimulatedQuantumCircuit = VariationalQuantumCircuit
 
 # Numba-accelerated annealing inner loop (JIT when available, pure-numpy
 # fallback otherwise). Kept at module scope so the compiled cache persists.
+#
+# A-CRIT-02: ``np.random.*`` calls inside an ``@njit`` function use numba's
+# *own* internal RNG, which is independent of numpy's global RNG and is NOT
+# re-seeded by ``ZeroDataModel.think``/``solve``. To make seeded models
+# reproducible, the random ``flips`` and ``accepts`` sequences are generated
+# outside the JIT kernel (drawing from numpy's global RNG) and passed in as
+# arrays.
 try:  # pragma: no cover - optional dependency
     from numba import njit
 
-    @njit(cache=True)
-    def _anneal_inner(cost_matrix, best_state, best_energy, n_iterations, n_vars):
+    @njit(cache=True, nogil=True)
+    def _anneal_inner(cost_matrix, best_state, best_energy, n_iterations, n_vars, flips, accepts):
         for t in range(1, n_iterations + 1):
             temperature = 1.0 / np.log(1.0 + t)
             candidate = best_state.copy()
-            flip = np.random.randint(n_vars)
+            flip = flips[t - 1]
             candidate[flip] = -candidate[flip]
             candidate_energy = float(candidate @ cost_matrix @ candidate)
             delta = candidate_energy - best_energy
-            if delta < 0.0 or np.random.random() < np.exp(-delta / (temperature + 1e-8)):
+            if delta < 0.0 or accepts[t - 1] < np.exp(-delta / (temperature + 1e-8)):
                 best_state = candidate
                 best_energy = candidate_energy
         return best_state, best_energy
@@ -109,15 +116,15 @@ try:  # pragma: no cover - optional dependency
 except ImportError:  # pragma: no cover
     _HAS_NUMBA = False
 
-    def _anneal_inner(cost_matrix, best_state, best_energy, n_iterations, n_vars):
+    def _anneal_inner(cost_matrix, best_state, best_energy, n_iterations, n_vars, flips, accepts):
         for t in range(1, n_iterations + 1):
             temperature = 1.0 / np.log(1 + t)
             candidate = best_state.copy()
-            flip = np.random.randint(n_vars)
+            flip = flips[t - 1]
             candidate[flip] *= -1
             candidate_energy = float(candidate @ cost_matrix @ candidate)
             delta = candidate_energy - best_energy
-            if delta < 0 or np.random.random() < np.exp(-delta / (temperature + 1e-8)):
+            if delta < 0 or accepts[t - 1] < np.exp(-delta / (temperature + 1e-8)):
                 best_state = candidate
                 best_energy = candidate_energy
         return best_state, best_energy
@@ -131,15 +138,26 @@ class QuantumAnnealer:
         self.cost_matrix = np.random.randn(n_vars, n_vars) * 0.1
         self.cost_matrix = (self.cost_matrix + self.cost_matrix.T) / 2
         self.jit = _HAS_NUMBA
+        self._jit_warmed = False
 
     def optimize(self, n_iterations: int = 100) -> tuple[np.ndarray, float]:
         best_state = np.random.choice([-1, 1], size=self.n_vars).astype(float)
         best_energy = float(best_state @ self.cost_matrix @ best_state)
+        # Generate the RNG sequence outside JIT so it draws from numpy's
+        # global RNG (which is re-seeded by ZeroDataModel.think/solve when a
+        # seed is set) rather than numba's independent internal RNG (A-CRIT-02).
+        flips = np.random.randint(0, self.n_vars, size=n_iterations)
+        accepts = np.random.random(size=n_iterations)
         # Warm up the JIT cache on the first call with this array shape.
-        if self.jit:
-            _anneal_inner(self.cost_matrix, best_state.copy(), best_energy, 1, self.n_vars)
+        if self.jit and not self._jit_warmed:
+            _anneal_inner(
+                self.cost_matrix, best_state.copy(), best_energy, 1, self.n_vars,
+                flips[:1], accepts[:1],
+            )
+            self._jit_warmed = True
         best_state, best_energy = _anneal_inner(
-            self.cost_matrix, best_state, best_energy, n_iterations, self.n_vars
+            self.cost_matrix, best_state, best_energy, n_iterations, self.n_vars,
+            flips, accepts,
         )
         return best_state, float(best_energy)
 
@@ -202,6 +220,9 @@ class QuantumClassicalHybrid(CognitiveModule):
         return Prediction(value=predicted, uncertainty=float(np.var(predicted)))
 
     def update(self, prediction_error: float) -> None:
+        if not np.isfinite(prediction_error):
+            return
+        prediction_error = float(np.clip(prediction_error, -1e6, 1e6))
         noise = np.random.randn(*self.classical_weights.shape) * prediction_error * 0.001
         self.classical_weights += noise
 

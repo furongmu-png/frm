@@ -143,6 +143,12 @@ class PatternRecognizer:
         self.active_inference = active_inference
         self.consciousness = consciousness
         self.encoder = encoder or ImageEncoder(dim=dim)
+        # Precompute each prototype's encoding once (P-HIGH-06): recognize()
+        # previously re-synthesized and re-encoded every prototype per call.
+        self._proto_encodings: dict[str, np.ndarray] = {
+            shape: self.encoder.encode(self._synthesize_prototype(shape))
+            for shape in self.rules.shapes
+        }
 
     def _synthesize_prototype(self, shape: str, size: int = 16) -> np.ndarray:
         """Deterministically draw a named shape on a square grid (no learning)."""
@@ -187,8 +193,7 @@ class PatternRecognizer:
         best_shape: str | None = None
         best_score = -float("inf")
         for shape in self.rules.shapes:
-            proto = self._synthesize_prototype(shape)
-            proto_enc = self.encoder.encode(proto)
+            proto_enc = self._proto_encodings[shape]
             score = self._cosine(input_enc, proto_enc)
             if self.active_inference is not None:
                 # Free energy of the DIFFERENCE between input and prototype
@@ -269,30 +274,11 @@ class ShapeAnalyzer:
             betti = self.category_engine.topology.compute_betti_numbers(img.flatten())
             return float(betti.get(0, 1))
         binary = (img >= img.mean()).astype(int)
-        return float(self._connected_components(binary))
+        # scipy.ndimage.label is ~200-800x faster than the previous
+        # double for + DFS implementation (P-HIGH-01). The cross structure
+        # preserves the previous 4-connectivity semantics.
+        from scipy.ndimage import label as _scipy_label  # noqa: PLC0415
 
-    @staticmethod
-    def _connected_components(binary: np.ndarray) -> int:
-        """Count 4-connected components of the foreground (value == 1)."""
-        h, w = binary.shape
-        visited = np.zeros_like(binary, dtype=bool)
-        count = 0
-        for i in range(h):
-            for j in range(w):
-                if binary[i, j] == 1 and not visited[i, j]:
-                    count += 1
-                    stack = [(i, j)]
-                    visited[i, j] = True
-                    while stack:
-                        y, x = stack.pop()
-                        for dy, dx in ((1, 0), (-1, 0), (0, 1), (0, -1)):
-                            ny, nx = y + dy, x + dx
-                            if (
-                                0 <= ny < h
-                                and 0 <= nx < w
-                                and binary[ny, nx] == 1
-                                and not visited[ny, nx]
-                            ):
-                                visited[ny, nx] = True
-                                stack.append((ny, nx))
-        return count
+        structure = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]])
+        _, num_features = _scipy_label(binary, structure=structure)
+        return float(num_features)

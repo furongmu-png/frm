@@ -11,13 +11,6 @@
 
 FROM python:3.12-slim
 
-# Install curl so the compose healthcheck (`curl -f http://localhost:8000/`)
-# can run inside the container. Keep this layer minimal; apt cache is purged
-# in the same layer to avoid bloating the image.
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl \
-    && rm -rf /var/lib/apt/lists/*
-
 # Create a non-root user (uid 10001) so the container process never runs as
 # root. The /app directory is chowned to this user so it can write model
 # snapshots under /app/data (Fix 3, CWE-250).
@@ -51,8 +44,15 @@ RUN mkdir -p /app/data && chown -R app:app /app
 # FastAPI / uvicorn listen here.
 EXPOSE 8000
 
+# Mark the runtime as production so docs/openapi are disabled (Q-MED-27).
+ENV ZDM_ENV=production
+
 # Drop privileges for the runtime process (Fix 3, CWE-250).
 USER app
+
+# Healthcheck uses Python stdlib only (no curl needed, S-LOW-09).
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+    CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health', timeout=3).status==200 else 1)"
 
 # Run the ASGI app. `zero_data_model.api:app` is the module-level FastAPI
 # instance created by create_app() in src/zero_data_model/api.py.

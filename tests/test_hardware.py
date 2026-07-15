@@ -49,7 +49,9 @@ def test_qiskit_backend_runs_circuit():
     params = np.random.randn(2, 4, 2) * 0.1
     entangling = np.random.randn(4, 4) * 0.05
     out = backend.evolve_and_measure(params, entangling, n_shots=256)
-    assert out.shape == (8,)  # 2 * n_qubits
+    # C-6 fix: outputs a full 2**n_qubits probability vector over the
+    # computational basis (was incorrectly collapsed to 2 * n_qubits).
+    assert out.shape == (2 ** 4,)
     assert np.all(out >= 0)
     assert np.all(out <= 1.0 + 1e-6)
 
@@ -59,7 +61,8 @@ def test_simulator_backend_fallback():
     params = np.random.randn(2, 4, 2) * 0.1
     entangling = np.random.randn(4, 4) * 0.05
     out = backend.evolve_and_measure(params, entangling)
-    assert out.shape == (8,)
+    # C-6 fix: outputs a full 2**n_qubits probability vector (was 2 * n_qubits).
+    assert out.shape == (2 ** 4,)
     # The simulator normalizes the measured probabilities to sum to 1.0.
     # The previous ``or out.sum() >= 0`` clause was vacuous (always true for
     # a probability vector) and masked real normalization bugs.

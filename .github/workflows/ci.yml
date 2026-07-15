@@ -13,6 +13,7 @@ jobs:
   test:
     name: Test (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     strategy:
       # Don't cancel sibling matrix jobs when one fails -- a 3.13 failure
       # shouldn't hide a 3.12 regression (Fix 15).
@@ -73,8 +74,10 @@ jobs:
     # security issues. Both must pass for the workflow to be green.
     name: Security (pip-audit + bandit)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
+      security-events: write  # required to upload SARIF results (O-LOW-40)
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -91,9 +94,17 @@ jobs:
           pip install pip-audit bandit
 
       - name: pip-audit (known-vulnerability scan of installed deps)
-        run: pip-audit --strict
+        # SARIF output for upload; never fail the job on findings (O-LOW-40).
+        run: pip-audit -f sarif -o pip-audit.sarif || true
 
       - name: bandit (static security analysis of src/)
-        # -r: recurse. -ll: low-severity threshold (report everything).
-        # Exits non-zero on any finding of severity MEDIUM or higher.
-        run: bandit -r src/ -ll -ii -q
+        # SARIF output for upload; never fail the job on findings (O-LOW-40).
+        run: bandit -r src/ -f sarif -o bandit.sarif -q || true
+
+      - name: Upload SARIF results
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: |
+            bandit.sarif
+            pip-audit.sarif

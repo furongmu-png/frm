@@ -12,7 +12,7 @@ services:
     # Use the official slim image directly instead of building from Dockerfile.
     image: python:3.12-slim
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     environment:
       PYTHONUNBUFFERED: "1"
     working_dir: /app

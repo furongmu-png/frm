@@ -27,11 +27,13 @@ Security & operational hardening:
 
 from __future__ import annotations
 
+import hmac
 import json
 import logging
 import os
 import time
 import uuid
+from datetime import datetime
 from logging import Logger
 from typing import Any
 
@@ -44,8 +46,10 @@ from fastapi import (
     HTTPException,
     Request,
 )
-from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field, field_validator
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from . import __version__
 from .model import ZeroDataModel
@@ -70,7 +74,7 @@ except Exception:  # pragma: no cover - optional dep missing
     get_remote_address = None  # type: ignore[assignment]
 
 try:  # pragma: no cover - environment-dependent import
-    from prometheus_client import Gauge, Histogram
+    from prometheus_client import CONTENT_TYPE_LATEST, Gauge, Histogram, generate_latest
     from prometheus_fastapi_instrumentator import Instrumentator
 
     _HAS_PROMETHEUS = True
@@ -79,6 +83,8 @@ except Exception:  # pragma: no cover - optional dep missing
     Instrumentator = None  # type: ignore[assignment, misc]
     Histogram = None  # type: ignore[assignment, misc]
     Gauge = None  # type: ignore[assignment, misc]
+    CONTENT_TYPE_LATEST = ""  # type: ignore[assignment]
+    generate_latest = None  # type: ignore[assignment]
 
 try:  # pragma: no cover - environment-dependent import
     import structlog
@@ -100,7 +106,7 @@ class _JsonFormatter(logging.Formatter):
 
     def format(self, record: logging.LogRecord) -> str:
         payload: dict[str, Any] = {
-            "ts": self.formatTime(record, "%Y-%m-%dT%H:%M:%S"),
+            "ts": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
             "level": record.levelname,
             "logger": record.name,
             "message": record.getMessage(),
@@ -218,7 +224,13 @@ def set_model(model: ZeroDataModel | None) -> None:
 
 def _configured_api_key() -> str | None:
     """Return the configured API key (env ZDM_API_KEY), or None if unset."""
-    return os.environ.get("ZDM_API_KEY") or None
+    raw = os.environ.get("ZDM_API_KEY")
+    if raw is not None and raw.strip() == "":
+        # An explicitly empty value is a configuration error, not "unset".
+        raise RuntimeError(
+            "ZDM_API_KEY is set but empty; refusing to start with auth disabled"
+        )
+    return raw or None
 
 
 def verify_api_key(api_key: str | None = Header(default=None, alias="X-API-Key")) -> None:
@@ -230,7 +242,10 @@ def verify_api_key(api_key: str | None = Header(default=None, alias="X-API-Key")
     expected = _configured_api_key()
     if not expected:
         return
-    if not api_key or api_key != expected:
+    ok = api_key is not None and hmac.compare_digest(
+        api_key.encode("utf-8"), expected.encode("utf-8")
+    )
+    if not ok:
         raise HTTPException(status_code=401, detail="invalid or missing API key")
 
 
@@ -263,19 +278,20 @@ if _HAS_PROMETHEUS:
     _think_duration = Histogram(
         "zdm_think_duration_seconds",
         "Wall-clock duration of /think cycles in seconds.",
+        buckets=(0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10),
     )
     _cycle_count = Gauge(
         "zdm_cycle_count",
         "Current model cycle count.",
     )
-    _prediction_error = Gauge(
-        "zdm_prediction_error",
-        "Most recent prediction error (lower is better).",
+    _free_energy = Gauge(
+        "zdm_free_energy_last",
+        "Last think() cycle free energy",
     )
 else:
     _think_duration = None  # type: ignore[assignment]
     _cycle_count = None  # type: ignore[assignment]
-    _prediction_error = None  # type: ignore[assignment]
+    _free_energy = None  # type: ignore[assignment]
 
 
 # --------------------------------------------------------------------------- #
@@ -355,7 +371,6 @@ class PathRequest(BaseModel):
 
 class HealthResponse(BaseModel):
     status: str
-    version: str
 
 
 class RootResponse(BaseModel):
@@ -367,7 +382,6 @@ class RootResponse(BaseModel):
 class ReadyResponse(BaseModel):
     status: str
     model_ready: bool
-    quantum_backend: str | None = None
 
 
 class ThinkResponse(BaseModel):
@@ -424,9 +438,11 @@ class LoadResponse(BaseModel):
 
 
 def _request_id_from(request: Request) -> str:
-    """Use the inbound X-Request-ID if present, else mint a uuid4 hex."""
-    inbound = request.headers.get("x-request-id")
-    if inbound and isinstance(inbound, str):
+    """Use the inbound X-Request-ID if present (and well-formed), else mint."""
+    inbound = request.headers.get("x-request-id", "")
+    if inbound and len(inbound) <= 64 and all(
+        c.isalnum() or c in "-_" for c in inbound
+    ):
         return inbound
     return uuid.uuid4().hex
 
@@ -451,7 +467,8 @@ async def request_tracing_middleware(request: Request, call_next):  # type: igno
         return response
     finally:
         duration_ms = (time.perf_counter() - start) * 1000.0
-        log.info(
+        log_fn = log.warning if duration_ms > 1000 else log.info
+        log_fn(
             "request",
             request_id=request_id,
             method=request.method,
@@ -459,6 +476,44 @@ async def request_tracing_middleware(request: Request, call_next):  # type: igno
             status=status_code,
             duration_ms=round(duration_ms, 3),
         )
+
+
+# --------------------------------------------------------------------------- #
+# Body size limit (S-HIGH-03 -- CWE-400 DoS via unbounded payload)
+# --------------------------------------------------------------------------- #
+
+MAX_BODY = 4 * 1024 * 1024  # 4 MiB
+
+
+async def _limit_body_size(request: Request, call_next):  # type: ignore[no-untyped-def]
+    """Reject requests whose declared Content-Length exceeds MAX_BODY.
+
+    Only the declared length is checked (the body is not buffered here) so
+    huge uploads are rejected before they hit the application.
+    """
+    cl = request.headers.get("content-length")
+    if cl and int(cl) > MAX_BODY:
+        return JSONResponse(status_code=413, content={"detail": "payload too large"})
+    return await call_next(request)
+
+
+# --------------------------------------------------------------------------- #
+# CORS / TrustedHost configuration (S-MED-13 -- CWE-942 overly-permissive
+# cross-origin / host policy). Both are env-var configurable.
+# --------------------------------------------------------------------------- #
+
+_allowed_origins = [
+    o.strip()
+    for o in os.environ.get(
+        "ZDM_CORS_ORIGINS", "http://localhost:8000,http://localhost:3000"
+    ).split(",")
+    if o.strip()
+]
+_allowed_hosts = [
+    h.strip()
+    for h in os.environ.get("ZDM_ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
+    if h.strip()
+]
 
 
 # --------------------------------------------------------------------------- #
@@ -491,32 +546,85 @@ def create_app() -> FastAPI:
     # Structured access log + X-Request-ID.
     app.middleware("http")(request_tracing_middleware)
 
-    # Prometheus instrumentator (optional).
+    # Body size limit (S-HIGH-03): reject payloads larger than MAX_BODY before
+    # they reach the application. Registered after the tracing middleware so
+    # 413 responses are still logged with a request_id.
+    app.middleware("http")(_limit_body_size)
+
+    # CORS (S-MED-13): only the configured origins may issue credentialed
+    # cross-origin requests. ``allow_credentials=False`` keeps the policy
+    # strict; methods/headers are pinned to what the API actually uses.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_allowed_origins,
+        allow_credentials=False,
+        allow_methods=["GET", "POST"],
+        allow_headers=["Content-Type", "X-API-Key", "X-Request-ID"],
+    )
+    # TrustedHost (S-MED-13): reject requests whose Host header does not
+    # match the configured allow-list (host-header injection / cache
+    # poisoning).
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=_allowed_hosts)
+
+    # Prometheus instrumentator (optional). The instrumentator still
+    # collects the default HTTP metrics, but the /metrics endpoint is
+    # registered separately below with API-key auth (S-HIGH-02).
     if _HAS_PROMETHEUS and Instrumentator is not None:
         Instrumentator(
             should_group_status_codes=False,
             should_ignore_untemplated=True,
             excluded_handlers=["/health", "/ready", "/metrics"],
-        ).instrument(app).expose(
-            app,
-            endpoint="/metrics",
-            include_in_schema=False,
-            tags=["observability"],
-        )
+        ).instrument(app)
+
+    # Graceful-shutdown flag so /health can return 503 while draining
+    # in-flight requests (O-HIGH-21).
+    _shutting_down: bool = False
 
     # Startup banner: warn if auth is disabled (local dev mode).
     @app.on_event("startup")
     async def _on_startup() -> None:
+        # Validate ZDM_ENV (O-MED-26): fail fast on a typo'd environment
+        # name rather than silently running with docs/observability in an
+        # unintended mode.
+        env = os.environ.get("ZDM_ENV", "").lower()
+        if env not in ("", "development", "dev", "production", "prod"):
+            raise RuntimeError(
+                f"Invalid ZDM_ENV={env!r}; expected development/production"
+            )
         if not _configured_api_key():
             log.warning(
                 "ZDM_API_KEY is not set -- authentication disabled (dev mode)"
             )
         else:
             log.info("API key authentication enabled")
+        log.info(
+            "startup_complete",
+            env=env or "development",
+            allowed_hosts=_allowed_hosts,
+        )
+
+    @app.on_event("shutdown")
+    async def _on_shutdown() -> None:
+        nonlocal _shutting_down
+        _shutting_down = True
 
     # ---------------------------------------------------------------- #
-    # Centralized exception handler (CWE-209 -- no internal leakage)
+    # Centralized exception handlers (CWE-209 -- no internal leakage)
     # ---------------------------------------------------------------- #
+    @app.exception_handler(HTTPException)
+    async def _http_exception_handler(  # type: ignore[no-untyped-def]
+        request: Request, exc: HTTPException
+    ) -> JSONResponse:
+        # Surface the request_id on every HTTPException response (Q-MED-12)
+        # so error bodies share the same shape as the unhandled-exception
+        # handler below. Headers (e.g. WWW-Authenticate) are preserved.
+        request_id = getattr(request.state, "request_id", "-")
+        return JSONResponse(
+            status_code=exc.status_code,
+            headers=exc.headers if getattr(exc, "headers", None) else None,
+            content={"detail": exc.detail, "request_id": request_id},
+        )
+
     @app.exception_handler(Exception)
     async def _unhandled_exception_handler(  # type: ignore[no-untyped-def]
         request: Request, exc: Exception
@@ -540,26 +648,37 @@ def create_app() -> FastAPI:
     # ---------------------------------------------------------------- #
     # Health / readiness (cheap liveness; readiness probes the model)
     # ---------------------------------------------------------------- #
+    @app.get(
+        "/metrics",
+        include_in_schema=False,
+        dependencies=[Depends(verify_api_key)],
+    )
+    def _metrics() -> Response:
+        """Prometheus metrics endpoint (auth-gated, S-HIGH-02)."""
+        return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
     @app.get("/health", response_model=HealthResponse, tags=["health"])
-    def health() -> HealthResponse:
+    def health() -> Any:
         """Liveness probe. Cheap: no model construction."""
-        return HealthResponse(status="ok", version=__version__)
+        if _shutting_down:
+            return JSONResponse(
+                status_code=503, content={"status": "shutting_down"}
+            )
+        return HealthResponse(status="ok")
 
     @app.get("/ready", response_model=ReadyResponse, tags=["health"])
-    def ready() -> ReadyResponse:
+    def ready() -> Any:
         """Readiness probe. Constructs the model if needed and reports
-        whether the quantum backend is configured."""
+        whether it is ready to serve requests."""
         try:
-            model = get_model()
-            qb = str(model.quantum_hybrid.quantum_backend_name or "")
-            return ReadyResponse(
-                status="ok",
-                model_ready=True,
-                quantum_backend=qb or None,
-            )
+            get_model()
+            return ReadyResponse(status="ok", model_ready=True)
         except Exception as exc:  # pragma: no cover - defensive
             log.warning("ready_probe_failed", error=str(exc))
-            return ReadyResponse(status="degraded", model_ready=False, quantum_backend=None)
+            return JSONResponse(
+                status_code=503,
+                content={"status": "degraded", "model_ready": False},
+            )
 
     @app.get(
         "/",
@@ -602,6 +721,8 @@ def create_app() -> FastAPI:
             _think_duration.observe(time.perf_counter() - start)
         if _cycle_count is not None:
             _cycle_count.set(model.cycle_count)
+        if _free_energy is not None and model.active_inference.free_energy_history:
+            _free_energy.set(model.active_inference.free_energy_history[-1])
         return ThinkResponse(
             cycle=int(signal.metadata.get("cycle", model.cycle_count)),
             output=[float(x) for x in np.asarray(signal.data).flatten().tolist()],
@@ -725,8 +846,12 @@ def create_app() -> FastAPI:
         tags=["persistence"],
         dependencies=[Depends(verify_api_key)],
     )
-    def save(req: PathRequest) -> SaveResponse:
-        """Persist the current model state to ``name`` (relative) on disk."""
+    def save(req: PathRequest) -> JSONResponse:
+        """Persist the current model state to ``name`` (relative) on disk.
+
+        Returns 201 Created with a ``Location`` header pointing at the
+        canonical resource URI for the snapshot (Q-LOW-13).
+        """
         model = get_model()
         try:
             ModelSerializer.save(model, req.name)
@@ -734,8 +859,12 @@ def create_app() -> FastAPI:
             # Sandbox violation -> 400, no path leakage in detail.
             raise HTTPException(status_code=400, detail="invalid snapshot name") from exc
         except OSError as exc:
-            raise HTTPException(status_code=400, detail="save failed") from exc
-        return SaveResponse(saved=True)
+            raise HTTPException(status_code=500, detail="save failed") from exc
+        return JSONResponse(
+            status_code=201,
+            content={"saved": True, "name": req.name},
+            headers={"Location": f"/load/{req.name}"},
+        )
 
     @app.post(
         "/load",

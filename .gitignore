@@ -13,3 +13,10 @@ build/
 # Coverage
 .coverage
 htmlcov/
+
+# Secrets / environment files (O-LOW-04). ``.env.example`` is kept so the
+# documented template stays tracked; everything else under ``.env*`` is
+# ignored to avoid leaking real credentials.
+.env
+.env.*
+!.env.example

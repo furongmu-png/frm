@@ -61,28 +61,181 @@ class InformationGeometry:
 
 
 class TopologicalAnalyzer:
-    """Simplified persistent homology — computes topological features."""
+    """Simplified persistent homology — computes topological features.
+
+    C-batch fix: the previous ``compute_betti_numbers`` did NOT compute Betti
+    numbers -- it counted *gaps* in a sorted 1D value stream, which is at best
+    a heuristic for ``betti_0`` (number of connected components of a 1D
+    point cloud at radius ``max_radius``), and the ``betti_1 = n - betti_0``
+    formula is topologically wrong (1D point clouds have no 1-loops, so
+    ``betti_1`` is always 0).
+
+    The new API exposes the honest meaning:
+    - ``connected_components_1d`` -- the count the old code actually computed
+    - ``vietoris_rips_betti`` -- a true Vietoris-Rips Betti computation for
+      multi-dimensional point clouds (rows = points), capped at 50 points
+      so triangle enumeration stays tractable.
+    ``compute_betti_numbers`` is kept as a deprecated alias returning
+    ``{0: cc_1d, 1: 0}`` for 1D inputs.
+    """
+
+    # Cap on the number of points accepted by ``vietoris_rips_betti`` to keep
+    # the O(n^3) triangle enumeration tractable.
+    _VR_POINT_CAP = 50
 
     def __init__(self, dim: int = 64):
         self.dim = dim
 
-    def compute_betti_numbers(self, data: np.ndarray, max_radius: float = 1.0) -> dict[int, int]:
-        d = data.flatten()[: self.dim]
+    def connected_components_1d(
+        self, data: np.ndarray, max_radius: float = 1.0
+    ) -> int:
+        """Number of connected components in a 1D point cloud at ``max_radius``.
+
+        Two sorted points are in the same component iff the cumulative gap
+        between them is ``<= max_radius``. This is the count the previous
+        ``compute_betti_numbers`` actually returned (under the name betti_0).
+        """
+        d = np.asarray(data, dtype=float).flatten()[: self.dim]
+        if d.size == 0:
+            return 0
         sorted_vals = np.sort(d)
         n_points = len(sorted_vals)
+        # Reuse the JIT kernel for the gap loop when available.
         if _HAS_JIT:
-            betti_0, betti_1 = _betti_numbers(
+            betti_0, _ = _betti_numbers(
                 np.ascontiguousarray(sorted_vals, dtype=float),
                 float(max_radius),
             )
-            return {0: int(betti_0), 1: int(betti_1)}
+            return int(betti_0)
         betti_0 = 1
         for i in range(1, n_points):
             gap = sorted_vals[i] - sorted_vals[i - 1]
             if gap > max_radius / n_points:
                 betti_0 += 1
-        betti_1 = max(0, n_points - betti_0)
-        return {0: betti_0, 1: betti_1}
+        return int(betti_0)
+
+    def vietoris_rips_betti(
+        self, points: np.ndarray, max_radius: float = 1.0
+    ) -> dict[int, int]:
+        """True Vietoris-Rips Betti numbers (betti_0, betti_1) for a point cloud.
+
+        ``points`` has shape ``(n_points, n_features)``: each row is a point
+        in some Euclidean space. We build the VR 1-skeleton (edges where
+        pairwise distance ``<= max_radius``), enumerate 2-simplices
+        (triangles/cliques of size 3), and compute homology over GF(2):
+
+            betti_0 = # connected components
+            betti_1 = # edges - # vertices + betti_0 - rank(∂_2)
+
+        where ``∂_2`` is the triangle boundary operator. The point cloud is
+        capped at ``_VR_POINT_CAP`` to keep the ``O(n^3)`` triangle enumeration
+        tractable. For degenerate inputs (1 or 0 points) returns ``{0: n, 1: 0}``.
+        """
+        pts = np.asarray(points, dtype=float)
+        if pts.ndim == 1:
+            # Promote a 1D point cloud to (n, 1) so the pairwise distance and
+            # VR construction are still meaningful (1D has betti_1 = 0).
+            pts = pts.reshape(-1, 1)
+        n = pts.shape[0]
+        if n == 0:
+            return {0: 0, 1: 0}
+        if n > self._VR_POINT_CAP:
+            # Subsample uniformly to the cap so the count stays tractable.
+            idx = np.linspace(0, n - 1, self._VR_POINT_CAP).astype(int)
+            pts = pts[idx]
+            n = pts.shape[0]
+        # Pairwise distance matrix.
+        diff = pts[:, None, :] - pts[None, :, :]
+        dist = np.sqrt(np.sum(diff * diff, axis=-1))
+        # 1-skeleton adjacency (exclude self-loops).
+        adj = (dist <= max_radius) & ~np.eye(n, dtype=bool)
+        # betti_0 via union-find on the 1-skeleton.
+        parent = list(range(n))
+
+        def find(x: int) -> int:
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]
+                x = parent[x]
+            return x
+
+        def union(a: int, b: int) -> None:
+            ra, rb = find(a), find(b)
+            if ra != rb:
+                parent[ra] = rb
+
+        for i in range(n):
+            for j in range(i + 1, n):
+                if adj[i, j]:
+                    union(i, j)
+        roots = {find(i) for i in range(n)}
+        betti_0 = len(roots)
+        # Edges and triangles in the VR complex.
+        edges: list[tuple[int, int]] = []
+        for i in range(n):
+            for j in range(i + 1, n):
+                if adj[i, j]:
+                    edges.append((i, j))
+        e_count = len(edges)
+        # Triangles (3-cliques): all pairwise edges present.
+        triangles: list[tuple[int, int, int]] = []
+        for i in range(n):
+            for j in range(i + 1, n):
+                if not adj[i, j]:
+                    continue
+                for k in range(j + 1, n):
+                    if adj[i, k] and adj[j, k]:
+                        triangles.append((i, j, k))
+        t_count = len(triangles)
+        # rank(∂_2) over GF(2): build the (e_count x t_count) boundary
+        # matrix and compute its rank via Gaussian elimination mod 2.
+        if t_count == 0 or e_count == 0:
+            rank_d2 = 0
+        else:
+            edge_index = {e: i for i, e in enumerate(edges)}
+            d2 = np.zeros((e_count, t_count), dtype=np.int8)
+            for t_idx, (a, b, c) in enumerate(triangles):
+                d2[edge_index[(min(a, b), max(a, b))], t_idx] = 1
+                d2[edge_index[(min(a, c), max(a, c))], t_idx] = 1
+                d2[edge_index[(min(b, c), max(b, c))], t_idx] = 1
+            # Gaussian elimination mod 2 to find rank.
+            rank_d2 = 0
+            mat = d2.copy()
+            col = 0
+            for row in range(e_count):
+                if col >= t_count:
+                    break
+                # Find a pivot at or below ``row`` in column ``col``.
+                pivot = -1
+                for r in range(row, e_count):
+                    if mat[r, col] == 1:
+                        pivot = r
+                        break
+                if pivot == -1:
+                    col += 1
+                    continue
+                if pivot != row:
+                    mat[[row, pivot]] = mat[[pivot, row]]
+                # Eliminate below and above.
+                for r in range(e_count):
+                    if r != row and mat[r, col] == 1:
+                        mat[r] = (mat[r] ^ mat[row]).astype(np.int8)
+                rank_d2 += 1
+                col += 1
+        # H_1 = ker(∂_1) / im(∂_2), so dim H_1 = (e - rank(∂_1)) - rank(∂_2)
+        # where rank(∂_1) = n - betti_0 (boundary rank-nullity theorem).
+        betti_1 = e_count - (n - betti_0) - rank_d2
+        if betti_1 < 0:
+            betti_1 = 0
+        return {0: int(betti_0), 1: int(betti_1)}
+
+    def compute_betti_numbers(self, data: np.ndarray, max_radius: float = 1.0) -> dict[int, int]:
+        """Deprecated: use ``connected_components_1d`` or ``vietoris_rips_betti``.
+
+        Returns ``{0: cc_1d, 1: 0}`` for 1D input. The previous ``betti_1 =
+        n - betti_0`` formula was topologically incorrect (1D point clouds
+        have no 1-loops); this is now fixed.
+        """
+        return {0: self.connected_components_1d(data, max_radius), 1: 0}
 
     def topological_features(self, data: np.ndarray) -> np.ndarray:
         betti = self.compute_betti_numbers(data)
@@ -195,6 +348,9 @@ class MathematicalUniverse(CognitiveModule):
         return Prediction(value=value, uncertainty=float(np.var(value)))
 
     def update(self, prediction_error: float) -> None:
+        if not np.isfinite(prediction_error):
+            return
+        prediction_error = float(np.clip(prediction_error, -1e6, 1e6))
         for i, (scale, offset) in enumerate(self.fractal.transforms):
             noise = np.random.randn(*scale.shape) * prediction_error * 0.001
             self.fractal.transforms[i] = (scale + noise, offset)

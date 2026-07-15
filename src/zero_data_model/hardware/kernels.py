@@ -1,6 +1,6 @@
 """Numba-JIT numeric kernels for the zero-data cognitive model.
 
-Each kernel is a ``@njit(cache=True)`` function that takes only numpy arrays
+Each kernel is a ``@njit(cache=True, nogil=True)`` function that takes only numpy arrays
 and primitive types, returning numpy arrays or scalars. When numba is not
 installed, pure-numpy reference implementations are exposed under the same
 names so callers can ``try: from .kernels import _foo`` and degrade
@@ -50,7 +50,7 @@ except ImportError:  # pragma: no cover
 # ---------------------------------------------------------------------------
 
 
-@njit(cache=True)
+@njit(cache=True, nogil=True)
 def _predictive_layer_forward(x, W, b, activation):
     """Forward pass: ``z = x @ W + b`` then tanh or relu (clip to >=0)."""
     z = x @ W + b
@@ -64,7 +64,7 @@ def _predictive_layer_forward(x, W, b, activation):
 # ---------------------------------------------------------------------------
 
 
-@njit(cache=True)
+@njit(cache=True, nogil=True)
 def _cosine_similarity(a, b):
     """Cosine similarity ``dot(a,b) / (|a||b| + 1e-8)`` — single JIT pass."""
     dot = 0.0
@@ -85,7 +85,7 @@ def _cosine_similarity(a, b):
 # ---------------------------------------------------------------------------
 
 
-@njit(cache=True)
+@njit(cache=True, nogil=True)
 def _topos_classify(x, classifier):
     """Element-wise sigmoid of ``x @ classifier``."""
     z = x @ classifier
@@ -101,7 +101,7 @@ def _topos_classify(x, classifier):
 # ---------------------------------------------------------------------------
 
 
-@njit(cache=True)
+@njit(cache=True, nogil=True)
 def _cellular_automata_step(state, rule, size):
     """Apply a Wolfram elementary CA rule to every cell, returning the new state.
 
@@ -122,7 +122,7 @@ def _cellular_automata_step(state, rule, size):
 # ---------------------------------------------------------------------------
 
 
-@njit(cache=True)
+@njit(cache=True, nogil=True)
 def _morphogenetic_laplacian(grid):
     """5-point periodic Laplacian on a 2D grid (matches np.roll boundary wrap)."""
     n = grid.shape[0]
@@ -149,7 +149,7 @@ def _morphogenetic_laplacian(grid):
 # ---------------------------------------------------------------------------
 
 
-@njit(cache=True)
+@njit(cache=True, nogil=True)
 def _kl_divergence(p_abs, q_abs):
     """KL(p || q) for already-absolute, eps-perturbed inputs.
 
@@ -175,7 +175,7 @@ def _kl_divergence(p_abs, q_abs):
 # ---------------------------------------------------------------------------
 
 
-@njit(cache=True)
+@njit(cache=True, nogil=True)
 def _betti_numbers(sorted_vals, max_radius):
     """Compute (betti_0, betti_1) from sorted values + gap threshold."""
     n_points = len(sorted_vals)
@@ -196,7 +196,7 @@ def _betti_numbers(sorted_vals, max_radius):
 # ---------------------------------------------------------------------------
 
 
-@njit(cache=True)
+@njit(cache=True, nogil=True)
 def _fractal_generate(x, scales, offsets, n_iterations, n_transforms):
     """Iteratively apply ``x = tanh(scales[t % n_t] @ x + offsets[t % n_t])``."""
     out = x.copy()
@@ -214,7 +214,7 @@ def _fractal_generate(x, scales, offsets, n_iterations, n_transforms):
 # ---------------------------------------------------------------------------
 
 
-@njit(cache=True)
+@njit(cache=True, nogil=True)
 def _quantum_classical_forward(x, W):
     """``tanh(x @ W)`` for the QuantumClassicalHybrid classical path."""
     return np.tanh(x @ W)
@@ -225,7 +225,7 @@ def _quantum_classical_forward(x, W):
 # ---------------------------------------------------------------------------
 
 
-@njit(cache=True)
+@njit(cache=True, nogil=True)
 def _skewness(data):
     """Fisher-Pearson biased sample skewness, matching ``scipy.stats.skew(data)``.
 

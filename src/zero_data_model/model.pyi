@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from typing import Any
 
 import numpy as np
@@ -61,6 +62,10 @@ class ZeroDataModel:
     """
 
     dim: int
+    # Seeded-RNG / concurrency-safety fields (Fix 9 / Fix 7 / B-CRIT-01).
+    _seed: int | None
+    _rng: np.random.Generator
+    _lock: threading.RLock
     consciousness: ConsciousnessCore
     active_inference: ActiveInferenceEngine
     category_engine: CategoryTheoryEngine
@@ -95,7 +100,7 @@ class ZeroDataModel:
     parallel_executor: ParallelExecutor
     cycle_count: int
 
-    def __init__(self, dim: int = 64) -> None: ...
+    def __init__(self, dim: int = 64, seed: int | None = None) -> None: ...
 
     @property
     def hardware_info(self) -> dict[str, Any]:
@@ -199,7 +204,7 @@ class ZeroDataModel:
         """Encode a 3D point cloud (Nx3) into a dim-length L2-normalized vector."""
         ...
 
-    def analyze_video(self, frames: Any) -> dict[str, Any]:
+    def analyze_video(self, frames: list[np.ndarray] | np.ndarray) -> dict[str, Any]:
         """Analyze a sequence of 2D frames (motion, keyframes, temporal encoding)."""
         ...
 
@@ -215,7 +220,7 @@ class ZeroDataModel:
         """Granger-style causal inference between two series (no statsmodels)."""
         ...
 
-    def bayesian_update(self, obs: Any) -> None:
+    def bayesian_update(self, obs: float | np.ndarray) -> None:
         """Online Bayesian posterior update from a single observation."""
         ...
 

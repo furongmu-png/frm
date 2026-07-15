@@ -9,6 +9,8 @@ device.
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 
 has_gpu = False
@@ -32,14 +34,14 @@ def backend_name() -> str:
     return _backend_name
 
 
-def to_gpu(array):
+def to_gpu(array: np.ndarray) -> Any:
     """Move a NumPy array to the GPU device (no-op when no GPU)."""
     if has_gpu:
         return _cupy.asarray(array)
     return array
 
 
-def to_cpu(array):
+def to_cpu(array: np.ndarray) -> Any:
     """Move a GPU array back to a NumPy array on the host (no-op on CPU)."""
     if has_gpu and hasattr(array, "get"):
         return array.get()

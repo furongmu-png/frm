@@ -61,7 +61,7 @@ class IBMQuantumBackend(QiskitQuantumBackend):
         # Initialize the Qiskit simulator base: provides ``_build_circuit``
         # and the local-sampler fallback used when no hardware is available.
         super().__init__(n_qubits=n_qubits, n_layers=n_layers)
-        self.token = token
+        self._token_masked = token[:4] + "***" if token else None
         self.instance = instance
         self.backend_name = backend_name
         self._service = None
@@ -110,7 +110,7 @@ class IBMQuantumBackend(QiskitQuantumBackend):
             self._available = True
         except Exception as exc:  # pragma: no cover - network/hardware path
             warnings.warn(
-                f"IBM Quantum service initialization failed ({exc!r}); "
+                f"IBM Quantum service initialization failed ({type(exc).__name__}); "
                 "falling back to the local simulator.",
                 stacklevel=2,
             )
@@ -146,14 +146,14 @@ class IBMQuantumBackend(QiskitQuantumBackend):
             counts = self._extract_counts(result[0])
         except IBMApiError as exc:  # pragma: no cover - network/hardware path
             warnings.warn(
-                f"IBM Quantum API error ({exc!r}); falling back to the "
+                f"IBM Quantum API error ({type(exc).__name__}); falling back to the "
                 "local simulator.",
                 stacklevel=2,
             )
             return super().evolve_and_measure(params, entangling, n_shots)
         except Exception as exc:  # pragma: no cover - network/hardware path
             warnings.warn(
-                f"IBM Quantum job failed ({type(exc).__name__}: {exc!r}); "
+                f"IBM Quantum job failed ({type(exc).__name__}); "
                 "falling back to the local simulator.",
                 stacklevel=2,
             )

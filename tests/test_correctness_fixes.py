@@ -241,14 +241,14 @@ def test_annealer_clamps_qubits():
     # The factory must have clamped the qubit count down to the supported max.
     assert backend.n_qubits == 20
     # Shape the ansatz parameters for the *clamped* qubit count so the
-    # state-vector math (length 2 * n_qubits) broadcasts correctly.
+    # state-vector math (length 2**n_qubits) broadcasts correctly.
     n = backend.n_qubits
     params = np.random.randn(2, n, 2) * 0.1
     entangling = np.random.randn(n, n) * 0.05
     out = backend.evolve_and_measure(params, entangling, n_shots=64)
     assert isinstance(out, np.ndarray)
-    # Output length is 2 * n_qubits for both backends.
-    assert out.shape == (2 * n,)
+    # C-6 fix: output length is 2**n_qubits for both backends (was 2 * n_qubits).
+    assert out.shape == (2 ** n,)
     assert out.shape[0] > 0
 
 

@@ -272,73 +272,78 @@ class ModelSerializer:
         model = ZeroDataModel(dim=config["dim"])
         model.cycle_count = int(config.get("cycle_count", 0))
 
-        data = np.load(npz_path)
+        with np.load(npz_path, allow_pickle=False) as data:
+            # Reject any object-dtype array: it could carry arbitrary pickle
+            # payloads even with allow_pickle=False on modern numpy.
+            for k in data.files:
+                if data[k].dtype.kind == "O":
+                    raise ValueError(f"refusing object-dtype array: {k}")
 
-        # Consciousness core: per-layer weights and biases (overwrites each
-        # layer in-place so layer objects keep their identity).
-        for i, layer in enumerate(model.consciousness.layers):
-            if i < config["n_consciousness_layers"]:
-                layer.weights = np.asarray(data[f"consciousness_layers_{i}_weights"])
-                layer.bias = np.asarray(data[f"consciousness_layers_{i}_bias"])
+            # Consciousness core: per-layer weights and biases (overwrites each
+            # layer in-place so layer objects keep their identity).
+            for i, layer in enumerate(model.consciousness.layers):
+                if i < config["n_consciousness_layers"]:
+                    layer.weights = np.asarray(data[f"consciousness_layers_{i}_weights"])
+                    layer.bias = np.asarray(data[f"consciousness_layers_{i}_bias"])
 
-        # Active inference generative model arrays.
-        gm = model.active_inference.generative_model
-        gm.transition = np.asarray(data["active_inference_transition"])
-        gm.emission = np.asarray(data["active_inference_emission"])
-        gm.belief_state = np.asarray(data["active_inference_belief_state"])
+            # Active inference generative model arrays.
+            gm = model.active_inference.generative_model
+            gm.transition = np.asarray(data["active_inference_transition"])
+            gm.emission = np.asarray(data["active_inference_emission"])
+            gm.belief_state = np.asarray(data["active_inference_belief_state"])
 
-        # Category engine: topos classifier + functor transforms.
-        model.category_engine.topos.classifier = np.asarray(
-            data["category_engine_topos_classifier"]
-        )
-        morph_counts = config.get("functor_morphism_counts", [])
-        for j, functor in enumerate(model.category_engine.functors):
-            if j >= config["n_functors"]:
-                break
-            n_morphs = morph_counts[j] if j < len(morph_counts) else 0
-            morph_items = list(functor.morphism_map.items())
-            for k, (key, _value) in enumerate(morph_items):
-                if k >= n_morphs:
-                    break
-                functor.morphism_map[key] = np.asarray(
-                    data[f"category_engine_functor_{j}_transform_{k}"]
-                )
-
-        # Quantum hybrid arrays.
-        model.quantum_hybrid.classical_weights = np.asarray(
-            data["quantum_hybrid_classical_weights"]
-        )
-        model.quantum_hybrid.quantum_circuit.params = np.asarray(
-            data["quantum_hybrid_circuit_params"]
-        )
-        model.quantum_hybrid.quantum_circuit.entangling = np.asarray(
-            data["quantum_hybrid_circuit_entangling"]
-        )
-        model.quantum_hybrid.annealer.cost_matrix = np.asarray(
-            data["quantum_hybrid_annealer_cost_matrix"]
-        )
-
-        # Biological substrate arrays.
-        model.biological.morphogenetic.grid = np.asarray(
-            data["biological_morphogenetic_grid"]
-        )
-        # Replace the morphogen list to preserve length even if the source
-        # machine had a different signal count (default is 3).
-        loaded_morphogens: list[np.ndarray] = []
-        for j in range(config["n_morphogens"]):
-            loaded_morphogens.append(
-                np.asarray(data[f"biological_morphogenetic_morphogens_{j}"])
+            # Category engine: topos classifier + functor transforms.
+            model.category_engine.topos.classifier = np.asarray(
+                data["category_engine_topos_classifier"]
             )
-        model.biological.morphogenetic.morphogens = loaded_morphogens
-        model.biological.automata.state = np.asarray(data["biological_automata_state"])
+            morph_counts = config.get("functor_morphism_counts", [])
+            for j, functor in enumerate(model.category_engine.functors):
+                if j >= config["n_functors"]:
+                    break
+                n_morphs = morph_counts[j] if j < len(morph_counts) else 0
+                morph_items = list(functor.morphism_map.items())
+                for k, (key, _value) in enumerate(morph_items):
+                    if k >= n_morphs:
+                        break
+                    functor.morphism_map[key] = np.asarray(
+                        data[f"category_engine_functor_{j}_transform_{k}"]
+                    )
 
-        # Math universe fractal transforms (scale + offset pairs).
-        loaded_transforms: list[tuple[np.ndarray, np.ndarray]] = []
-        for j in range(config["n_fractal_transforms"]):
-            scale = np.asarray(data[f"math_universe_fractal_transforms_{j}_scale"])
-            offset = np.asarray(data[f"math_universe_fractal_transforms_{j}_offset"])
-            loaded_transforms.append((scale, offset))
-        model.math_universe.fractal.transforms = loaded_transforms
+            # Quantum hybrid arrays.
+            model.quantum_hybrid.classical_weights = np.asarray(
+                data["quantum_hybrid_classical_weights"]
+            )
+            model.quantum_hybrid.quantum_circuit.params = np.asarray(
+                data["quantum_hybrid_circuit_params"]
+            )
+            model.quantum_hybrid.quantum_circuit.entangling = np.asarray(
+                data["quantum_hybrid_circuit_entangling"]
+            )
+            model.quantum_hybrid.annealer.cost_matrix = np.asarray(
+                data["quantum_hybrid_annealer_cost_matrix"]
+            )
+
+            # Biological substrate arrays.
+            model.biological.morphogenetic.grid = np.asarray(
+                data["biological_morphogenetic_grid"]
+            )
+            # Replace the morphogen list to preserve length even if the source
+            # machine had a different signal count (default is 3).
+            loaded_morphogens: list[np.ndarray] = []
+            for j in range(config["n_morphogens"]):
+                loaded_morphogens.append(
+                    np.asarray(data[f"biological_morphogenetic_morphogens_{j}"])
+                )
+            model.biological.morphogenetic.morphogens = loaded_morphogens
+            model.biological.automata.state = np.asarray(data["biological_automata_state"])
+
+            # Math universe fractal transforms (scale + offset pairs).
+            loaded_transforms: list[tuple[np.ndarray, np.ndarray]] = []
+            for j in range(config["n_fractal_transforms"]):
+                scale = np.asarray(data[f"math_universe_fractal_transforms_{j}_scale"])
+                offset = np.asarray(data[f"math_universe_fractal_transforms_{j}_offset"])
+                loaded_transforms.append((scale, offset))
+            model.math_universe.fractal.transforms = loaded_transforms
 
         return model
 

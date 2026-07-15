@@ -28,5 +28,11 @@ COPY . .
 # parallel are all available.
 RUN pip install --no-cache-dir ".[dev,quantum,jit,parallel,web]"
 
+# Run as a non-root user so the dev container never executes as root
+# (S-HIGH-05, CWE-250).
+RUN groupadd -r app && useradd -r -g app -u 10001 app && \
+    chown -R app:app /app
+USER app
+
 # Default: run the full test suite quietly. Override with `docker run ... <cmd>`.
 CMD ["python", "-m", "pytest", "tests/", "-q"]

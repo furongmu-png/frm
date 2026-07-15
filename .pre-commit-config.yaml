@@ -1,0 +1,14 @@
+# Pre-commit hooks (O-LOW-43). Mirrors the CI lint/security gates so the
+# same ruff + bandit checks run locally before every commit.
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.5.0
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+  - repo: https://github.com/PyCQA/bandit
+    rev: 1.7.9
+    hooks:
+      - id: bandit
+        args: [-r, src/, -ll, -ii]

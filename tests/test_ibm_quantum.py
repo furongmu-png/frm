@@ -44,7 +44,8 @@ def test_ibm_backend_factory_returns_simulator_without_token():
     params = np.random.randn(2, 4, 2) * 0.1
     entangling = np.random.randn(4, 4) * 0.05
     out = backend.evolve_and_measure(params, entangling, n_shots=64)
-    assert out.shape == (8,)  # 2 * n_qubits
+    # C-6 fix: outputs a full 2**n_qubits probability vector (was 2 * n_qubits).
+    assert out.shape == (2 ** 4,)
 
 
 def test_ibm_backend_name():
@@ -59,7 +60,8 @@ def test_ibm_backend_fallback_to_simulator():
     params = np.random.randn(2, 4, 2) * 0.1
     entangling = np.random.randn(4, 4) * 0.05
     out = backend.evolve_and_measure(params, entangling, n_shots=64)
-    assert out.shape == (8,)  # 2 * n_qubits
+    # C-6 fix: outputs a full 2**n_qubits probability vector (was 2 * n_qubits).
+    assert out.shape == (2 ** 4,)
 
 
 def test_ibm_backend_without_token_is_not_real_hardware():
@@ -74,5 +76,6 @@ def test_factory_prefer_ibm_works():
     params = np.random.randn(2, 4, 2) * 0.1
     entangling = np.random.randn(4, 4) * 0.05
     out = backend.evolve_and_measure(params, entangling, n_shots=64)
-    assert out.shape == (8,)
+    # C-6 fix: outputs a full 2**n_qubits probability vector (was 2 * n_qubits).
+    assert out.shape == (2 ** 4,)
     assert backend.name in {"ibm_quantum", "qiskit", "simulator"}

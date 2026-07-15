@@ -20,9 +20,9 @@ services:
       # Set ZDM_ENV=production in production compose to disable /docs,
       # /redoc and /openapi.json (Fix 12).
       ZDM_ENV: "production"
-      # Set ZDM_API_KEY in production to require X-API-Key on every
-      # endpoint except /health and /ready (Fix 2, CWE-306).
-      # ZDM_API_KEY: "set-me-in-production"
+      # Require an API key: compose refuses to start if ZDM_API_KEY is
+      # unset or empty (Q-HIGH-26, CWE-306).
+      ZDM_API_KEY: ${ZDM_API_KEY:?must set API key}
     volumes:
       # Optional persistence mount: model save/load endpoints can write here.
       # Kept read-write because /save needs to persist snapshots (Fix 19).
@@ -34,8 +34,15 @@ services:
     # Survive restarts / host reboots, but stop if explicitly stopped.
     restart: unless-stopped
     # Give uvicorn's --timeout-graceful-shutdown 30s room to drain
-    # in-flight requests before compose sends SIGKILL (Fix 4).
-    stop_grace_period: 30s
+    # in-flight requests before compose sends SIGKILL (Fix 4). Bumped to
+    # 45s so the 30s graceful window always fits (O-MED-33).
+    stop_grace_period: 45s
+    # Log rotation so logs do not fill the disk (O-HIGH-31).
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     # Resource limits cap memory at 2 GiB and 2 CPUs so a runaway request
     # can't OOM the host (Fix 5, CWE-770). Requires `docker compose up`
     # with swarm-style deploy support; compose v2 honors these on Linux.
@@ -44,9 +51,12 @@ services:
         limits:
           memory: 2g
           cpus: "2.0"
+        # Soft reservation so the scheduler keeps headroom (O-LOW-36).
+        reservations:
+          memory: 512m
     healthcheck:
-      # Hit the cheap liveness endpoint. curl is installed in the Dockerfile.
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      # Hit the cheap liveness endpoint via Python stdlib (no curl).
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health', timeout=3).status==200 else 1)"]
       interval: 30s
       timeout: 5s
       retries: 3

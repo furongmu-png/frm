@@ -9,7 +9,12 @@ def test_quantum_circuit_evolve():
     qc = SimulatedQuantumCircuit(n_qubits=4)
     state = np.random.randn(8)
     result = qc.evolve(state)
-    assert len(result) == 8
+    # C-6 fix: the quantum state lives in a 2**n_qubits Hilbert space;
+    # the previous ``2 * n_qubits`` dimension was the bug being fixed.
+    assert len(result) == 2 ** 4
+    # Born-rule probabilities: non-negative and sum to 1.
+    assert np.all(result >= 0)
+    assert abs(float(np.sum(result)) - 1.0) < 1e-6
 
 
 def test_quantum_circuit_measure():

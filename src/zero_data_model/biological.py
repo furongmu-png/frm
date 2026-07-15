@@ -18,7 +18,14 @@ except ImportError:  # pragma: no cover - optional dependency
 
 
 class DNAStorage(KnowledgeStore):
-    """DNA-inspired knowledge storage using quaternary encoding (A=0, T=1, C=2, G=3)."""
+    """DNA-inspired knowledge storage using quaternary encoding (A=0, T=1, C=2, G=3).
+
+    C-batch fix: the original implementation normalised to [0, 1] and quantised
+    to 4 levels, which is *lossy* (only 4 distinct values survive). The new
+    implementation is byte-exact lossless: each float64 is viewed as 8 bytes,
+    each byte is split into 4 quaternary digits (4^4 = 256 = 2^8), so the
+    quaternary stream round-trips to the *exact* original float bytes.
+    """
 
     def __init__(self, capacity: int = 1024):
         self.capacity = capacity
@@ -28,19 +35,36 @@ class DNAStorage(KnowledgeStore):
         self._store: OrderedDict[str, dict] = OrderedDict()
 
     def _encode(self, data: np.ndarray) -> np.ndarray:
-        normalized = (data - data.min()) / (data.max() - data.min() + 1e-8)
-        quantized = np.clip(np.round(normalized * 3).astype(int), 0, 3)
-        return quantized
+        """Lossless byte->quaternary encoding.
 
-    def _decode(self, encoded: np.ndarray, original_min: float, original_max: float) -> np.ndarray:
-        return encoded / 3.0 * (original_max - original_min) + original_min
+        View the float64 buffer as raw bytes, then split every byte into 4
+        base-4 digits. Returns a ``uint8`` array of length ``4 * nbytes`` with
+        values in {0, 1, 2, 3}.
+        """
+        arr = np.ascontiguousarray(data, dtype=np.float64)
+        # View as raw bytes (uint8) without copying.
+        raw = arr.view(np.uint8).ravel()
+        # Split each byte into 4 base-4 digits: digit_k = (byte >> (2*k)) & 3
+        shifts = np.array([0, 2, 4, 6], dtype=np.uint8)
+        # Shape (n_bytes, 4): digit[i, k] = (raw[i] >> shifts[k]) & 3
+        digits = (raw[:, None] >> shifts[None, :]) & np.uint8(3)
+        return digits.ravel()
+
+    def _decode(self, encoded: np.ndarray, nbytes: int, shape: tuple[int, ...]) -> np.ndarray:
+        """Reverse ``_encode``: pack 4 quaternary digits back into one byte."""
+        e = np.asarray(encoded, dtype=np.uint8).reshape(nbytes, 4)
+        # Recombine: byte = sum(digit_k << (2*k))
+        shifts = np.array([0, 2, 4, 6], dtype=np.uint8)
+        raw = (e.astype(np.uint16) << shifts[None, :]).sum(axis=1).astype(np.uint8)
+        # View the packed bytes as float64 and reshape.
+        return raw.view(np.float64).reshape(shape)
 
     def store(self, key: str, value: np.ndarray) -> None:
+        arr = np.ascontiguousarray(value, dtype=np.float64)
         self._store[key] = {
-            "encoded": self._encode(value),
-            "min": float(value.min()),
-            "max": float(value.max()),
-            "shape": value.shape,
+            "encoded": self._encode(arr),
+            "nbytes": arr.nbytes,
+            "shape": arr.shape,
         }
         self._store.move_to_end(key)
         # Enforce capacity by evicting the oldest entries (Fix 20).
@@ -51,7 +75,7 @@ class DNAStorage(KnowledgeStore):
         entry = self._store.get(key)
         if entry is None:
             return None
-        return self._decode(entry["encoded"], entry["min"], entry["max"]).reshape(entry["shape"])
+        return self._decode(entry["encoded"], entry["nbytes"], entry["shape"])
 
     def generate(self, query: Signal) -> Signal:
         """Self-generate knowledge by recombining stored sequences."""
@@ -74,41 +98,105 @@ class DNAStorage(KnowledgeStore):
 
 
 class MorphogeneticField:
-    """Self-organizing structure development inspired by morphogenesis."""
+    """Self-organizing structure development inspired by morphogenesis.
+
+    C-batch fix: the original ``MorphogeneticField`` evolved ``grid`` and each
+    morphogen under a *pure linear Laplacian diffusion* (no reaction term),
+    which can only smooth features out -- it cannot create the self-organising
+    patterns morphogenesis is famous for. The new implementation runs a true
+    Gray-Scott reaction-diffusion system on the first two morphogens
+    ``(u, v)``:
+
+        du/dt = Du * laplacian(u) - u*v^2 + f*(1-u)
+        dv/dt = Dv * laplacian(v) + u*v^2 - (f+k)*v
+
+    Gray-Scott is the canonical activator-inhibitor model that produces
+    spots, stripes, mazes and self-replicating patterns from a small seed --
+    genuine self-organisation rather than decay-to-uniform.
+
+    The legacy ``grid`` attribute is kept as a passive pattern carrier that
+    still evolves under plain diffusion (so ``BiologicalSubstrate.predict``'s
+    save/restore/perturb path keeps working). ``morphogens`` is a list whose
+    first two entries are the Gray-Scott ``(u, v)`` fields (extra morphogens
+    fall back to linear diffusion for backward compatibility with callers
+    that constructed with ``n_signals > 2``).
+    """
+
+    # Gray-Scott default parameters (Pearson 1993 spots regime).
+    _DEFAULT_DU = 0.16
+    _DEFAULT_DV = 0.08
+    _DEFAULT_FEED = 0.035
+    _DEFAULT_KILL = 0.065
 
     def __init__(self, grid_size: int = 16, n_signals: int = 3):
         self.grid_size = grid_size
+        # Passive pattern grid -- still evolves under plain diffusion so the
+        # ``predict`` save/restore/perturb path keeps working unchanged.
         self.grid = np.random.randn(grid_size, grid_size) * 0.1
-        self.morphogens = [np.random.randn(grid_size, grid_size) * 0.1 for _ in range(n_signals)]
+        # Gray-Scott state. u starts at 1.0 everywhere; v at 0.0; then a
+        # central square is seeded with u=0.5, v=0.25 -- the standard
+        # perturbation that kicks off pattern formation.
+        u = np.ones((grid_size, grid_size), dtype=float)
+        v = np.zeros((grid_size, grid_size), dtype=float)
+        c = grid_size // 2
+        r = max(1, grid_size // 8)
+        u[c - r : c + r, c - r : c + r] = 0.5
+        v[c - r : c + r, c - r : c + r] = 0.25
+        self.morphogens: list[np.ndarray] = [u, v]
+        # Extra morphogens (n_signals > 2): keep linear-diffusion behaviour so
+        # callers that constructed with more signals still get a list of the
+        # expected length. These are not part of the Gray-Scott system.
+        for _ in range(max(0, n_signals - 2)):
+            self.morphogens.append(np.random.randn(grid_size, grid_size) * 0.1)
+        # Gray-Scott coefficients.
+        self.du_rate = self._DEFAULT_DU
+        self.dv_rate = self._DEFAULT_DV
+        self.feed_rate = self._DEFAULT_FEED
+        self.kill_rate = self._DEFAULT_KILL
+        # ``diffusion_rate`` is retained as the explicit-Euler timestep for
+        # the linear-diffusion grid AND as the Gray-Scott timestep (kept small
+        # for stability of the explicit scheme). ``update()`` mutates it.
         self.diffusion_rate = 0.05
 
-    def step(self) -> None:
+    def _laplacian(self, field: np.ndarray) -> np.ndarray:
         if _HAS_JIT:
-            laplacian = _morphogenetic_laplacian(
-                np.ascontiguousarray(self.grid, dtype=float)
-            )
-        else:
-            laplacian = (
-                np.roll(self.grid, 1, axis=0) + np.roll(self.grid, -1, axis=0)
-                + np.roll(self.grid, 1, axis=1) + np.roll(self.grid, -1, axis=1)
-                - 4 * self.grid
-            )
-        self.grid += self.diffusion_rate * laplacian
-        for m in self.morphogens:
-            if _HAS_JIT:
-                m_lap = _morphogenetic_laplacian(np.ascontiguousarray(m, dtype=float))
-            else:
-                m_lap = (
-                    np.roll(m, 1, axis=0) + np.roll(m, -1, axis=0)
-                    + np.roll(m, 1, axis=1) + np.roll(m, -1, axis=1)
-                    - 4 * m
-                )
-            m += self.diffusion_rate * m_lap
+            return _morphogenetic_laplacian(np.ascontiguousarray(field, dtype=float))
+        return (
+            np.roll(field, 1, axis=0) + np.roll(field, -1, axis=0)
+            + np.roll(field, 1, axis=1) + np.roll(field, -1, axis=1)
+            - 4 * field
+        )
+
+    def step(self) -> None:
+        # 1) Gray-Scott reaction-diffusion update on (u, v).
+        u, v = self.morphogens[0], self.morphogens[1]
+        u_lap = self._laplacian(u)
+        v_lap = self._laplacian(v)
+        uvv = u * v * v
+        dt = self.diffusion_rate
+        u_new = u + dt * (
+            self.du_rate * u_lap - uvv + self.feed_rate * (1.0 - u)
+        )
+        v_new = v + dt * (
+            self.dv_rate * v_lap + uvv - (self.feed_rate + self.kill_rate) * v
+        )
+        # Clip to the Gray-Scott domain [0, 1] for explicit-Euler stability.
+        np.clip(u_new, 0.0, 1.0, out=u_new)
+        np.clip(v_new, 0.0, 1.0, out=v_new)
+        self.morphogens[0] = u_new
+        self.morphogens[1] = v_new
+        # 2) Legacy linear diffusion on grid + any extra morphogens (n_signals>2).
+        self.grid += dt * self._laplacian(self.grid)
+        for m in self.morphogens[2:]:
+            m += dt * self._laplacian(m)
 
     def develop(self, n_steps: int = 50) -> np.ndarray:
         for _ in range(n_steps):
             self.step()
-        morphogen_sum = sum(self.morphogens)
+        if self.morphogens:
+            morphogen_sum = np.add.reduce(self.morphogens)
+        else:
+            morphogen_sum = np.zeros_like(self.grid)
         pattern = self.grid * (1.0 + 0.1 * morphogen_sum)
         return pattern
 
@@ -191,7 +279,7 @@ class BiologicalSubstrate(CognitiveModule):
         pattern_flat = pattern.flatten()[: self.dim]
         if len(pattern_flat) < self.dim:
             pattern_flat = np.pad(pattern_flat, (0, self.dim - len(pattern_flat)))
-        self.automata.evolve(n_steps=5)
+        self.automata.step_n(5)
         ca_signal = self.automata.state.astype(float)
         combined = 0.4 * generated.data[: self.dim] + 0.3 * pattern_flat + 0.3 * ca_signal
         if len(combined) < self.dim:
@@ -214,16 +302,23 @@ class BiologicalSubstrate(CognitiveModule):
         # Save/restore the morphogenetic grid so predict() stays read-only
         # w.r.t. substrate state across the parallel predict step.
         saved_grid = self.morphogenetic.grid.copy()
+        saved_morphogens = [m.copy() for m in self.morphogenetic.morphogens]
+        saved_rate = self.morphogenetic.diffusion_rate
         try:
             self.morphogenetic.grid = self.morphogenetic.grid + perturb
             pattern = self.morphogenetic.develop(n_steps=5)
         finally:
             self.morphogenetic.grid = saved_grid
+            self.morphogenetic.morphogens = saved_morphogens
+            self.morphogenetic.diffusion_rate = saved_rate
         predicted = pattern.flatten()[: self.dim]
         if len(predicted) < self.dim:
             predicted = np.pad(predicted, (0, self.dim - len(predicted)))
         return Prediction(value=predicted[: self.dim], uncertainty=float(np.var(predicted)))
 
     def update(self, prediction_error: float) -> None:
+        if not np.isfinite(prediction_error):
+            return
+        prediction_error = float(np.clip(prediction_error, -1e6, 1e6))
         new_rate = self.morphogenetic.diffusion_rate + prediction_error * 0.01
-        self.morphogenetic.diffusion_rate = max(0.001, new_rate)
+        self.morphogenetic.diffusion_rate = min(0.2, max(0.001, new_rate))

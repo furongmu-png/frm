@@ -212,7 +212,8 @@ class BayesianEstimator:
 
     def _update_normal(self, observation: float) -> None:
         """Closed-form Normal-Normal conjugate update with known variance."""
-        prior_prec = 1.0 / self.normal_var
+        prior_prec = 1.0 / max(self.normal_var, 1e-12)
+        prior_prec = min(prior_prec, 1e12)
         lik_prec = 1.0 / self.known_var
         # Online update: treat each scalar as a single observation.
         new_prec = prior_prec + lik_prec

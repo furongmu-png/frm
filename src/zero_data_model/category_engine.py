@@ -40,11 +40,55 @@ class Category:
 
 @dataclass
 class Functor:
-    """Structure-preserving map between categories."""
+    """Structure-preserving map between categories.
+
+    A functor ``F: C -> D`` maps each object ``X`` in ``C`` to an object
+    ``F(X)`` in ``D`` (via ``object_map``) and each morphism ``f: X -> Y`` in
+    ``C`` to a morphism ``F(f): F(X) -> F(Y)`` in ``D`` (via
+    ``morphism_map``), preserving identity and composition.
+    """
     source: str
     target: str
     object_map: dict[str, str]
     morphism_map: dict[tuple[str, str], np.ndarray]
+
+    def apply_morphism(
+        self, source_obj: str, target_obj: str, vector: np.ndarray
+    ) -> np.ndarray | None:
+        """Apply the functor's image of a single named morphism to a vector.
+
+        This is the *real* functor action on a morphism: look up the morphism
+        ``(source_obj -> target_obj)`` in the source category, return its
+        image under F (a matrix in ``morphism_map``), and apply it to
+        ``vector``. Returns ``None`` when no such morphism is registered or
+        the shape is incompatible -- callers can then fall back to the
+        shape-matched ``apply``.
+        """
+        transform = self.morphism_map.get((source_obj, target_obj))
+        if transform is None:
+            return None
+        if transform.shape[1] != vector.shape[0]:
+            return None
+        return transform @ vector
+
+    def compose_morphisms(
+        self,
+        src_a: str,
+        mid: str,
+        tgt: str,
+        vector: np.ndarray,
+    ) -> np.ndarray | None:
+        """Apply ``F(g) . F(f)`` to ``vector`` where ``f: src_a -> mid`` and
+        ``g: mid -> tgt``.
+
+        Real functors preserve composition: ``F(g ∘ f) = F(g) ∘ F(f)``.
+        Returns ``None`` if either morphism is missing or shapes mismatch.
+        """
+        first = self.apply_morphism(src_a, mid, vector)
+        if first is None:
+            return None
+        second = self.apply_morphism(mid, tgt, first)
+        return second
 
     def apply(self, obj: np.ndarray) -> np.ndarray:
         """Apply the functor to an object vector.
@@ -62,9 +106,9 @@ class Functor:
         for src_obj_name, tgt_obj_name in self.object_map.items():
             # We cannot do a name lookup from a raw array, so we still match
             # by shape here; the (src, tgt) key selects the right morphism.
-            transform = self.morphism_map.get((src_obj_name, tgt_obj_name))
-            if transform is not None and transform.shape[1] == obj.shape[0]:
-                return transform @ obj
+            result = self.apply_morphism(src_obj_name, tgt_obj_name, obj)
+            if result is not None:
+                return result
         # Fallback: shape matching against any morphism (preserves the
         # original behaviour when object_map has no usable entry).
         for transform in self.morphism_map.values():
@@ -123,8 +167,15 @@ class CategoryTheoryEngine(CognitiveModule):
             morphism_map={("concept_0", "concept_1"): transfer_nlp_cv},
         ))
 
-    def find_isomorphism(self, problem_a: np.ndarray, problem_b: np.ndarray) -> float:
-        """Compute structural similarity between two problems."""
+    def structural_similarity(self, problem_a: np.ndarray, problem_b: np.ndarray) -> float:
+        """Cosine similarity in ``[-1, 1]`` between two problem vectors.
+
+        C-batch fix: this was previously called ``find_isomorphism``, but the
+        implementation is a *similarity score* (cosine of the angle between
+        the two vectors), not an isomorphism (which would be an invertible
+        structure-preserving map). The name has been corrected; the old
+        name is kept as a deprecated alias for backward compatibility.
+        """
         a = problem_a[: self.dim]
         b = problem_b[: self.dim]
         if len(a) < self.dim:
@@ -138,6 +189,49 @@ class CategoryTheoryEngine(CognitiveModule):
             ))
         cos_sim = np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b) + 1e-8)
         return float(cos_sim)
+
+    def find_isomorphism(self, problem_a: np.ndarray, problem_b: np.ndarray) -> float:
+        """Deprecated alias for ``structural_similarity``.
+
+        Returns a similarity score in ``[-1, 1]``; despite the name this does
+        NOT compute a category-theoretic isomorphism. Use
+        ``find_invertible_map`` for an actual invertible linear map between
+        two vectors.
+        """
+        return self.structural_similarity(problem_a, problem_b)
+
+    def find_invertible_map(
+        self, source: np.ndarray, target: np.ndarray
+    ) -> np.ndarray | None:
+        """Find an invertible linear map ``T`` with ``T @ source = target``.
+
+        Returns ``None`` when no well-conditioned map exists (degenerate
+        inputs). Uses a Householder-style construction: ``T = I - 2 vv^T``
+        where ``v`` is the bisector of ``source`` and ``target``, which is
+        always orthogonal (hence invertible) and maps ``source/|source|`` to
+        ``target/|target|`` exactly.
+        """
+        a = np.asarray(source, dtype=float).flatten()
+        b = np.asarray(target, dtype=float).flatten()
+        n = max(a.shape[0], b.shape[0])
+        if a.shape[0] < n:
+            a = np.pad(a, (0, n - a.shape[0]))
+        if b.shape[0] < n:
+            b = np.pad(b, (0, n - b.shape[0]))
+        na = float(np.linalg.norm(a))
+        nb = float(np.linalg.norm(b))
+        if na < 1e-12 or nb < 1e-12:
+            return None
+        a_hat = a / na
+        b_hat = b / nb
+        v = a_hat - b_hat
+        v_norm = float(np.linalg.norm(v))
+        if v_norm < 1e-12:
+            # source and target are already aligned -> identity maps them.
+            return np.eye(n)
+        v = v / v_norm
+        # Householder reflection: T = I - 2 v v^T (orthogonal, hence invertible).
+        return np.eye(n) - 2.0 * np.outer(v, v)
 
     def transfer_solution(
         self, source_cat: str, target_cat: str, solution: np.ndarray
@@ -165,5 +259,8 @@ class CategoryTheoryEngine(CognitiveModule):
         return Prediction(value=truth, uncertainty=float(1.0 - np.mean(np.abs(truth))))
 
     def update(self, prediction_error: float) -> None:
+        if not np.isfinite(prediction_error):
+            return
+        prediction_error = float(np.clip(prediction_error, -1e6, 1e6))
         noise = np.random.randn(self.dim, self.dim) * prediction_error * 0.001
         self.topos.classifier += noise

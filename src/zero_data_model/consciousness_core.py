@@ -53,11 +53,15 @@ class SelfModel:
         # ``if self.history else self.state`` branch is removed: history is
         # always non-empty after the append above.
         self.history: deque = deque(maxlen=100)
+        # Dedicated recent-only deque so update() avoids ``list(history)[-10:]``
+        # (a full-list materialization every frame, P-CRIT-02).
+        self._recent: deque = deque(maxlen=10)
 
     def update(self, signal: np.ndarray) -> None:
         self.history.append(signal.copy())
+        self._recent.append(signal.copy())
         # ``self.history`` is always non-empty here (we just appended).
-        recent = list(self.history)[-10:]
+        recent = list(self._recent)
         self.state = 0.9 * self.state + 0.1 * np.mean(recent, axis=0)
         self.confidence = min(1.0, len(self.history) / 50.0)
 
@@ -74,15 +78,15 @@ class GlobalWorkspace:
     def __init__(self, dim: int = 64, capacity: int = 16):
         self.dim = dim
         self.capacity = capacity
-        self.buffer: list[Signal] = []
+        self.buffer: deque = deque(maxlen=capacity)
         self.attention_weights = np.ones(dim) / dim
 
     def broadcast(self, signal: Signal) -> Signal:
         attended = signal.data * self.attention_weights[: len(signal.data)]
         attended = attended / (np.linalg.norm(attended) + 1e-8)
         self.buffer.append(Signal(data=attended, metadata=signal.metadata))
-        if len(self.buffer) > self.capacity:
-            self.buffer.pop(0)
+        # ``deque(maxlen=capacity)`` evicts the oldest entry automatically, so
+        # the manual ``pop(0)`` (O(n) shift) is gone (P-HIGH-03).
         integrated = np.mean([s.data for s in self.buffer], axis=0)
         return Signal(data=integrated, metadata={"source": "global_workspace"})
 
@@ -127,6 +131,15 @@ class ConsciousnessCore(CognitiveModule):
         self.self_model.update(x)
         # Cache the post-hierarchy state for predict() to reuse (Fix 12).
         self._last_process_output = x
+        # C-batch fix: ``update_attention`` was previously never called from
+        # ``process``, so the attention weights stayed uniform (1/dim) and
+        # ``broadcast``'s ``signal * attention_weights`` was a uniform scaling
+        # that did not actually attend to anything. Now we update the
+        # attention weights from the per-dimension relevance of the
+        # post-hierarchy state BEFORE broadcasting, so the workspace
+        # meaningfully emphasises salient dimensions.
+        relevance = np.abs(x)
+        self.workspace.update_attention(relevance)
         result = self.workspace.broadcast(Signal(data=x, metadata=signal.metadata))
         return result
 
@@ -145,6 +158,9 @@ class ConsciousnessCore(CognitiveModule):
         return Prediction(value=predicted, uncertainty=uncertainty)
 
     def update(self, prediction_error: float) -> None:
+        if not np.isfinite(prediction_error):
+            return
+        prediction_error = float(np.clip(prediction_error, -1e6, 1e6))
         for layer in self.layers:
             noise = np.random.randn(*layer.weights.shape) * prediction_error * 0.001
             layer.weights += noise

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from .accel import asnumpy, backend_name, has_gpu, to_cpu, to_gpu, xp
+from .ibm_quantum import IBMQuantumBackend
 from .parallel import ParallelExecutor
 from .quantum import (
     QiskitQuantumBackend,
@@ -18,5 +19,6 @@ __all__ = [
     "QuantumBackend",
     "QiskitQuantumBackend",
     "SimulatorQuantumBackend",
+    "IBMQuantumBackend",
     "ParallelExecutor",
 ]

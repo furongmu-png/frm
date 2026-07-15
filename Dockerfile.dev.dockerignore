@@ -32,3 +32,17 @@ docker-compose.yml
 docker-compose.dev.yml
 .dockerignore
 Dockerfile.dev.dockerignore
+
+# Secrets and credentials -- never bake into an image (S-HIGH-04).
+.env*
+*.pem
+*.key
+secrets/
+.aws/
+.ssh/
+*.p12
+*.pfx
+*.crt
+*.csr
+id_rsa
+id_ed25519
