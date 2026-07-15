@@ -40,3 +40,18 @@ data/
 .venv/
 venv/
 env/
+
+# Secrets and credentials -- never bake into an image (Fix 16).
+.env*
+*.pem
+*.key
+secrets/
+.aws/
+.ssh/
+*.p12
+*.pfx
+*.crt
+*.csr
+id_rsa
+id_ed25519
+

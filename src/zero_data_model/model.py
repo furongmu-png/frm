@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import threading
+
 import numpy as np
 
 from .active_inference import ActiveInferenceEngine
@@ -58,14 +60,37 @@ class ZeroDataModel:
     - Analytics: time-series forecasting, anomaly detection, pattern mining, trend analysis
     """
 
-    def __init__(self, dim: int = 64):
+    def __init__(self, dim: int = 64, seed: int | None = None):
         self.dim = dim
+        # Optional RNG seed (Fix 9). The actual concurrency-safety guarantee
+        # for the global ``np.random`` RNG used inside ``think`` comes from
+        # ``self._lock`` (Fix 7): it serializes every state-mutating cycle so
+        # the legacy global RNG is never accessed concurrently. The read-only
+        # analytics methods (classify_text, detect_anomalies, ...) use the
+        # now-pure ``compute_free_energy`` and do not touch the RNG, so they
+        # remain safe to call concurrently with each other.
+        self._seed = seed
+        if seed is not None:
+            np.random.seed(seed)
+        self._rng = np.random.default_rng(seed)
+        # Re-entrant lock around every state-mutating think/solve cycle (Fix 7).
+        self._lock = threading.RLock()
         self.consciousness = ConsciousnessCore(dim=dim)
         self.active_inference = ActiveInferenceEngine(
             state_dim=dim, obs_dim=dim, action_dim=dim // 2
         )
         self.category_engine = CategoryTheoryEngine(dim=dim)
-        self.quantum_hybrid = QuantumClassicalHybrid(dim=dim)
+        # When a seed is set (Fix 9), force the deterministic pure-NumPy
+        # ``SimulatorQuantumBackend`` instead of the Qiskit ``StatevectorSampler``.
+        # The Qiskit sampler performs stochastic shot-based measurement that
+        # does NOT draw from numpy's global RNG, so cycle re-seeding cannot
+        # make it reproducible. The pure-NumPy simulator evolves a closed-form
+        # state vector with no sampling, so two seeded models produce identical
+        # ``think()`` sequences. When no seed is set, prefer the real Qiskit
+        # backend (if installed) for production use.
+        self.quantum_hybrid = QuantumClassicalHybrid(
+            dim=dim, quantum_backend="simulator" if seed is not None else None
+        )
         self.biological = BiologicalSubstrate(dim=dim)
         self.math_universe = MathematicalUniverse(dim=dim)
         self.modules = [
@@ -138,7 +163,12 @@ class ZeroDataModel:
             rules=self.analytics_rules,
         )
         # Hardware acceleration: parallel module execution + GPU-aware arrays.
-        self.parallel_executor = ParallelExecutor()
+        # When a seed is set, force sequential execution so the legacy global
+        # numpy RNG (used inside module process/predict) is never accessed
+        # concurrently across threads — guaranteeing reproducibility.
+        self.parallel_executor = ParallelExecutor(
+            n_workers=1 if seed is not None else None
+        )
         self.cycle_count = 0
 
     @property
@@ -158,38 +188,51 @@ class ZeroDataModel:
 
         Module ``process`` and ``predict`` steps run concurrently via the
         parallel executor when multiple cores are available.
+
+        The whole cycle is serialized by ``self._lock`` (Fix 7) so concurrent
+        ``think`` calls do not race on the legacy global numpy RNG or on
+        shared module state.
         """
-        if input_data is None:
-            signal = self._self_generate()
-        else:
-            padded = np.zeros(self.dim)
-            padded[: len(input_data)] = input_data[: self.dim]
-            signal = Signal(data=padded)
+        with self._lock:
+            # When a seed is set, re-seed the global numpy RNG from the
+            # model's private Generator so each think() cycle is deterministic
+            # AND progresses across cycles. This makes two models with the
+            # same seed produce identical think() sequences.
+            if self._seed is not None:
+                np.random.seed(int(self._rng.integers(0, 2**31)))
 
-        # Parallel module processing.
-        results = self.parallel_executor.map_modules(self.modules, signal)
+            if input_data is None:
+                signal = self._self_generate()
+            else:
+                padded = np.zeros(self.dim)
+                padded[: len(input_data)] = input_data[: self.dim]
+                signal = Signal(data=padded)
 
-        integrated = self._integrate(results)
-        reflection = self.consciousness.reflect()
+            # Parallel module processing.
+            results = self.parallel_executor.map_modules(self.modules, signal)
 
-        # Parallel prediction.
-        preds = self.parallel_executor.map(
-            lambda m: m.predict(integrated), self.modules
-        )
-        pred_errors = [p.uncertainty for p in preds]
-        mean_err = float(np.mean(pred_errors)) if pred_errors else 0.0
-        for module in self.modules:
-            module.update(mean_err)
+            integrated = self._integrate(results)
+            reflection = self.consciousness.reflect()
 
-        self.cycle_count += 1
-        return Signal(
-            data=integrated.data,
-            metadata={
-                "cycle": self.cycle_count,
-                "self_reflection": reflection.metadata,
-                "module_count": len(self.modules),
-            },
-        )
+            # Parallel prediction.
+            preds = self.parallel_executor.map(
+                lambda m: m.predict(integrated), self.modules
+            )
+            # Per-module prediction error (Fix 16): the original code passed
+            # every module the same mean error; pass each module its own
+            # ``pred.uncertainty`` so update() is meaningfully per-module.
+            for module, pred in zip(self.modules, preds, strict=False):
+                module.update(pred.uncertainty)
+
+            self.cycle_count += 1
+            return Signal(
+                data=integrated.data,
+                metadata={
+                    "cycle": self.cycle_count,
+                    "self_reflection": reflection.metadata,
+                    "module_count": len(self.modules),
+                },
+            )
 
     def _self_generate(self) -> Signal:
         """Self-generate input from internal knowledge."""
@@ -210,17 +253,38 @@ class ZeroDataModel:
         return Signal(data=mean_signal[: self.dim], metadata={"integrated": True})
 
     def solve(self, problem: np.ndarray) -> Signal:
-        """Solve an optimization problem using quantum annealing."""
-        solution, energy = self.quantum_hybrid.solve_optimization()
-        return Signal(data=solution, metadata={"energy": energy, "type": "optimization"})
+        """Solve an optimization problem using quantum annealing.
+
+        The ``problem`` vector is encoded into the annealer's cost matrix as
+        ``outer(p, p) + 0.1 * I`` before optimizing (Fix 14), so the solution
+        actually depends on the input rather than being independent of it.
+        """
+        with self._lock:
+            n = self.quantum_hybrid.annealer.cost_matrix.shape[0]
+            problem_flat = np.zeros(n)
+            p = np.asarray(problem, dtype=float).flatten()
+            problem_flat[: min(len(p), n)] = p[:n]
+            self.quantum_hybrid.annealer.cost_matrix = (
+                np.outer(problem_flat, problem_flat) + np.eye(n) * 0.1
+            )
+            # Re-symmetrize defensively (outer product is already symmetric).
+            cm = self.quantum_hybrid.annealer.cost_matrix
+            self.quantum_hybrid.annealer.cost_matrix = (cm + cm.T) / 2.0
+            solution, energy = self.quantum_hybrid.solve_optimization()
+            return Signal(data=solution, metadata={"energy": energy, "type": "optimization"})
 
     def find_analogies(self, problem_a: np.ndarray, problem_b: np.ndarray) -> float:
         """Find structural similarity between two problems."""
-        return self.category_engine.find_isomorphism(problem_a, problem_b)
+        # ``find_isomorphism`` is read-only (no module state mutation), so the
+        # lock is not strictly required; we acquire it for consistency with
+        # the rest of the public API and to avoid surprising re-entry.
+        with self._lock:
+            return self.category_engine.find_isomorphism(problem_a, problem_b)
 
     def generate_knowledge(self, query: str = "") -> Signal:
         """Self-generate knowledge without external data."""
-        return self._self_generate()
+        with self._lock:
+            return self._self_generate()
 
     # --- NLP capabilities ---
 

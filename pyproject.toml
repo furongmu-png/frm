@@ -9,29 +9,57 @@ description = "Zero-data cognitive model: active inference, quantum-hybrid, and 
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "numpy>=1.24",
-    "scipy>=1.10",
+    # Core numeric stack. Upper bounds on the major version guard against
+    # breaking changes (Fix 20) -- numpy 3.x and scipy 2.x are not yet
+    # released at the time of writing but the caps make intent explicit.
+    "numpy>=1.24,<3",
+    "scipy>=1.10,<2",
 ]
 
 [project.optional-dependencies]
-quantum = ["qiskit>=1.0"]
-ibm = ["qiskit-ibm-runtime>=0.20"]
-jit = ["numba>=0.58"]
-parallel = ["joblib>=1.3"]
-gpu = ["cupy-cuda12x"]
-web = ["fastapi>=0.100", "uvicorn>=0.20", "pydantic>=2"]
-mcp = ["mcp>=1.0"]
-dev = ["pytest>=7", "pytest-cov>=4", "ruff>=0.1", "line_profiler"]
+# Quantum stack: Qiskit 1.x / 2.x are supported; 3.x is not yet released.
+quantum = ["qiskit>=1.0,<3"]
+ibm = ["qiskit-ibm-runtime>=0.20,<1"]
+# JIT acceleration: numba tracks numpy closely; cap below 1.0.
+jit = ["numba>=0.58,<1"]
+# Parallel execution: joblib 2.x may change the backend API.
+parallel = ["joblib>=1.3,<2"]
+# GPU acceleration: cupy-cuda12x follows CUDA 12.x. Pin to a known-good
+# range; the lower bound matches the first cuda12x wheel series.
+gpu = ["cupy-cuda12x>=13.0,<15"]
+# Web API: FastAPI 0.100+ has the modern dependency-injection API;
+# pydantic 2.x is required for Field(min_length=, pattern=) constraints.
+# slowapi/structlog/prometheus are optional observability/rate-limit deps
+# (Fixes 7, 8, 9) -- the API degrades gracefully when they are absent.
+web = [
+    "fastapi>=0.100,<1",
+    "uvicorn>=0.20,<1",
+    "pydantic>=2,<3",
+    "slowapi>=0.1,<1",
+    "structlog>=24,<27",
+    "prometheus-fastapi-instrumentator>=6,<9",
+]
+mcp = ["mcp>=1.0,<2"]
+# Dev tooling: pytest 7+/8, ruff 0.x, line_profiler 5.x (Fix 20).
+dev = [
+    "pytest>=7,<9",
+    "pytest-cov>=4,<8",
+    "ruff>=0.1,<1",
+    "line_profiler>=4,<6",
+]
 all = [
-    "qiskit>=1.0",
-    "qiskit-ibm-runtime>=0.20",
-    "numba>=0.58",
-    "joblib>=1.3",
-    "cupy-cuda12x",
-    "fastapi>=0.100",
-    "uvicorn>=0.20",
-    "pydantic>=2",
-    "mcp>=1.0",
+    "qiskit>=1.0,<3",
+    "qiskit-ibm-runtime>=0.20,<1",
+    "numba>=0.58,<1",
+    "joblib>=1.3,<2",
+    "cupy-cuda12x>=13.0,<15",
+    "fastapi>=0.100,<1",
+    "uvicorn>=0.20,<1",
+    "pydantic>=2,<3",
+    "slowapi>=0.1,<1",
+    "structlog>=24,<27",
+    "prometheus-fastapi-instrumentator>=6,<9",
+    "mcp>=1.0,<2",
 ]
 
 [tool.setuptools.packages.find]

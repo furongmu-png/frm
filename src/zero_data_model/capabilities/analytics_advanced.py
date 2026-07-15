@@ -317,12 +317,11 @@ class ChangePointDetector:
         n = data.shape[0]
         if n == 0:
             return np.zeros(0, dtype=float)
-        gm = self.active_inference.generative_model
-        state_dim = gm.state_dim
+        # ``compute_free_energy`` is now pure (Fix 3): it does not mutate
+        # ``belief_state``, so the per-point reset is no longer needed.
         fe = np.zeros(n, dtype=float)
         for i in range(n):
             local = data[i : i + 1]
-            gm.belief_state = np.zeros(state_dim, dtype=float)
             fe[i] = float(self.active_inference.compute_free_energy(local))
         return fe
 

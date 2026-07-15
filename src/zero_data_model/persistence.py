@@ -5,17 +5,114 @@ Saves/loads the full model state to a directory on disk using numpy
 ``.npz`` for arrays and JSON for configuration metadata. Pickle is
 intentionally NOT used so the on-disk format is portable, auditable and
 safe to load from untrusted sources.
+
+Security: every save/load path is sandboxed under a module-level
+``_PERSISTENCE_ROOT`` directory. Absolute paths, ``..`` traversal and
+symlinks pointing outside the root are rejected with ``ValueError``.
+Saves are atomic: data is written to a sibling temp directory first,
+then renamed into place so a crash never leaves a partial snapshot.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import shutil
+import tempfile
 from typing import Any
 
 import numpy as np
 
 from .model import ZeroDataModel
+
+# --------------------------------------------------------------------------- #
+# Persistence root sandbox
+# --------------------------------------------------------------------------- #
+
+def _default_persistence_root() -> str:
+    """Pick a sensible default root: /app/data in containers, else cwd/data."""
+    container_root = "/app/data"
+    if os.path.isdir("/app") or os.path.isdir(container_root):
+        return container_root
+    return os.path.join(os.getcwd(), "data")
+
+
+# Module-level root. Override at runtime via set_persistence_root() (tests).
+_PERSISTENCE_ROOT: str = _default_persistence_root()
+
+
+def set_persistence_root(path: str) -> None:
+    """Override the persistence root at runtime (used by tests).
+
+    The directory is created if missing so callers can point at a fresh
+    tmp_path without an extra mkdir.
+    """
+    global _PERSISTENCE_ROOT
+    resolved = os.path.realpath(os.path.abspath(path))
+    os.makedirs(resolved, exist_ok=True)
+    _PERSISTENCE_ROOT = resolved
+
+
+def get_persistence_root() -> str:
+    """Return the current persistence root (resolved absolute path)."""
+    return os.path.realpath(os.path.abspath(_PERSISTENCE_ROOT))
+
+
+def _validate_path(path: str) -> str:
+    """Resolve ``path`` against the persistence root and enforce sandboxing.
+
+    Rejects:
+      * absolute paths (caller must supply a relative name)
+      * ``..`` segments that escape the root after resolution
+      * any component that is a symlink resolving outside the root
+
+    Returns the resolved absolute path inside the root. Raises
+    ``ValueError("path outside persistence root")`` on violation.
+    """
+    if path is None or path == "":
+        raise ValueError("path outside persistence root")
+
+    # Reject absolute paths: callers must pass a relative name.
+    if os.path.isabs(path):
+        raise ValueError("path outside persistence root")
+
+    # Reject explicit ``..`` segments early -- even if realpath would
+    # otherwise clamp them, the intent is clearly hostile.
+    parts = path.replace("\\", "/").split("/")
+    if any(part == ".." for part in parts):
+        raise ValueError("path outside persistence root")
+
+    root = get_persistence_root()
+    # Join relatively; resolve symlinks where they exist on disk. We use
+    # os.path.abspath first (no symlink resolution) then realpath for the
+    # final check so a missing target still validates against the root
+    # prefix lexically.
+    candidate_lexical = os.path.abspath(os.path.join(root, path))
+
+    # If the target already exists, follow its real path to catch symlinks
+    # that point outside the root. If it doesn't exist yet (save case),
+    # validate the parent that does exist.
+    if os.path.islink(candidate_lexical) or os.path.exists(candidate_lexical):
+        candidate_real = os.path.realpath(candidate_lexical)
+    else:
+        # Walk up to the deepest existing ancestor and realpath that, then
+        # re-append the missing tail components.
+        ancestor = candidate_lexical
+        tail: list[str] = []
+        while not os.path.exists(ancestor) and ancestor != root:
+            ancestor, head = os.path.split(ancestor)
+            tail.append(head)
+        ancestor_real = os.path.realpath(ancestor)
+        candidate_real = os.path.join(ancestor_real, *reversed(tail))
+
+    # Use os.path.commonpath for a robust prefix check (handles trailing
+    # slashes and component boundaries correctly).
+    if os.path.commonpath([root, candidate_real]) != root:
+        raise ValueError("path outside persistence root")
+    if os.path.commonpath([root, candidate_lexical]) != root:
+        raise ValueError("path outside persistence root")
+
+    return candidate_real
 
 
 class ModelSerializer:
@@ -36,9 +133,47 @@ class ModelSerializer:
     # ------------------------------------------------------------------ #
     @staticmethod
     def save(model: ZeroDataModel, path: str) -> None:
-        """Save model state to a directory: arrays.npz + config.json."""
-        os.makedirs(path, exist_ok=True)
+        """Save model state to a directory: arrays.npz + config.json.
 
+        ``path`` must be a *relative* name under the persistence root.
+        The write is atomic: data lands in a sibling temp dir first,
+        then is renamed into place so a crash never produces a partial
+        snapshot that load() would later misread.
+        """
+        target = _validate_path(path)
+
+        # Stage into a temp directory beside the persistence root (same
+        # filesystem so os.replace is atomic). tempfile.mkdtemp gives us
+        # an exclusive, predictably-named scratch dir.
+        root = get_persistence_root()
+        staging = tempfile.mkdtemp(prefix=".save-", dir=root)
+        try:
+            ModelSerializer._write_snapshot(model, staging)
+
+            # Atomic replace of the target directory. If target exists,
+            # rename it aside first so os.replace works on a dir.
+            backup: str | None = None
+            if os.path.exists(target):
+                backup = target + ".bak-" + os.path.basename(staging)
+                os.replace(target, backup)
+            try:
+                os.replace(staging, target)
+            except OSError:
+                # Roll back: restore the backup if rename failed.
+                if backup is not None and os.path.exists(backup):
+                    os.replace(backup, target)
+                raise
+            # Success: remove the old backup.
+            if backup is not None and os.path.exists(backup):
+                shutil.rmtree(backup, ignore_errors=True)
+        except Exception:
+            # Make sure the staging dir never lingers on failure.
+            shutil.rmtree(staging, ignore_errors=True)
+            raise
+
+    @staticmethod
+    def _write_snapshot(model: ZeroDataModel, path: str) -> None:
+        """Write arrays.npz + config.json into ``path`` (already created)."""
         arrays: dict[str, np.ndarray] = {}
 
         # Consciousness core: per-layer weights and biases.
@@ -112,12 +247,16 @@ class ModelSerializer:
     # ------------------------------------------------------------------ #
     @staticmethod
     def load(path: str) -> ZeroDataModel:
-        """Reconstruct a :class:`ZeroDataModel` from a saved directory."""
-        if not os.path.isdir(path):
+        """Reconstruct a :class:`ZeroDataModel` from a saved directory.
+
+        ``path`` must be a *relative* name under the persistence root.
+        """
+        target = _validate_path(path)
+        if not os.path.isdir(target):
             raise FileNotFoundError(f"Model directory not found: {path}")
 
-        npz_path = os.path.join(path, "arrays.npz")
-        config_path = os.path.join(path, "config.json")
+        npz_path = os.path.join(target, "arrays.npz")
+        config_path = os.path.join(target, "config.json")
         if not os.path.isfile(npz_path):
             raise FileNotFoundError(f"Missing arrays.npz in: {path}")
         if not os.path.isfile(config_path):
@@ -202,3 +341,10 @@ class ModelSerializer:
         model.math_universe.fractal.transforms = loaded_transforms
 
         return model
+
+
+__all__ = [
+    "ModelSerializer",
+    "set_persistence_root",
+    "get_persistence_root",
+]

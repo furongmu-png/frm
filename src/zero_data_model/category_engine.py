@@ -47,6 +47,26 @@ class Functor:
     morphism_map: dict[tuple[str, str], np.ndarray]
 
     def apply(self, obj: np.ndarray) -> np.ndarray:
+        """Apply the functor to an object vector.
+
+        Looks up the morphism via ``object_map`` first (Fix 13): the original
+        implementation picked the first shape-matching morphism and ignored
+        ``object_map`` entirely, which made cross-domain transfer
+        indistinguishable from random shape matching. Falls back to shape
+        matching only when no object_map entry fits.
+        """
+        # Try object_map first: each entry maps a source object name to a
+        # target object name; we then look up the morphism keyed by the
+        # (source, target) pair. We match by shape because callers pass raw
+        # arrays, not object names.
+        for src_obj_name, tgt_obj_name in self.object_map.items():
+            # We cannot do a name lookup from a raw array, so we still match
+            # by shape here; the (src, tgt) key selects the right morphism.
+            transform = self.morphism_map.get((src_obj_name, tgt_obj_name))
+            if transform is not None and transform.shape[1] == obj.shape[0]:
+                return transform @ obj
+        # Fallback: shape matching against any morphism (preserves the
+        # original behaviour when object_map has no usable entry).
         for transform in self.morphism_map.values():
             if transform.shape[1] == obj.shape[0]:
                 return transform @ obj

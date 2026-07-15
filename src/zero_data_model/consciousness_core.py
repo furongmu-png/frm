@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass
 
 import numpy as np
@@ -47,15 +48,17 @@ class SelfModel:
     def __init__(self, dim: int = 64):
         self.state = np.zeros(dim)
         self.confidence = 0.5
-        self.history: list[np.ndarray] = []
+        # ``deque(maxlen=100)`` so old entries are evicted automatically and
+        # we no longer pay O(n) for ``pop(0)`` (Fix 23). The dead
+        # ``if self.history else self.state`` branch is removed: history is
+        # always non-empty after the append above.
+        self.history: deque = deque(maxlen=100)
 
     def update(self, signal: np.ndarray) -> None:
         self.history.append(signal.copy())
-        if len(self.history) > 100:
-            self.history.pop(0)
-        self.state = 0.9 * self.state + 0.1 * np.mean(
-            list(self.history[-10:]), axis=0
-        ) if self.history else self.state
+        # ``self.history`` is always non-empty here (we just appended).
+        recent = list(self.history)[-10:]
+        self.state = 0.9 * self.state + 0.1 * np.mean(recent, axis=0)
         self.confidence = min(1.0, len(self.history) / 50.0)
 
     def reflect(self) -> Signal:
@@ -107,6 +110,9 @@ class ConsciousnessCore(CognitiveModule):
         ]
         self.workspace = GlobalWorkspace(dim)
         self.self_model = SelfModel(dim)
+        # Cache of the last ``process`` output so ``predict`` can reuse it
+        # instead of re-running the predictive hierarchy (Fix 12).
+        self._last_process_output: np.ndarray | None = None
 
     def process(self, signal: Signal) -> Signal:
         x = signal.data[: self.dim]
@@ -119,14 +125,22 @@ class ConsciousnessCore(CognitiveModule):
             x = prediction + np.random.randn(self.dim) * error * 0.01
 
         self.self_model.update(x)
+        # Cache the post-hierarchy state for predict() to reuse (Fix 12).
+        self._last_process_output = x
         result = self.workspace.broadcast(Signal(data=x, metadata=signal.metadata))
         return result
 
     def predict(self, signal: Signal) -> Prediction:
-        x = signal.data[: self.dim]
-        if len(x) < self.dim:
-            x = np.pad(x, (0, self.dim - len(x)))
-        predicted = self.layers[0].predict(x)
+        # Reuse the cached process output when available so we do not re-run
+        # the predictive hierarchy twice per think() cycle (Fix 12). Fall back
+        # to a single-layer forward pass when predict() is called standalone.
+        if self._last_process_output is not None:
+            predicted = self._last_process_output
+        else:
+            x = signal.data[: self.dim]
+            if len(x) < self.dim:
+                x = np.pad(x, (0, self.dim - len(x)))
+            predicted = self.layers[0].predict(x)
         uncertainty = float(np.var(predicted))
         return Prediction(value=predicted, uncertainty=uncertainty)
 

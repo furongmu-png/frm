@@ -18,6 +18,11 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/*
 
+# Create a non-root user (uid 10001) so the container process never runs as
+# root. The /app directory is chowned to this user so it can write model
+# snapshots under /app/data (Fix 3, CWE-250).
+RUN groupadd -r app && useradd -r -g app -u 10001 app
+
 # Application working directory. All subsequent paths are relative to /app.
 WORKDIR /app
 
@@ -31,7 +36,7 @@ COPY src/ ./src/
 COPY web/ ./web/
 
 # Install the package with the runtime extras needed by the API:
-#   web     -> fastapi, uvicorn, pydantic
+#   web     -> fastapi, uvicorn, pydantic, slowapi, structlog, prometheus
 #   quantum -> qiskit
 #   jit     -> numba
 #   parallel-> joblib
@@ -40,12 +45,19 @@ RUN pip install --no-cache-dir ".[web,quantum,jit,parallel]"
 
 # Make the data directory available as a mount point for model persistence
 # (compose mounts ./data:/app/data). Created here so the path exists even if
-# no volume is attached.
-RUN mkdir -p /app/data
+# no volume is attached. Owned by the non-root app user so /save can write.
+RUN mkdir -p /app/data && chown -R app:app /app
 
 # FastAPI / uvicorn listen here.
 EXPOSE 8000
 
+# Drop privileges for the runtime process (Fix 3, CWE-250).
+USER app
+
 # Run the ASGI app. `zero_data_model.api:app` is the module-level FastAPI
 # instance created by create_app() in src/zero_data_model/api.py.
-CMD ["python", "-m", "uvicorn", "zero_data_model.api:app", "--host", "0.0.0.0", "--port", "8000"]
+# --timeout-graceful-shutdown 30 gives in-flight requests up to 30s to finish
+# during a SIGTERM before uvicorn forces shutdown (Fix 4).
+CMD ["python", "-m", "uvicorn", "zero_data_model.api:app", \
+     "--host", "0.0.0.0", "--port", "8000", \
+     "--timeout-graceful-shutdown", "30"]

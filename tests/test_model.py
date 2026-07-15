@@ -17,15 +17,23 @@ def test_model_think_no_input():
 
 
 def test_model_think_with_input():
+    # The autouse conftest fixture re-seeds np.random to 42 before every
+    # test, so np.random.randn(16) here is deterministic.
     model = ZeroDataModel(dim=16)
     result = model.think(np.random.randn(16))
     assert result.data.shape == (16,)
+    assert np.all(np.isfinite(result.data))
 
 
 def test_model_solve():
     model = ZeroDataModel(dim=16)
     result = model.solve(np.random.randn(16))
     assert "energy" in result.metadata
+    # Strengthened: the solution vector must be dim-length and finite, and
+    # the reported annealer energy must be a finite scalar.
+    assert result.data.shape == (16,)
+    assert np.all(np.isfinite(result.data))
+    assert np.isfinite(result.metadata["energy"])
 
 
 def test_model_find_analogies():
@@ -33,6 +41,24 @@ def test_model_find_analogies():
     a = np.random.randn(16)
     score = model.find_analogies(a, a)
     assert abs(score - 1.0) < 1e-6
+
+
+def test_model_find_analogies_divergent_inputs_score_lower():
+    """Divergent inputs produce a lower isomorphism score than identical
+    inputs. This guards against a regression where find_analogies ignored
+    its arguments and always returned 1.0.
+
+    find_analogies delegates to find_isomorphism which returns a cosine
+    similarity in [-1, 1]; identical vectors score ~1.0, divergent vectors
+    score strictly lower (and may go negative)."""
+    model = ZeroDataModel(dim=16)
+    a = np.random.randn(16)
+    # Orthogonal, scaled-up vector: structurally very different from ``a``.
+    b = np.random.randn(16) + 10.0
+    identical = model.find_analogies(a, a)
+    divergent = model.find_analogies(a, b)
+    assert -1.0 <= divergent <= 1.0
+    assert divergent < identical
 
 
 def test_model_generate_knowledge():

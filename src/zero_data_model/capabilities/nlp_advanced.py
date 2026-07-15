@@ -18,11 +18,39 @@ from .rules import NLPRules
 # Unicode block ranges used for rule-based script detection. Each entry maps a
 # script name to a tuple of (low, high) codepoint inclusive bounds; ranges are
 # ordered from most-specific to least so the first match wins for any char.
+# Fix 18: extended from 4 scripts (latin/cyrillic/cjk/arabic) to 11 by adding
+# Greek, Hebrew, Devanagari, Hangul, Thai, Hiragana and Katakana.
 _SCRIPT_RANGES: list[tuple[str, tuple[int, int]]] = [
     ("cyrillic", (0x0400, 0x04FF)),
-    ("cjk", (0x4E00, 0x9FFF)),
+    # Greek before Latin so Greek letters are not lumped into Latin-1.
+    ("greek", (0x0370, 0x03FF)),
+    ("hebrew", (0x0590, 0x05FF)),
     ("arabic", (0x0600, 0x06FF)),
+    ("devanagari", (0x0900, 0x097F)),
+    ("thai", (0x0E00, 0x0E7F)),
+    ("hiragana", (0x3040, 0x309F)),
+    ("katakana", (0x30A0, 0x30FF)),
+    # CJK Unified Ideographs (covers the bulk of common Han characters).
+    ("cjk", (0x4E00, 0x9FFF)),
+    # Hangul Syllables (Korean).
+    ("hangul", (0xAC00, 0xD7AF)),
 ]
+
+# Scripts recognized by ``detect_script`` (used to size the per-script counts
+# dict). Latin is implicit (handled separately in ``_script_of_char``).
+_RECOGNIZED_SCRIPTS: tuple[str, ...] = (
+    "latin",
+    "cyrillic",
+    "greek",
+    "hebrew",
+    "arabic",
+    "devanagari",
+    "thai",
+    "hiragana",
+    "katakana",
+    "cjk",
+    "hangul",
+)
 
 
 def _script_of_char(ch: str) -> str:
@@ -44,10 +72,11 @@ def _script_of_char(ch: str) -> str:
 class MultiLingualEncoder:
     """Extend ``TextEncoder`` with rule-based multilingual awareness.
 
-    Script detection is performed via Unicode block ranges (Latin / Cyrillic /
-    CJK / Arabic). Per-script character statistics are blended with the base
-    ``TextEncoder`` representation to produce a script-aware embedding of length
-    ``dim`` (L2-normalized).
+    Script detection is performed via Unicode block ranges covering Latin,
+    Cyrillic, Greek, Hebrew, Arabic, Devanagari, Thai, Hiragana, Katakana, CJK
+    and Hangul (Fix 18). Per-script character statistics are blended with the
+    base ``TextEncoder`` representation to produce a script-aware embedding of
+    length ``dim`` (L2-normalized).
     """
 
     def __init__(self, dim: int = 64, rules: NLPRules | None = None):
@@ -58,17 +87,19 @@ class MultiLingualEncoder:
     def detect_script(self, text: str) -> str:
         """Return the dominant script name for ``text``.
 
-        Returns one of ``'latin'``, ``'cyrillic'``, ``'cjk'``, ``'arabic'`` or
-        ``'mixed'`` (when no single script dominates the recognized characters).
+        Returns one of the names in ``_RECOGNIZED_SCRIPTS``, ``'mixed'`` (when
+        no single script dominates the recognized characters), or ``'unknown'``
+        when no recognized-script character is present (Fix 18).
         """
-        counts = {"latin": 0, "cyrillic": 0, "cjk": 0, "arabic": 0}
+        # Count only characters whose script is one we explicitly recognize.
+        counts = dict.fromkeys(_RECOGNIZED_SCRIPTS, 0)
         for ch in text:
             s = _script_of_char(ch)
             if s in counts:
                 counts[s] += 1
         total = sum(counts.values())
         if total == 0:
-            return "latin"  # default for punctuation/whitespace-only input
+            return "unknown"  # Fix 18: punctuation/whitespace-only input
         max_count = max(counts.values())
         # 'mixed' when the top script covers less than 70% of recognized chars.
         if max_count / total < 0.7 and sum(1 for v in counts.values() if v > 0) > 1:
@@ -77,26 +108,26 @@ class MultiLingualEncoder:
         return max(counts.items(), key=lambda kv: kv[1])[0]
 
     def _script_stats(self, text: str) -> np.ndarray:
-        """Return a 4-vector of per-script proportions (latin/cyrillic/cjk/arabic)."""
-        counts = {"latin": 0, "cyrillic": 0, "cjk": 0, "arabic": 0}
+        """Return a per-script proportion vector in ``_RECOGNIZED_SCRIPTS`` order."""
+        counts = dict.fromkeys(_RECOGNIZED_SCRIPTS, 0)
         for ch in text:
             s = _script_of_char(ch)
             if s in counts:
                 counts[s] += 1
         total = sum(counts.values())
         if total == 0:
-            return np.zeros(4, dtype=float)
-        return np.array(
-            [counts["latin"], counts["cyrillic"], counts["cjk"], counts["arabic"]],
-            dtype=float,
-        ) / float(total)
+            return np.zeros(len(_RECOGNIZED_SCRIPTS), dtype=float)
+        return np.array([counts[s] for s in _RECOGNIZED_SCRIPTS], dtype=float) / float(
+            total
+        )
 
     def encode(self, text: str) -> np.ndarray:
         """Encode ``text`` into a ``dim``-length L2-normalized script-aware vector."""
         base = self.encoder.encode(text)
         stats = self._script_stats(text)
         vec = base.copy()
-        # Place the 4 per-script proportions into dedicated trailing bins.
+        # Place the per-script proportions into dedicated trailing bins. The
+        # stats vector length tracks ``_RECOGNIZED_SCRIPTS`` (Fix 18).
         n_stats = stats.shape[0]
         base_idx = (self.dim - n_stats) % self.dim
         for i, s in enumerate(stats):

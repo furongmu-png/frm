@@ -60,7 +60,10 @@ def test_simulator_backend_fallback():
     entangling = np.random.randn(4, 4) * 0.05
     out = backend.evolve_and_measure(params, entangling)
     assert out.shape == (8,)
-    assert abs(out.sum() - 1.0) < 1e-3 or out.sum() >= 0
+    # The simulator normalizes the measured probabilities to sum to 1.0.
+    # The previous ``or out.sum() >= 0`` clause was vacuous (always true for
+    # a probability vector) and masked real normalization bugs.
+    assert abs(out.sum() - 1.0) < 1e-3
 
 
 def test_variational_circuit_uses_backend():

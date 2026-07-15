@@ -75,7 +75,10 @@ class VariationalQuantumCircuit:
     def measure(self, state: np.ndarray) -> np.ndarray:
         # ``evolve`` already returns a probability vector when using the Qiskit
         # backend; normalize defensively for the simulator path.
-        probs = np.abs(state) ** 2 if np.any(np.iscomplex(state)) else state
+        # Use np.iscomplexobj (Fix 22): np.any(np.iscomplex(state)) returns
+        # False for a complex dtype with all-zero imaginary parts, which would
+        # skip the |.|^2 squaring and feed complex values into the divider.
+        probs = np.abs(state) ** 2 if np.iscomplexobj(state) else state
         return probs / (np.sum(probs) + 1e-8)
 
 

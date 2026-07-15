@@ -41,8 +41,15 @@ class InformationGeometry:
         return result / (np.sum(result) + 1e-8)
 
     def kl_divergence(self, p: np.ndarray, q: np.ndarray) -> float:
-        p_abs = np.abs(p[: self.dim]) + 1e-8
-        q_abs = np.abs(q[: self.dim]) + 1e-8
+        # Pad both inputs to ``self.dim`` with zeros so callers passing arrays
+        # of differing lengths (e.g. TrendAnalyzer's odd-length halves) no
+        # longer crash numpy or silently mismatch lengths in the JIT kernel.
+        p_arr = np.zeros(self.dim)
+        q_arr = np.zeros(self.dim)
+        p_arr[: min(len(p), self.dim)] = np.abs(p[: self.dim])
+        q_arr[: min(len(q), self.dim)] = np.abs(q[: self.dim])
+        p_abs = p_arr + 1e-8
+        q_abs = q_arr + 1e-8
         if _HAS_JIT:
             return float(_kl_divergence(
                 np.ascontiguousarray(p_abs, dtype=float),
@@ -140,14 +147,15 @@ class FractalGenerator:
         d = data.flatten()[: self.dim]
         if len(d) < self.dim:
             d = np.pad(d, (0, self.dim - len(d)))
+        # ``np.corrcoef`` requires equal-length inputs; for odd ``dim`` the
+        # naive split produces lengths that differ by one. Use the first
+        # ``m = dim // 2`` samples of each half so both sides have length m.
+        m = self.dim // 2
+        corr = float(np.corrcoef(d[:m], d[m : 2 * m])[0, 1]) if m >= 2 else 0.0
         return {
             "mean": float(np.mean(d)),
             "std": float(np.std(d)),
-            "self_similarity": (
-                float(np.corrcoef(d[: self.dim // 2], d[self.dim // 2:])[0, 1])
-                if self.dim >= 2
-                else 0.0
-            ),
+            "self_similarity": corr,
         }
 
 
@@ -164,16 +172,27 @@ class MathematicalUniverse(CognitiveModule):
         self.info_geometry = InformationGeometry(dim)
         self.topology = TopologicalAnalyzer(dim)
         self.fractal = FractalGenerator(dim)
+        # Cache of the last ``process`` output so ``predict`` can reuse it
+        # instead of re-running ``fractal.generate`` (Fix 12).
+        self._last_process_output: np.ndarray | None = None
 
     def process(self, signal: Signal) -> Signal:
         topo_features = self.topology.topological_features(signal.data)
         fractal_output = self.fractal.generate(signal.data)
         combined = 0.5 * topo_features + 0.5 * fractal_output
+        # Cache the combined output for predict() to reuse (Fix 12).
+        self._last_process_output = combined
         return Signal(data=combined, metadata={"topological": True, "fractal": True})
 
     def predict(self, signal: Signal) -> Prediction:
-        fractal_pred = self.fractal.generate(signal.data, n_iterations=5)
-        return Prediction(value=fractal_pred, uncertainty=float(np.var(fractal_pred)))
+        # Reuse the cached process output when available so we do not call
+        # ``fractal.generate`` twice per think() cycle (Fix 12). Fall back to
+        # a fresh fractal pass when predict() is called standalone.
+        if self._last_process_output is not None:
+            value = self._last_process_output
+        else:
+            value = self.fractal.generate(signal.data, n_iterations=5)
+        return Prediction(value=value, uncertainty=float(np.var(value)))
 
     def update(self, prediction_error: float) -> None:
         for i, (scale, offset) in enumerate(self.fractal.transforms):

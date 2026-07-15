@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 import numpy as np
+from scipy.ndimage import correlate as _nd_correlate
 
 
 class DomainRules:
@@ -101,16 +102,14 @@ class VisionRules(DomainRules):
         }
 
     def convolve(self, image: np.ndarray, kernel: np.ndarray) -> np.ndarray:
-        """2D convolution with zero padding (rule-based operator)."""
-        kh, kw = kernel.shape
-        ph, pw = kh // 2, kw // 2
-        padded = np.pad(image, ((ph, ph), (pw, pw)), mode="constant")
-        out = np.zeros_like(image, dtype=float)
-        h, w = image.shape
-        for i in range(h):
-            for j in range(w):
-                out[i, j] = np.sum(padded[i:i + kh, j:j + kw] * kernel)
-        return out
+        """2D correlation (zero padding) via ``scipy.ndimage`` (Fix 10).
+
+        The previous pure-Python double loop was the dominant cost in
+        ``FeatureExtractor.extract`` and ``ShapeAnalyzer._complexity``;
+        ``scipy.ndimage.correlate`` is a compiled C kernel and is already a
+        dependency (scipy is required by ``pyproject.toml``).
+        """
+        return _nd_correlate(image.astype(float), kernel, mode="constant")
 
 
 @dataclass

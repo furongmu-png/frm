@@ -56,7 +56,10 @@ class ParallelExecutor:
                 results: list[R | None] = [None] * len(items_list)
                 for fut in as_completed(futures):
                     results[futures[fut]] = fut.result()
-                return [r for r in results if r is not None]  # type: ignore[list-item]
+                # Preserve None results (Fix 21): cognitive modules may
+                # legitimately return None, and dropping them desyncs the
+                # output order from the input order.
+                return results  # type: ignore[return-value]
 
         # Process-pool backend via joblib (heavier, true parallelism).
         return list(

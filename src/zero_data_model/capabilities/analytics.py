@@ -48,7 +48,8 @@ class TimeSeriesForecaster:
     def forecast(self, series: np.ndarray, horizon: int = 5) -> np.ndarray:
         """Forecast ``horizon`` future values of ``series``.
 
-        - Embed the series into the belief state (pad/truncate to state_dim).
+        - Embed the series into a *local* belief state (pad/truncate to
+          state_dim) WITHOUT mutating ``gm.belief_state`` (Fix 3).
         - Iteratively predict the next state and decode each to a scalar
           (mean of the predicted observation).
         - Blend 0.5/0.5 with a moving-average trend extrapolated forward.
@@ -57,13 +58,14 @@ class TimeSeriesForecaster:
         gm = self.active_inference.generative_model
         state_dim = gm.state_dim
 
-        # Embed the series into the belief state (pad/truncate to state_dim).
+        # Embed the series into a LOCAL belief state; do NOT overwrite the
+        # shared ``gm.belief_state`` (compute_free_energy is now pure and the
+        # analytics path must not corrupt the active-inference engine's state).
         state = np.zeros(state_dim, dtype=float)
         n = min(len(data), state_dim)
         state[:n] = data[:n]
-        gm.belief_state = state.copy()
 
-        # Roll the generative model forward and decode each state to a scalar.
+        # Roll the generative model forward on the local state only.
         ai_forecast = np.zeros(horizon, dtype=float)
         current = state.copy()
         for t in range(horizon):
@@ -113,16 +115,15 @@ class AnomalyDetector:
         """Return a boolean mask (same length as ``series``) of anomalies."""
         data = np.asarray(series, dtype=float).flatten()
         n = data.shape[0]
-        gm = self.active_inference.generative_model
-        state_dim = gm.state_dim
 
+        # ``compute_free_energy`` is now pure (Fix 3): it no longer mutates
+        # the shared ``belief_state``, so the per-point reset is unnecessary.
         free_energies = np.zeros(n, dtype=float)
         for i in range(n):
             # Most-local window: the point itself, so each point's surprisal is
             # estimated independently (avoids a single spike diluting the
             # z-score through many overlapping windows).
             local = data[i : i + 1]
-            gm.belief_state = np.zeros(state_dim, dtype=float)
             free_energies[i] = float(self.active_inference.compute_free_energy(local))
 
         z = self.rules.zscore(free_energies)
@@ -191,16 +192,27 @@ class PatternMiner:
         target = initial.astype(float)
         n_steps = max(1, min(len(data) - 1, 20))
 
+        # Save the CA's mutable state so this scan leaves the shared automaton
+        # exactly as we found it (it is shared with BiologicalSubstrate.process).
+        saved_rule = ca.rule
+        saved_state = ca.state.copy()
+
         best_rule = 0
         best_mse = float("inf")
-        for rule in range(256):
-            ca.rule = rule
-            ca.state = initial.copy()
-            history = ca.evolve(n_steps=n_steps)
-            mse = float(np.mean((history.astype(float) - target) ** 2))
-            if mse < best_mse:
-                best_mse = mse
-                best_rule = rule
+        try:
+            for rule in range(256):
+                ca.rule = rule
+                ca.state = initial.copy()
+                # ``step_n`` advances without recording history (Fix 11):
+                # 256 rules * O(n_steps) cells vs the old 256 full histories.
+                final_state = ca.step_n(n_steps).astype(float)
+                mse = float(np.mean((final_state - target) ** 2))
+                if mse < best_mse:
+                    best_mse = mse
+                    best_rule = rule
+        finally:
+            ca.rule = saved_rule
+            ca.state = saved_state
         return best_rule
 
     def _autocorrelation_period(self, data: np.ndarray) -> int:
@@ -252,8 +264,8 @@ class TrendAnalyzer:
         data = np.asarray(series, dtype=float).flatten()
         n = data.shape[0]
 
-        # Linear regression slope (degree-1 polyfit).
-        slope = float(np.polyfit(np.arange(n, dtype=float), data, 1)[0])
+        # Linear regression slope (degree-1 polyfit); needs n >= 2.
+        slope = float(np.polyfit(np.arange(n, dtype=float), data, 1)[0]) if n >= 2 else 0.0
 
         threshold = self.rules.trend_threshold
         if slope > threshold:
@@ -266,7 +278,9 @@ class TrendAnalyzer:
         # Second-derivative mean (curvature).
         curvature = float(np.mean(np.diff(data, n=2))) if n >= 3 else 0.0
 
-        # KL divergence between the abs-valued, normalized halves.
+        # KL divergence between the abs-valued, normalized halves. The two
+        # halves have unequal length when n is odd; kl_divergence pads both
+        # inputs to ``self.dim`` so the mismatch is safe (Fix 1 + Fix 2).
         mid = n // 2
         first_half = np.abs(data[:mid])
         second_half = np.abs(data[mid:])

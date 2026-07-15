@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass
 
 import numpy as np
@@ -52,14 +53,34 @@ class GenerativeModel:
         return next_state
 
     def infer_state(self, observation: np.ndarray) -> tuple[np.ndarray, float]:
+        """Pure: returns (inferred_state, prediction_error) WITHOUT mutating
+        ``belief_state``.
+
+        The returned state is ``belief_state + 0.1 * gradient``; callers that
+        want to actually update the belief must call ``update_belief`` instead.
+        Keeping this pure is what lets ``compute_free_energy`` run from
+        read-only analytics methods (classify_text, detect_anomalies, ...)
+        without corrupting the shared belief state.
+        """
         predicted_obs = self.predict_observation(self.belief_state)
         error = observation[: self.obs_dim] - predicted_obs[: len(observation)]
         if len(error) < self.obs_dim:
             error = np.pad(error, (0, self.obs_dim - len(error)))
         prediction_error = float(np.mean(error ** 2))
         gradient = error @ self.emission.T
-        self.belief_state += 0.1 * gradient
-        return self.belief_state.copy(), prediction_error
+        return self.belief_state + 0.1 * gradient, prediction_error
+
+    def update_belief(self, observation: np.ndarray) -> tuple[np.ndarray, float]:
+        """Mutate ``belief_state`` from a new observation.
+
+        Returns the same ``(new_state, prediction_error)`` pair as
+        ``infer_state`` for convenience. Called only from the active-inference
+        ``process`` / ``update`` cycle so analytics methods can use
+        ``infer_state`` (pure) without corrupting shared state.
+        """
+        new_state, prediction_error = self.infer_state(observation)
+        self.belief_state = new_state
+        return new_state, prediction_error
 
 
 class HomeostaticController:
@@ -96,17 +117,26 @@ class ActiveInferenceEngine(CognitiveModule):
         self.blanket = MarkovBlanket.create(obs_dim, action_dim, state_dim)
         self.generative_model = GenerativeModel(state_dim, obs_dim)
         self.homeostasis = HomeostaticController(state_dim)
-        self.action_history: list[np.ndarray] = []
-        self.free_energy_history: list[float] = []
+        # Bounded deques so long-running engines do not leak memory (Fix 8).
+        self.action_history: deque = deque(maxlen=1000)
+        self.free_energy_history: deque = deque(maxlen=1000)
 
     def compute_free_energy(self, observation: np.ndarray) -> float:
-        """F = complexity - accuracy (variational free energy)."""
-        _, pred_error = self.generative_model.infer_state(observation)
-        complexity = float(np.linalg.norm(self.generative_model.belief_state) ** 2) * 0.01
+        """Pure variational free energy ``F = complexity + prediction_error``.
+
+        Does NOT mutate ``belief_state`` (uses ``infer_state`` which now
+        returns a new state). Safe to call from read-only analytics methods.
+        """
+        inferred, pred_error = self.generative_model.infer_state(observation)
+        complexity = float(np.linalg.norm(inferred) ** 2) * 0.01
         return pred_error + complexity
 
     def select_action(self, belief: np.ndarray) -> np.ndarray:
-        """Select action that minimizes expected free energy."""
+        """Select action that minimizes expected free energy.
+
+        Uses ``compute_free_energy`` (pure) so this never mutates
+        ``belief_state`` either.
+        """
         best_action = None
         best_efep = float("inf")
         for _ in range(8):
@@ -133,7 +163,9 @@ class ActiveInferenceEngine(CognitiveModule):
         return None
 
     def process(self, signal: Signal) -> Signal:
-        belief, pred_error = self.generative_model.infer_state(signal.data)
+        # ``update_belief`` mutates the shared belief_state (this is the only
+        # place analytics-callable code paths intentionally update the belief).
+        belief, pred_error = self.generative_model.update_belief(signal.data)
         free_energy = pred_error + float(np.linalg.norm(belief) ** 2) * 0.01
         self.free_energy_history.append(free_energy)
         action = self.select_action(belief)
@@ -143,8 +175,16 @@ class ActiveInferenceEngine(CognitiveModule):
         return Signal(data=output, metadata={"free_energy": free_energy, "action": action.tolist()})
 
     def predict(self, signal: Signal) -> Prediction:
+        # Seed the prediction from the incoming signal rather than the (shared)
+        # internal belief_state, so predictions actually reflect the input.
+        # ``predict_observation`` does ``state @ emission`` and expects a
+        # state_dim-length vector, so we pad/pad the signal to state_dim
+        # (not obs_dim) to avoid a shape mismatch when obs_dim != state_dim.
         gm = self.generative_model
-        predicted_obs = gm.predict_observation(gm.belief_state)
+        state = signal.data[: gm.state_dim]
+        if len(state) < gm.state_dim:
+            state = np.pad(state, (0, gm.state_dim - len(state)))
+        predicted_obs = gm.predict_observation(state)
         return Prediction(value=predicted_obs, uncertainty=float(np.var(predicted_obs)))
 
     def update(self, prediction_error: float) -> None:

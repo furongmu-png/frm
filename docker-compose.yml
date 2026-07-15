@@ -9,17 +9,44 @@ services:
     # Map host port 8000 to container port 8000 (EXPOSE in Dockerfile).
     ports:
       - "8000:8000"
+    # Run as the non-root user created in the Dockerfile (uid 10001).
+    # Fix 3 (CWE-250): never run the container process as root.
+    user: "10001:10001"
     environment:
       # Flush stdout/stderr immediately so logs appear without buffering.
       PYTHONUNBUFFERED: "1"
+      # Override per-deployment via the .env file or compose override.
+      ZDM_LOG_LEVEL: "INFO"
+      # Set ZDM_ENV=production in production compose to disable /docs,
+      # /redoc and /openapi.json (Fix 12).
+      ZDM_ENV: "production"
+      # Set ZDM_API_KEY in production to require X-API-Key on every
+      # endpoint except /health and /ready (Fix 2, CWE-306).
+      # ZDM_API_KEY: "set-me-in-production"
     volumes:
       # Optional persistence mount: model save/load endpoints can write here.
+      # Kept read-write because /save needs to persist snapshots (Fix 19).
       - ./data:/app/data
+    # tmpfs for any temp files (atomic save staging uses /app/data, but a
+    # tmpfs /tmp keeps OS temp off the persistent volume). Fix 19.
+    tmpfs:
+      - /tmp:size=64m,mode=1777
     # Survive restarts / host reboots, but stop if explicitly stopped.
     restart: unless-stopped
+    # Give uvicorn's --timeout-graceful-shutdown 30s room to drain
+    # in-flight requests before compose sends SIGKILL (Fix 4).
+    stop_grace_period: 30s
+    # Resource limits cap memory at 2 GiB and 2 CPUs so a runaway request
+    # can't OOM the host (Fix 5, CWE-770). Requires `docker compose up`
+    # with swarm-style deploy support; compose v2 honors these on Linux.
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+          cpus: "2.0"
     healthcheck:
-      # Hit the root health endpoint. curl is installed in the Dockerfile.
-      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
+      # Hit the cheap liveness endpoint. curl is installed in the Dockerfile.
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
       timeout: 5s
       retries: 3

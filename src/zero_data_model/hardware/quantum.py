@@ -136,8 +136,12 @@ class SimulatorQuantumBackend(QuantumBackend):
     def evolve_and_measure(
         self, params: np.ndarray, entangling: np.ndarray, n_shots: int = 1024
     ) -> np.ndarray:
-        """Evolve a zero-initialized state through the ansatz and measure."""
+        """Evolve a |0...0>-initialized state through the ansatz and measure."""
+        # Initialize to the |0...0> basis state (amplitude 1.0 on the first
+        # component) so RY gates actually rotate a non-zero amplitude. A zero
+        # vector stays zero under RY, yielding an all-zero probability vector.
         state = np.zeros(2 * self.n_qubits)
+        state[0] = 1.0
         for layer in range(min(self.n_layers, params.shape[0])):
             state = self._ry_gate(state, params[layer, :, 0])
             state = self._entangle(state, entangling)
@@ -157,7 +161,21 @@ def get_quantum_backend(
     (auto-detect). When IBM hardware is requested but ``qiskit-ibm-runtime``
     is missing or no token is configured, the factory falls back to the
     local Qiskit simulator (or the pure-NumPy simulator if Qiskit is absent).
+
+    Fix 24: ``n_qubits`` is clamped to <= 20 because the local state-vector
+    simulator materializes a dense probability vector of length 2*n_qubits and
+    the Qiskit ``StatevectorSampler`` scales exponentially with qubit count.
+    A warning is emitted when clamping occurs.
     """
+    import warnings
+
+    if n_qubits > 20:
+        warnings.warn(
+            f"n_qubits={n_qubits} exceeds the supported maximum (20); "
+            "clamping to 20 to avoid exponential state-vector blowup.",
+            stacklevel=2,
+        )
+        n_qubits = 20
     if prefer in ("ibm", "ibm_quantum"):
         try:
             from .ibm_quantum import IBMQuantumBackend

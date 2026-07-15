@@ -191,7 +191,12 @@ class PatternRecognizer:
             proto_enc = self.encoder.encode(proto)
             score = self._cosine(input_enc, proto_enc)
             if self.active_inference is not None:
-                free_energy = float(self.active_inference.compute_free_energy(input_enc))
+                # Free energy of the DIFFERENCE between input and prototype
+                # (Fix 6): the original used ``input_enc`` alone, which is the
+                # same for every prototype and so had zero effect on ranking.
+                free_energy = float(
+                    self.active_inference.compute_free_energy(input_enc - proto_enc)
+                )
                 score = score - 0.01 * free_energy
             if score > best_score:
                 best_score = score

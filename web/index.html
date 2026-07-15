@@ -3,6 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<!-- CSP (Fix 17): disallow inline scripts and remote resources; the page
+     has inline styles so 'unsafe-inline' is permitted for style-src only. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'">
 <title>Zero-Data Cognitive Model</title>
 <style>
   :root {
@@ -358,16 +361,44 @@
 <script>
   const API = "http://localhost:8000";
 
-  // ----- Helpers ----------------------------------------------------------
-  function setOut(id, html) {
-    const el = document.getElementById(id);
-    el.classList.remove("empty");
-    el.innerHTML = html;
+  // ----- DOM helpers (XSS-safe, Fix 17) -----------------------------------
+  // Every server-provided string is rendered via `textContent`, never via
+  // `innerHTML`. These helpers build elements with safe text so the call
+  // sites stay readable without re-introducing HTML injection.
+  function el(tag, opts) {
+    const node = document.createElement(tag);
+    if (opts) {
+      if (opts.className) node.className = opts.className;
+      if (opts.text !== undefined) node.textContent = String(opts.text);
+      if (opts.style) {
+        for (const [k, v] of Object.entries(opts.style)) node.style[k] = v;
+      }
+    }
+    return node;
+  }
+  function label(text) { return el("span", {className: "label", text: text}); }
+  function pill(text, styleObj) {
+    return el("span", {className: "pill", text: text, style: styleObj});
+  }
+  function big(text) { return el("span", {className: "big", text: text}); }
+  function spacer() { return el("span", {className: "label", text: "", style: {marginLeft: "12px"}}); }
+
+  // setOut clears the output element and appends the given DOM nodes.
+  // No string interpolation -- callers pass already-built elements.
+  function setOut(id) {
+    const node = document.getElementById(id);
+    node.classList.remove("empty");
+    node.replaceChildren();
+    for (let i = 1; i < arguments.length; i++) node.appendChild(arguments[i]);
+    return node;
   }
   function setOutErr(id, msg) {
-    const el = document.getElementById(id);
-    el.classList.remove("empty");
-    el.innerHTML = `<span class="err">${msg}</span>`;
+    // textContent -- never innerHTML -- so server error strings can't inject.
+    const node = document.getElementById(id);
+    node.classList.remove("empty");
+    node.replaceChildren();
+    const span = el("span", {className: "err", text: msg});
+    node.appendChild(span);
   }
   function parseSeries(text) {
     return text.split(/[\s,;]+/)
@@ -399,6 +430,8 @@
     if (!r.ok) {
       let detail = "";
       try { detail = (await r.json()).detail || ""; } catch (_) {}
+      // Note: detail is interpolated into an Error message string, which is
+      // later rendered via setOutErr -> textContent, so no HTML context.
       throw new Error(`${r.status} ${r.statusText}${detail ? ": " + detail : ""}`);
     }
     return await r.json();
@@ -443,8 +476,8 @@
     try {
       const r = await postJSON("/classify", {text});
       setOut("cls-out",
-        `<span class="label">topic</span><span class="pill">${r.topic}</span>
-         <span class="label" style="margin-left:12px;">confidence</span><span class="big">${(r.confidence * 100).toFixed(1)}%</span>`);
+        label("topic"), pill(r.topic),
+        spacer(), label("confidence"), big((r.confidence * 100).toFixed(1) + "%"));
     } catch (e) { setOutErr("cls-out", "Error: " + e.message); }
   });
 
@@ -453,7 +486,7 @@
     const b = document.getElementById("sim-b").value;
     try {
       const r = await postJSON("/similarity", {a, b});
-      setOut("sim-out", `<span class="label">similarity</span><span class="big">${(r.similarity * 100).toFixed(1)}%</span>`);
+      setOut("sim-out", label("similarity"), big((r.similarity * 100).toFixed(1) + "%"));
     } catch (e) { setOutErr("sim-out", "Error: " + e.message); }
   });
 
@@ -462,15 +495,10 @@
     const length = parseInt(document.getElementById("gen-len").value, 10) || 32;
     try {
       const r = await postJSON("/generate", {seed, length});
-      setOut("gen-out", `<span class="label">text</span>${escapeHtml(r.text)}`);
+      // textContent -- the generated string can contain anything printable.
+      setOut("gen-out", label("text"), el("span", {text: r.text}));
     } catch (e) { setOutErr("gen-out", "Error: " + e.message); }
   });
-
-  function escapeHtml(s) {
-    return String(s).replace(/[&<>"']/g, c => ({
-      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
-    }[c]));
-  }
 
   // ----- Vision -----------------------------------------------------------
   function drawImage(canvas, grid) {
@@ -506,8 +534,8 @@
     try {
       const r = await postJSON("/recognize", {image: img});
       setOut("rec-out",
-        `<span class="label">shape</span><span class="pill">${r.shape}</span>
-         <span class="label" style="margin-left:12px;">confidence</span><span class="big">${(r.confidence * 100).toFixed(1)}%</span>`);
+        label("shape"), pill(r.shape),
+        spacer(), label("confidence"), big((r.confidence * 100).toFixed(1) + "%"));
     } catch (e) { setOutErr("rec-out", "Error: " + e.message); }
   });
 
@@ -572,8 +600,9 @@
     try {
       const r = await postJSON("/forecast", {series, horizon});
       drawForecast(document.getElementById("fc-canvas"), series, r.forecast);
-      setOut("fc-out",
-        `<span class="label">next ${r.forecast.length}:</span>${r.forecast.map(v => v.toFixed(3)).join(", ")}`);
+      // Numeric values joined into a single text node (no server strings).
+      const next = r.forecast.map(v => v.toFixed(3)).join(", ");
+      setOut("fc-out", label("next " + r.forecast.length + ":"), el("span", {text: next}));
     } catch (e) { setOutErr("fc-out", "Error: " + e.message); }
   });
 
@@ -621,9 +650,10 @@
       const r = await postJSON("/anomalies", {series});
       drawAnomalies(document.getElementById("an-canvas"), series, r.anomalies);
       const count = r.anomalies.filter(Boolean).length;
+      const mask = r.anomalies.map(b => b ? "1" : "0").join("");
       setOut("an-out",
-        `<span class="label">flagged</span>${count} / ${r.anomalies.length}
-         <span class="label" style="margin-left:12px;">mask</span>${r.anomalies.map(b => b ? "1" : "0").join("")}`);
+        label("flagged"), el("span", {text: count + " / " + r.anomalies.length}),
+        spacer(), label("mask"), el("span", {text: mask}));
     } catch (e) { setOutErr("an-out", "Error: " + e.message); }
   });
 
@@ -633,14 +663,17 @@
     if (series.length === 0) { setOutErr("tr-out", "Series is empty."); return; }
     try {
       const r = await postJSON("/trend", {series});
+      // regime is whitelisted client-side; the pill color is set from a
+      // fixed map so a hostile regime value can't inject a style.
       const regimeColor = r.regime === "up" ? "#1a7f37"
                        : r.regime === "down" ? "#cf222e" : "#57606a";
       setOut("tr-out",
-        `<span class="label">regime</span><span class="pill" style="background:#e0e7ff;color:${regimeColor};">${r.regime}</span>
-         <span class="label" style="margin-left:12px;">slope</span>${r.trend_slope.toFixed(4)}
-         <span class="label" style="margin-left:12px;">curvature</span>${r.curvature.toFixed(4)}
-         <span class="label" style="margin-left:12px;">geo. dev.</span>${r.geodesic_deviation.toFixed(4)}
-         <span class="label" style="margin-left:12px;">isomorphism</span>${r.isomorphism_score.toFixed(4)}`);
+        label("regime"),
+        pill(r.regime, {background: "#e0e7ff", color: regimeColor}),
+        spacer(), label("slope"), el("span", {text: r.trend_slope.toFixed(4)}),
+        spacer(), label("curvature"), el("span", {text: r.curvature.toFixed(4)}),
+        spacer(), label("geo. dev."), el("span", {text: r.geodesic_deviation.toFixed(4)}),
+        spacer(), label("isomorphism"), el("span", {text: r.isomorphism_score.toFixed(4)}));
     } catch (e) { setOutErr("tr-out", "Error: " + e.message); }
   });
 
