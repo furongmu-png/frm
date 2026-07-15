@@ -106,14 +106,23 @@ class ZeroDataModel:
         self._rng = np.random.default_rng(seed)
         # Re-entrant lock around every state-mutating think/solve cycle (Fix 7).
         self._lock = threading.RLock()
-        # Round-3 audit CRIT-1: per-module Generator — pass the seeded
-        # Generator to every cognitive module so each holds its own
-        # ``self._rng`` instead of racing on the global ``np.random`` RNG.
-        self.consciousness = ConsciousnessCore(dim=dim, rng=self._rng)
+        # Round-4 audit RNG-1: spawn an INDEPENDENT child Generator for each
+        # cognitive module. ``np.random.Generator`` is NOT thread-safe (NumPy
+        # docs: "using the same Generator from multiple threads is problematic"),
+        # so the Round-3 approach of sharing one ``self._rng`` across all
+        # modules was still a race when ``parallel_executor`` dispatched
+        # ``module.process()`` to ThreadPoolExecutor workers in unseeded mode.
+        # ``spawn(n)`` produces n bit-stream-independent child Generators that
+        # can be used concurrently from different threads. Seeded mode keeps
+        # reproducibility (spawn is deterministic given the parent seed); the
+        # children are consumed in a fixed order so a seeded model's
+        # ``think()`` sequence remains identical across runs.
+        _child_rngs = self._rng.spawn(6)
+        self.consciousness = ConsciousnessCore(dim=dim, rng=_child_rngs[0])
         self.active_inference = ActiveInferenceEngine(
-            state_dim=dim, obs_dim=dim, action_dim=dim // 2, rng=self._rng
+            state_dim=dim, obs_dim=dim, action_dim=dim // 2, rng=_child_rngs[1]
         )
-        self.category_engine = CategoryTheoryEngine(dim=dim, rng=self._rng)
+        self.category_engine = CategoryTheoryEngine(dim=dim, rng=_child_rngs[2])
         # When a seed is set (Fix 9), force the deterministic pure-NumPy
         # ``SimulatorQuantumBackend`` instead of the Qiskit ``StatevectorSampler``.
         # The Qiskit sampler performs stochastic shot-based measurement that
@@ -123,10 +132,12 @@ class ZeroDataModel:
         # ``think()`` sequences. When no seed is set, prefer the real Qiskit
         # backend (if installed) for production use.
         self.quantum_hybrid = QuantumClassicalHybrid(
-            dim=dim, quantum_backend="simulator" if seed is not None else None, rng=self._rng
+            dim=dim,
+            quantum_backend="simulator" if seed is not None else None,
+            rng=_child_rngs[3],
         )
-        self.biological = BiologicalSubstrate(dim=dim, rng=self._rng)
-        self.math_universe = MathematicalUniverse(dim=dim, rng=self._rng)
+        self.biological = BiologicalSubstrate(dim=dim, rng=_child_rngs[4])
+        self.math_universe = MathematicalUniverse(dim=dim, rng=_child_rngs[5])
         self.modules = [
             self.consciousness,
             self.active_inference,
@@ -198,8 +209,10 @@ class ZeroDataModel:
         )
         # Hardware acceleration: parallel module execution + GPU-aware arrays.
         # When a seed is set, force sequential execution so the per-module
-        # Generators (shared via ``self._rng``, CRIT-1) are never accessed
-        # concurrently across threads — guaranteeing reproducibility.
+        # child Generators (spawned in ``__init__``) are consumed in a fixed
+        # order — guaranteeing reproducibility. In unseeded mode the children
+        # are independent bit-streams (see RNG-1), so multi-worker parallelism
+        # is safe.
         self.parallel_executor = ParallelExecutor(
             n_workers=1 if seed is not None else None
         )

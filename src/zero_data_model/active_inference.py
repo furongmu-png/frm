@@ -234,7 +234,27 @@ class ActiveInferenceEngine(CognitiveModule):
         term is a strict superset of the old complexity penalty, and existing
         tests that only check energy decreases still hold.
         """
+        # Round-4 audit NEW-2: sanitize the observation up-front so NaN/Inf
+        # from upstream modules cannot propagate through the entire KL
+        # computation. ``infer_state`` itself is pure and does not guard its
+        # input; without this, a single NaN observation would make
+        # ``b_norm_sq`` / ``kl_qp`` NaN, which would then poison
+        # ``select_action``'s candidate scoring and ultimately corrupt
+        # ``action_history`` (breaking future sigma_q^2 estimates).
+        observation = np.nan_to_num(
+            np.asarray(observation, dtype=float),
+            nan=0.0,
+            posinf=0.0,
+            neginf=0.0,
+        )
         inferred, pred_error = self.generative_model.infer_state(observation)
+        # ``infer_state`` can still produce non-finite values if the emission
+        # matrix itself is corrupted; guard the final result so callers never
+        # receive a NaN free energy (which would break argmin in select_action).
+        if not np.isfinite(pred_error):
+            pred_error = 1e6
+        if not np.all(np.isfinite(inferred)):
+            inferred = np.nan_to_num(inferred, nan=0.0, posinf=0.0, neginf=0.0)
         # Estimate variational posterior variance sigma_q^2 from recent
         # action variance (uncertainty about the next state -> uncertainty
         # about the posterior). Fall back to 1.0 when no actions recorded.
@@ -251,6 +271,8 @@ class ActiveInferenceEngine(CognitiveModule):
             sigma_q2 = 1.0
         dim = float(self.generative_model.state_dim)
         b_norm_sq = float(np.dot(inferred, inferred))
+        if not np.isfinite(b_norm_sq):
+            b_norm_sq = 1e6
         # KL(N(belief, sigma^2 I) || N(0, I))
         kl_qp = 0.5 * (
             b_norm_sq
@@ -259,7 +281,10 @@ class ActiveInferenceEngine(CognitiveModule):
             - dim * float(np.log(sigma_q2))
         )
         # Pragmatic term: scaled prediction error (negative log-likelihood proxy).
-        return pred_error + kl_qp
+        fe = pred_error + kl_qp
+        # Final guard: if anything still escaped (shouldn't happen, but
+        # defense-in-depth), return a large finite value rather than NaN.
+        return float(fe) if np.isfinite(fe) else 1e6
 
     def select_action(self, belief: np.ndarray) -> np.ndarray:
         """Select action that minimizes expected free energy.

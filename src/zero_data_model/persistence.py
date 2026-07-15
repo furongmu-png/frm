@@ -273,12 +273,17 @@ class ModelSerializer:
         # missing ones would leave fresh-random arrays in place of saved data).
         if "dim" not in config:
             raise ValueError("config.json missing required key: 'dim'")
-        try:
-            dim = int(config["dim"])
-        except (TypeError, ValueError) as exc:
+        # Round-4 audit PERSIST-5: reject bool/float explicitly. ``int(True)``
+        # is 1 and ``int(8.5)`` is 8, so the previous ``int(config["dim"])``
+        # conversion silently accepted these and then ``ZeroDataModel(dim=1)``
+        # constructed a 1-dim model (mismatching the npz's real dim-8 arrays).
+        dim_raw = config["dim"]
+        if isinstance(dim_raw, bool) or not isinstance(dim_raw, int):
             raise ValueError(
-                f"config['dim'] must be an int, got {config['dim']!r}"
-            ) from exc
+                f"config['dim'] must be a plain int, got "
+                f"{type(dim_raw).__name__}: {dim_raw!r}"
+            )
+        dim = dim_raw
         if dim < 1 or dim > 4096:
             raise ValueError(
                 f"refusing to load model with dim={dim!r}: must be in [1, 4096]"
@@ -289,7 +294,6 @@ class ModelSerializer:
         # the quantum backend (auto-detect on this machine), capability
         # modules, parallel executor, etc.
         model = ZeroDataModel(dim=dim)
-        model.cycle_count = int(config.get("cycle_count", 0))
 
         # Round-3 audit B-batch: detect architecture mismatches up front. The
         # loop below silently truncates extra layers/functors, which is silent
@@ -318,6 +322,60 @@ class ModelSerializer:
                 f"n_functors={saved_n_functors}, got {type(morph_counts).__name__} "
                 f"of length {len(morph_counts) if isinstance(morph_counts, list) else 'n/a'}"
             )
+        # Round-4 audit PERSIST-3: validate each morph count element is a
+        # non-negative int (bool rejected — ``isinstance(True, int)`` is True
+        # so we explicitly exclude bool). Negative counts would silently
+        # discard every transform (``k >= -5`` is always True).
+        for idx, mc in enumerate(morph_counts):
+            if isinstance(mc, bool) or not isinstance(mc, int) or mc < 0:
+                raise ValueError(
+                    f"functor_morphism_counts[{idx}] must be a non-negative int, "
+                    f"got {type(mc).__name__}: {mc!r}"
+                )
+
+        # Round-4 audit PERSIST-1: ``n_morphogens`` and ``n_fractal_transforms``
+        # were written by save() but never validated by load(). A missing or
+        # malformed value would either KeyError/TypeError deep in the load
+        # loop, or silently truncate the morphogen/transform list (silent
+        # state corruption — the very bug Round-3 B-batch tried to prevent
+        # for layers/functors).
+        n_morphogens = config.get("n_morphogens")
+        if isinstance(n_morphogens, bool) or not isinstance(n_morphogens, int):
+            raise ValueError(
+                "config['n_morphogens'] must be a plain int, got "
+                f"{type(n_morphogens).__name__}: {n_morphogens!r}"
+            )
+        if n_morphogens < 0 or n_morphogens > 1024:
+            raise ValueError(
+                f"refusing to load n_morphogens={n_morphogens}: must be in [0, 1024]"
+            )
+        n_fractal_transforms = config.get("n_fractal_transforms")
+        if isinstance(n_fractal_transforms, bool) or not isinstance(n_fractal_transforms, int):
+            raise ValueError(
+                "config['n_fractal_transforms'] must be a plain int, got "
+                f"{type(n_fractal_transforms).__name__}: {n_fractal_transforms!r}"
+            )
+        if n_fractal_transforms < 0 or n_fractal_transforms > 1024:
+            raise ValueError(
+                f"refusing to load n_fractal_transforms={n_fractal_transforms}: "
+                "must be in [0, 1024]"
+            )
+
+        # Round-4 audit PERSIST-5: ``cycle_count`` must be a non-negative int
+        # (bool/float rejected explicitly — ``int(True)==1`` would otherwise
+        # silently pass).
+        cycle_count_raw = config.get("cycle_count", 0)
+        if isinstance(cycle_count_raw, bool) or not isinstance(cycle_count_raw, int):
+            raise ValueError(
+                "config['cycle_count'] must be a plain int, got "
+                f"{type(cycle_count_raw).__name__}: {cycle_count_raw!r}"
+            )
+        if cycle_count_raw < 0:
+            raise ValueError(
+                f"config['cycle_count'] must be non-negative, got {cycle_count_raw}"
+            )
+        # Assign cycle_count now that all scalar config validation is done.
+        model.cycle_count = cycle_count_raw
 
         with np.load(npz_path, allow_pickle=False) as data:
             # Reject any object-dtype array: it could carry arbitrary pickle
@@ -326,18 +384,78 @@ class ModelSerializer:
                 if data[k].dtype.kind == "O":
                     raise ValueError(f"refusing object-dtype array: {k}")
 
+            # Round-4 audit PERSIST-2: build the set of expected npz keys and
+            # verify they all exist before accessing them. Without this, a
+            # missing key would raise a bare ``KeyError`` deep in the load
+            # loop with no context about which snapshot was being loaded.
+            expected_keys: set[str] = set()
+            expected_keys.update({"active_inference_transition",
+                                  "active_inference_emission",
+                                  "active_inference_belief_state",
+                                  "category_engine_topos_classifier",
+                                  "quantum_hybrid_classical_weights",
+                                  "quantum_hybrid_circuit_params",
+                                  "quantum_hybrid_circuit_entangling",
+                                  "quantum_hybrid_annealer_cost_matrix",
+                                  "biological_morphogenetic_grid",
+                                  "biological_automata_state"})
+            for i in range(saved_n_layers):
+                expected_keys.add(f"consciousness_layers_{i}_weights")
+                expected_keys.add(f"consciousness_layers_{i}_bias")
+            for j in range(saved_n_functors):
+                for k in range(morph_counts[j]):
+                    expected_keys.add(f"category_engine_functor_{j}_transform_{k}")
+            for j in range(n_morphogens):
+                expected_keys.add(f"biological_morphogenetic_morphogens_{j}")
+            for j in range(n_fractal_transforms):
+                expected_keys.add(f"math_universe_fractal_transforms_{j}_scale")
+                expected_keys.add(f"math_universe_fractal_transforms_{j}_offset")
+            missing = expected_keys - set(data.files)
+            if missing:
+                raise ValueError(
+                    f"arrays.npz missing required keys: {sorted(missing)}"
+                )
+
             # Consciousness core: per-layer weights and biases (overwrites each
             # layer in-place so layer objects keep their identity).
             for i, layer in enumerate(model.consciousness.layers):
                 if i < config["n_consciousness_layers"]:
-                    layer.weights = np.asarray(data[f"consciousness_layers_{i}_weights"])
-                    layer.bias = np.asarray(data[f"consciousness_layers_{i}_bias"])
+                    w = np.asarray(data[f"consciousness_layers_{i}_weights"])
+                    b = np.asarray(data[f"consciousness_layers_{i}_bias"])
+                    # Round-4 audit PERSIST-2: shape check guards against a
+                    # malicious npz that sets dim=1 in config but stuffs
+                    # huge arrays into the npz (OOM bypass).
+                    if w.shape != (dim, dim):
+                        raise ValueError(
+                            f"layer {i} weights shape {w.shape} != ({dim},{dim})"
+                        )
+                    if b.shape != (dim,):
+                        raise ValueError(
+                            f"layer {i} bias shape {b.shape} != ({dim},)"
+                        )
+                    layer.weights = w
+                    layer.bias = b
 
             # Active inference generative model arrays.
             gm = model.active_inference.generative_model
-            gm.transition = np.asarray(data["active_inference_transition"])
-            gm.emission = np.asarray(data["active_inference_emission"])
-            gm.belief_state = np.asarray(data["active_inference_belief_state"])
+            t = np.asarray(data["active_inference_transition"])
+            e = np.asarray(data["active_inference_emission"])
+            bs = np.asarray(data["active_inference_belief_state"])
+            if t.shape != (gm.state_dim, gm.state_dim):
+                raise ValueError(
+                    f"transition shape {t.shape} != ({gm.state_dim},{gm.state_dim})"
+                )
+            if e.shape != (gm.state_dim, gm.obs_dim):
+                raise ValueError(
+                    f"emission shape {e.shape} != ({gm.state_dim},{gm.obs_dim})"
+                )
+            if bs.shape != (gm.state_dim,):
+                raise ValueError(
+                    f"belief_state shape {bs.shape} != ({gm.state_dim},)"
+                )
+            gm.transition = t
+            gm.emission = e
+            gm.belief_state = bs
 
             # Category engine: topos classifier + functor transforms.
             model.category_engine.topos.classifier = np.asarray(
@@ -377,7 +495,7 @@ class ModelSerializer:
             # Replace the morphogen list to preserve length even if the source
             # machine had a different signal count (default is 3).
             loaded_morphogens: list[np.ndarray] = []
-            for j in range(config["n_morphogens"]):
+            for j in range(n_morphogens):
                 loaded_morphogens.append(
                     np.asarray(data[f"biological_morphogenetic_morphogens_{j}"])
                 )
@@ -386,7 +504,7 @@ class ModelSerializer:
 
             # Math universe fractal transforms (scale + offset pairs).
             loaded_transforms: list[tuple[np.ndarray, np.ndarray]] = []
-            for j in range(config["n_fractal_transforms"]):
+            for j in range(n_fractal_transforms):
                 scale = np.asarray(data[f"math_universe_fractal_transforms_{j}_scale"])
                 offset = np.asarray(data[f"math_universe_fractal_transforms_{j}_offset"])
                 loaded_transforms.append((scale, offset))

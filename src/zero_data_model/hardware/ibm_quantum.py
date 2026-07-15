@@ -15,19 +15,27 @@ import numpy as np
 from .quantum import QiskitQuantumBackend
 
 try:  # pragma: no cover - optional dependency
+    from qiskit.exceptions import QiskitError
+    from qiskit.providers.exceptions import JobError
     from qiskit_ibm_runtime import QiskitRuntimeService, SamplerV2, Session
-    from qiskit_ibm_runtime.exceptions import IBMApiError
 
     _HAS_IBM_RUNTIME = True
     _IMPORT_ERROR: str | None = None
 except ImportError as _exc:  # pragma: no cover - exercised in CI without runtime
     _HAS_IBM_RUNTIME = False
     _IMPORT_ERROR = str(_exc)
-    # Sentinel so that ``except IBMApiError`` stays syntactically valid even
-    # when the runtime package is absent. The real-hardware code path is
-    # unreachable in that case (guarded by ``self._available``), so this
-    # alias is never actually used for matching.
-    IBMApiError = Exception  # type: ignore[assignment, misc]
+
+    # Round-4 audit IBM-5: use a private sentinel class instead of ``Exception``
+    # so that an accidental fall-through (e.g. if the ``_HAS_IBM_RUNTIME``
+    # guard is ever removed) does NOT silently catch TypeError/AttributeError
+    # — the very bug Round-3 B-batch tried to fix. The sentinel never matches
+    # a real raised exception, so the except clauses become no-ops if the
+    # runtime is absent.
+    class QiskitError(Exception):  # type: ignore[no-redef]
+        """Sentinel; real QiskitError unavailable. Never raised at runtime."""
+
+    class JobError(Exception):  # type: ignore[no-redef]
+        """Sentinel; real JobError unavailable. Never raised at runtime."""
 
 
 class IBMQuantumBackend(QiskitQuantumBackend):
@@ -108,18 +116,20 @@ class IBMQuantumBackend(QiskitQuantumBackend):
             else:
                 self._backend = self._service.least_busy(min_num_qubits=n_qubits)
             self._available = True
-        except (
-            IBMApiError,
-            OSError,
-            RuntimeError,
-        ) as exc:  # pragma: no cover - network/hardware path
-            # Round-3 audit B-batch: narrow the catch so programming bugs
-            # (TypeError/AttributeError/NameError) propagate instead of being
-            # silently swallowed and degrading to the simulator. Only catch
-            # errors that genuinely indicate the IBM service is unavailable:
-            #   * IBMApiError  -- qiskit-ibm-runtime auth/API failures
-            #   * OSError      -- network/transport/DNS errors
-            #   * RuntimeError -- qiskit wraps some failures as RuntimeError
+        except (QiskitError, JobError, OSError, RuntimeError) as exc:  # pragma: no cover
+            # Round-4 audit IBM-1/IBM-2/IBM-3: Round-3 B-batch caught only
+            # ``IBMApiError``, but ``IBMApiError`` is a *leaf* class, NOT the
+            # IBM base class. The real base class is ``IBMError`` (a subclass
+            # of ``QiskitError``). Catching ``QiskitError`` covers:
+            #   * IBMError → IBMNotAuthorizedError (auth), IBMAccountError,
+            #     IBMInputValueError, IBMRuntimeError (incl. RuntimeJobMaxTimeout)
+            #   * QiskitBackendNotFoundError (backend_name not found)
+            #   * TranspilerError (ansatz incompatible with backend)
+            # ``JobError`` separately covers RuntimeJobFailureError and
+            # RuntimeJobTimeoutError (they inherit from JobError, NOT from
+            # IBMError/QiskitError). ``OSError`` covers network/transport.
+            # TypeError/AttributeError/NameError (programming bugs) still
+            # propagate — they are NOT ancestors of any caught type.
             warnings.warn(
                 f"IBM Quantum service initialization failed ({type(exc).__name__}); "
                 "falling back to the local simulator.",
@@ -155,21 +165,15 @@ class IBMQuantumBackend(QiskitQuantumBackend):
                 job = sampler.run([tqc], shots=n_shots)
                 result = job.result()
             counts = self._extract_counts(result[0])
-        except IBMApiError as exc:  # pragma: no cover - network/hardware path
-            warnings.warn(
-                f"IBM Quantum API error ({type(exc).__name__}); falling back to the "
-                "local simulator.",
-                stacklevel=2,
-            )
-            return super().evolve_and_measure(params, entangling, n_shots)
-        except (
-            OSError,
-            RuntimeError,
-        ) as exc:  # pragma: no cover - network/hardware path
-            # Round-3 audit B-batch: same narrowing as the constructor. Lets
-            # TypeError/AttributeError (programming bugs in the qiskit call
-            # chain) propagate instead of silently degrading to the simulator.
-            # IBMApiError is already caught by the except clause above.
+        except (QiskitError, JobError, OSError, RuntimeError) as exc:  # pragma: no cover
+            # Round-4 audit IBM-1/IBM-4: same comprehensive coverage as the
+            # constructor. ``QiskitError`` covers TranspilerError (ansatz
+            # incompatible with backend), IBMRuntimeError (incl.
+            # RuntimeJobMaxTimeoutError). ``JobError`` covers
+            # RuntimeJobFailureError / RuntimeJobTimeoutError (job execution
+            # failures, the most common runtime failure mode).
+            # TypeError/AttributeError/NameError (programming bugs) still
+            # propagate — they are NOT ancestors of any caught type.
             warnings.warn(
                 f"IBM Quantum job failed ({type(exc).__name__}); "
                 "falling back to the local simulator.",
