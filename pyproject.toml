@@ -40,12 +40,14 @@ web = [
     "prometheus-fastapi-instrumentator>=6,<9",
 ]
 mcp = ["mcp>=1.0,<2"]
-# Dev tooling: pytest 7+/8, ruff 0.x, line_profiler 5.x (Fix 20).
+# Dev tooling: pytest 7+/8, ruff 0.x, line_profiler 5.x (Fix 20),
+# hypothesis 6.x for property-based invariant tests (Round-3 audit C-batch).
 dev = [
     "pytest>=7,<9",
     "pytest-cov>=4,<8",
     "ruff>=0.1,<1",
     "line_profiler>=4,<6",
+    "hypothesis>=6,<7",
 ]
 all = [
     "qiskit>=1.0,<3",

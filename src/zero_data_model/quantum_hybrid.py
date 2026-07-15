@@ -30,11 +30,19 @@ class VariationalQuantumCircuit:
     ``QuantumBackend`` selected at construction time.
     """
 
-    def __init__(self, n_qubits: int = 8, n_layers: int = 3, backend: str | None = None):
+    def __init__(
+        self,
+        n_qubits: int = 8,
+        n_layers: int = 3,
+        backend: str | None = None,
+        rng: np.random.Generator | None = None,
+    ):
         self.n_qubits = n_qubits
         self.n_layers = n_layers
-        self.params = np.random.randn(n_layers, n_qubits, 2) * 0.1
-        self.entangling = np.random.randn(n_qubits, n_qubits) * 0.05
+        # Round-3 audit CRIT-1: per-module Generator
+        self._rng = rng if rng is not None else np.random.default_rng()
+        self.params = self._rng.standard_normal((n_layers, n_qubits, 2)) * 0.1
+        self.entangling = self._rng.standard_normal((n_qubits, n_qubits)) * 0.05
         self.entangling = (self.entangling + self.entangling.T) / 2
         self.backend: QuantumBackend = get_quantum_backend(
             n_qubits=n_qubits, n_layers=n_layers, prefer=backend
@@ -133,21 +141,25 @@ except ImportError:  # pragma: no cover
 class QuantumAnnealer:
     """Simulated quantum annealing with numba-JIT inner loop."""
 
-    def __init__(self, n_vars: int = 16):
+    def __init__(self, n_vars: int = 16, rng: np.random.Generator | None = None):
         self.n_vars = n_vars
-        self.cost_matrix = np.random.randn(n_vars, n_vars) * 0.1
+        # Round-3 audit CRIT-1: per-module Generator
+        self._rng = rng if rng is not None else np.random.default_rng()
+        self.cost_matrix = self._rng.standard_normal((n_vars, n_vars)) * 0.1
         self.cost_matrix = (self.cost_matrix + self.cost_matrix.T) / 2
         self.jit = _HAS_NUMBA
         self._jit_warmed = False
 
     def optimize(self, n_iterations: int = 100) -> tuple[np.ndarray, float]:
-        best_state = np.random.choice([-1, 1], size=self.n_vars).astype(float)
+        # Round-3 audit CRIT-1: per-module Generator
+        best_state = self._rng.choice([-1, 1], size=self.n_vars).astype(float)
         best_energy = float(best_state @ self.cost_matrix @ best_state)
-        # Generate the RNG sequence outside JIT so it draws from numpy's
-        # global RNG (which is re-seeded by ZeroDataModel.think/solve when a
-        # seed is set) rather than numba's independent internal RNG (A-CRIT-02).
-        flips = np.random.randint(0, self.n_vars, size=n_iterations)
-        accepts = np.random.random(size=n_iterations)
+        # Generate the RNG sequence outside the JIT kernel so it draws from the
+        # per-module Generator (CRIT-1) rather than numba's independent internal
+        # RNG (A-CRIT-02). The Generator is seeded via ZeroDataModel when a seed
+        # is set, so seeded models stay reproducible.
+        flips = self._rng.integers(0, self.n_vars, size=n_iterations)
+        accepts = self._rng.random(size=n_iterations)
         # Warm up the JIT cache on the first call with this array shape.
         if self.jit and not self._jit_warmed:
             _anneal_inner(
@@ -173,14 +185,22 @@ class QuantumClassicalHybrid(CognitiveModule):
     - Classical neural processing
     """
 
-    def __init__(self, dim: int = 64, n_qubits: int = 8, quantum_backend: str | None = None):
+    def __init__(
+        self,
+        dim: int = 64,
+        n_qubits: int = 8,
+        quantum_backend: str | None = None,
+        rng: np.random.Generator | None = None,
+    ):
         self.dim = dim
         self.n_qubits = n_qubits
+        # Round-3 audit CRIT-1: per-module Generator
+        self._rng = rng if rng is not None else np.random.default_rng()
         self.quantum_circuit = VariationalQuantumCircuit(
-            n_qubits=n_qubits, n_layers=3, backend=quantum_backend
+            n_qubits=n_qubits, n_layers=3, backend=quantum_backend, rng=self._rng
         )
-        self.annealer = QuantumAnnealer(dim)
-        self.classical_weights = np.random.randn(dim, dim) * 0.05
+        self.annealer = QuantumAnnealer(dim, rng=self._rng)
+        self.classical_weights = self._rng.standard_normal((dim, dim)) * 0.05
 
     @property
     def quantum_backend_name(self) -> str:
@@ -223,7 +243,8 @@ class QuantumClassicalHybrid(CognitiveModule):
         if not np.isfinite(prediction_error):
             return
         prediction_error = float(np.clip(prediction_error, -1e6, 1e6))
-        noise = np.random.randn(*self.classical_weights.shape) * prediction_error * 0.001
+        # Round-3 audit CRIT-1: per-module Generator
+        noise = self._rng.standard_normal(self.classical_weights.shape) * prediction_error * 0.001
         self.classical_weights += noise
 
     def solve_optimization(self) -> tuple[np.ndarray, float]:

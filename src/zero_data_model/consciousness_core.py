@@ -103,11 +103,13 @@ class ConsciousnessCore(CognitiveModule):
     - Self-model for metacognition
     """
 
-    def __init__(self, dim: int = 64, n_layers: int = 3):
+    def __init__(self, dim: int = 64, n_layers: int = 3, rng: np.random.Generator | None = None):
         self.dim = dim
+        # Round-3 audit CRIT-1: per-module Generator
+        self._rng = rng if rng is not None else np.random.default_rng()
         self.layers = [
             PredictiveLayer(
-                weights=np.random.randn(dim, dim) * 0.1,
+                weights=self._rng.standard_normal((dim, dim)) * 0.1,
                 bias=np.zeros(dim),
             )
             for _ in range(n_layers)
@@ -126,7 +128,8 @@ class ConsciousnessCore(CognitiveModule):
         for layer in self.layers:
             prediction = layer.predict(x)
             error = layer.prediction_error(x, prediction)
-            x = prediction + np.random.randn(self.dim) * error * 0.01
+            # Round-3 audit CRIT-1: per-module Generator
+            x = prediction + self._rng.standard_normal(self.dim) * error * 0.01
 
         self.self_model.update(x)
         # Cache the post-hierarchy state for predict() to reuse (Fix 12).
@@ -161,8 +164,15 @@ class ConsciousnessCore(CognitiveModule):
         if not np.isfinite(prediction_error):
             return
         prediction_error = float(np.clip(prediction_error, -1e6, 1e6))
+        # Round-3 audit: clamp the effective noise scale so a runaway
+        # prediction_error near the 1e6 ceiling does not destroy learned
+        # weights in a single step (1e6 * 0.001 = 1000 std-dev noise).
+        step = float(np.clip(abs(prediction_error) * 0.001, 0.0, 0.1))
+        if step == 0.0:
+            return
         for layer in self.layers:
-            noise = np.random.randn(*layer.weights.shape) * prediction_error * 0.001
+            # Round-3 audit CRIT-1: per-module Generator
+            noise = self._rng.standard_normal(layer.weights.shape) * step
             layer.weights += noise
 
     def reflect(self) -> Signal:

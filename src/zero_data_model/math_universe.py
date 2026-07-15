@@ -235,6 +235,15 @@ class TopologicalAnalyzer:
         n - betti_0`` formula was topologically incorrect (1D point clouds
         have no 1-loops); this is now fixed.
         """
+        # Round-3 audit: emit DeprecationWarning so callers are alerted.
+        import warnings
+
+        warnings.warn(
+            "compute_betti_numbers is deprecated; use connected_components_1d"
+            " or vietoris_rips_betti",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         return {0: self.connected_components_1d(data, max_radius), 1: 0}
 
     def topological_features(self, data: np.ndarray) -> np.ndarray:
@@ -265,15 +274,18 @@ class TopologicalAnalyzer:
 class FractalGenerator:
     """Fractal compression and generation."""
 
-    def __init__(self, dim: int = 64):
+    def __init__(self, dim: int = 64, rng: np.random.Generator | None = None):
         self.dim = dim
+        # Round-3 audit CRIT-1: per-module Generator
+        self._rng = rng if rng is not None else np.random.default_rng()
         self.transforms: list[tuple[np.ndarray, np.ndarray]] = []
         self._init_transforms()
 
     def _init_transforms(self) -> None:
         for _ in range(4):
-            scale = np.random.randn(self.dim, self.dim) * 0.1
-            offset = np.random.randn(self.dim) * 0.1
+            # Round-3 audit CRIT-1: per-module Generator
+            scale = self._rng.standard_normal((self.dim, self.dim)) * 0.1
+            offset = self._rng.standard_normal(self.dim) * 0.1
             self.transforms.append((scale, offset))
 
     def generate(self, initial: np.ndarray, n_iterations: int = 10) -> np.ndarray:
@@ -305,6 +317,11 @@ class FractalGenerator:
         # ``m = dim // 2`` samples of each half so both sides have length m.
         m = self.dim // 2
         corr = float(np.corrcoef(d[:m], d[m : 2 * m])[0, 1]) if m >= 2 else 0.0
+        # Round-3 audit: ``np.corrcoef`` returns NaN when either half has
+        # zero variance (constant input). Guard to prevent NaN propagation
+        # into ``mine_patterns`` / ``analyze_trend`` outputs.
+        if not np.isfinite(corr):
+            corr = 0.0
         return {
             "mean": float(np.mean(d)),
             "std": float(np.std(d)),
@@ -320,11 +337,13 @@ class MathematicalUniverse(CognitiveModule):
     - Fractal generation and compression
     """
 
-    def __init__(self, dim: int = 64):
+    def __init__(self, dim: int = 64, rng: np.random.Generator | None = None):
         self.dim = dim
+        # Round-3 audit CRIT-1: per-module Generator
+        self._rng = rng if rng is not None else np.random.default_rng()
         self.info_geometry = InformationGeometry(dim)
         self.topology = TopologicalAnalyzer(dim)
-        self.fractal = FractalGenerator(dim)
+        self.fractal = FractalGenerator(dim, rng=self._rng)
         # Cache of the last ``process`` output so ``predict`` can reuse it
         # instead of re-running ``fractal.generate`` (Fix 12).
         self._last_process_output: np.ndarray | None = None
@@ -352,5 +371,6 @@ class MathematicalUniverse(CognitiveModule):
             return
         prediction_error = float(np.clip(prediction_error, -1e6, 1e6))
         for i, (scale, offset) in enumerate(self.fractal.transforms):
-            noise = np.random.randn(*scale.shape) * prediction_error * 0.001
+            # Round-3 audit CRIT-1: per-module Generator
+            noise = self._rng.standard_normal(scale.shape) * prediction_error * 0.001
             self.fractal.transforms[i] = (scale + noise, offset)

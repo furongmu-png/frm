@@ -165,10 +165,14 @@ def test_c3_consciousness_process_updates_attention():
     stayed uniform (1/dim) and broadcast's signal * attention_weights was a
     no-op scaling. After the fix, process calls update_attention(|x|) before
     broadcasting, so the weights reflect the input's per-dimension salience.
+
+    Round-3 audit C-batch: pass a fixed rng so the test is deterministic
+    under the per-module Generator refactor (CRIT-1). Without a seed the
+    random layer weights + forward noise could flip the salient dimension.
     """
     from zero_data_model.consciousness_core import ConsciousnessCore
 
-    core = ConsciousnessCore(dim=8)
+    core = ConsciousnessCore(dim=8, rng=np.random.default_rng(0))
     # A signal with one highly salient dimension and the rest near zero.
     data = np.zeros(8)
     data[3] = 10.0

@@ -120,10 +120,12 @@ class Functor:
 class ToposEngine:
     """Topos theory: subobject classifier for truth values."""
 
-    def __init__(self, dim: int = 64):
+    def __init__(self, dim: int = 64, rng: np.random.Generator | None = None):
         self.dim = dim
+        # Round-3 audit CRIT-1: per-module Generator
+        self._rng = rng if rng is not None else np.random.default_rng()
         self.truth_values = np.linspace(0, 1, dim)
-        self.classifier = np.random.randn(dim, dim) * 0.1
+        self.classifier = self._rng.standard_normal((dim, dim)) * 0.1
 
     def classify(self, signal: np.ndarray) -> np.ndarray:
         s = signal[: self.dim]
@@ -145,11 +147,13 @@ class CategoryTheoryEngine(CognitiveModule):
     - Finds isomorphisms between problems
     """
 
-    def __init__(self, dim: int = 64):
+    def __init__(self, dim: int = 64, rng: np.random.Generator | None = None):
         self.dim = dim
+        # Round-3 audit CRIT-1: per-module Generator
+        self._rng = rng if rng is not None else np.random.default_rng()
         self.categories: dict[str, Category] = {}
         self.functors: list[Functor] = []
-        self.topos = ToposEngine(dim)
+        self.topos = ToposEngine(dim, rng=self._rng)
         self._init_default_categories()
 
     def _init_default_categories(self):
@@ -158,9 +162,11 @@ class CategoryTheoryEngine(CognitiveModule):
         analytics = Category(name="Analytics")
         for cat in [nlp, cv, analytics]:
             for i in range(5):
-                cat.add_object(f"concept_{i}", np.random.randn(self.dim) * 0.1)
+                # Round-3 audit CRIT-1: per-module Generator
+                cat.add_object(f"concept_{i}", self._rng.standard_normal(self.dim) * 0.1)
             self.categories[cat.name] = cat
-        transfer_nlp_cv = np.random.randn(self.dim, self.dim) * 0.05
+        # Round-3 audit CRIT-1: per-module Generator
+        transfer_nlp_cv = self._rng.standard_normal((self.dim, self.dim)) * 0.05
         self.functors.append(Functor(
             source="NLP", target="CV",
             object_map={f"concept_{i}": f"concept_{i}" for i in range(5)},
@@ -198,6 +204,14 @@ class CategoryTheoryEngine(CognitiveModule):
         ``find_invertible_map`` for an actual invertible linear map between
         two vectors.
         """
+        # Round-3 audit: emit DeprecationWarning so callers are alerted.
+        import warnings
+
+        warnings.warn(
+            "find_isomorphism is deprecated; use structural_similarity",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         return self.structural_similarity(problem_a, problem_b)
 
     def find_invertible_map(
@@ -236,11 +250,20 @@ class CategoryTheoryEngine(CognitiveModule):
     def transfer_solution(
         self, source_cat: str, target_cat: str, solution: np.ndarray
     ) -> np.ndarray:
-        """Transfer a solution between domains via functor."""
+        """Transfer a solution between domains via functor.
+
+        Round-3 audit: raise ``KeyError`` when no functor matches the
+        ``(source_cat, target_cat)`` pair instead of silently returning the
+        input unchanged — the silent fallback was a HIGH-severity correctness
+        issue (callers could not distinguish "transfer happened" from "no
+        functor matched").
+        """
         for functor in self.functors:
             if functor.source == source_cat and functor.target == target_cat:
                 return functor.apply(solution)
-        return solution
+        raise KeyError(
+            f"no functor registered for {source_cat!r} -> {target_cat!r}"
+        )
 
     def process(self, signal: Signal) -> Signal:
         truth = self.topos.classify(signal.data)
@@ -262,5 +285,6 @@ class CategoryTheoryEngine(CognitiveModule):
         if not np.isfinite(prediction_error):
             return
         prediction_error = float(np.clip(prediction_error, -1e6, 1e6))
-        noise = np.random.randn(self.dim, self.dim) * prediction_error * 0.001
+        # Round-3 audit CRIT-1: per-module Generator
+        noise = self._rng.standard_normal((self.dim, self.dim)) * prediction_error * 0.001
         self.topos.classifier += noise

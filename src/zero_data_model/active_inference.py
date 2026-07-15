@@ -21,31 +21,43 @@ class MarkovBlanket:
     active_weights: np.ndarray
 
     @classmethod
-    def create(cls, sensory_dim: int = 32, active_dim: int = 16, internal_dim: int = 64):
+    def create(
+        cls,
+        sensory_dim: int = 32,
+        active_dim: int = 16,
+        internal_dim: int = 64,
+        rng: np.random.Generator | None = None,
+    ):
+        # Round-3 audit CRIT-1: per-module Generator
+        _rng = rng if rng is not None else np.random.default_rng()
         return cls(
             sensory_dim=sensory_dim,
             active_dim=active_dim,
             internal_dim=internal_dim,
-            sensory_weights=np.random.randn(sensory_dim, internal_dim) * 0.1,
-            active_weights=np.random.randn(internal_dim, active_dim) * 0.1,
+            sensory_weights=_rng.standard_normal((sensory_dim, internal_dim)) * 0.1,
+            active_weights=_rng.standard_normal((internal_dim, active_dim)) * 0.1,
         )
 
 
 class GenerativeModel:
     """Internal generative model — predicts sensory inputs from hidden states."""
 
-    def __init__(self, state_dim: int = 64, obs_dim: int = 32):
+    def __init__(
+        self, state_dim: int = 64, obs_dim: int = 32, rng: np.random.Generator | None = None
+    ):
         self.state_dim = state_dim
         self.obs_dim = obs_dim
-        self.transition = np.random.randn(state_dim, state_dim) * 0.05
-        self.emission = np.random.randn(state_dim, obs_dim) * 0.1
+        # Round-3 audit CRIT-1: per-module Generator
+        self._rng = rng if rng is not None else np.random.default_rng()
+        self.transition = self._rng.standard_normal((state_dim, state_dim)) * 0.05
+        self.emission = self._rng.standard_normal((state_dim, obs_dim)) * 0.1
         # C-batch fix: initialise ``belief_state`` to a small non-zero vector
         # so the very first ``update()`` (called before any ``process``) has a
         # non-zero state to compute a real gradient from -- the previous
         # ``zeros`` initialisation made the gradient ``outer(0, error) = 0``,
         # so the only way ``update`` could change ``emission`` was the random
         # noise walk, which is exactly what we are removing.
-        self.belief_state = np.random.randn(state_dim) * 0.01
+        self.belief_state = self._rng.standard_normal(state_dim) * 0.01
         # Cache of the last inference context so ``update`` can do real
         # gradient descent instead of a random walk. Populated by
         # ``update_belief``; falls back to ``belief_state`` + zero obs when
@@ -178,9 +190,17 @@ class ActiveInferenceEngine(CognitiveModule):
     - Homeostatic regulation
     """
 
-    def __init__(self, state_dim: int = 64, obs_dim: int = 32, action_dim: int = 16):
-        self.blanket = MarkovBlanket.create(obs_dim, action_dim, state_dim)
-        self.generative_model = GenerativeModel(state_dim, obs_dim)
+    def __init__(
+        self,
+        state_dim: int = 64,
+        obs_dim: int = 32,
+        action_dim: int = 16,
+        rng: np.random.Generator | None = None,
+    ):
+        # Round-3 audit CRIT-1: per-module Generator
+        self._rng = rng if rng is not None else np.random.default_rng()
+        self.blanket = MarkovBlanket.create(obs_dim, action_dim, state_dim, rng=self._rng)
+        self.generative_model = GenerativeModel(state_dim, obs_dim, rng=self._rng)
         self.homeostasis = HomeostaticController(state_dim)
         # Bounded deques so long-running engines do not leak memory (Fix 8).
         self.action_history: deque = deque(maxlen=1000)
@@ -220,7 +240,13 @@ class ActiveInferenceEngine(CognitiveModule):
         # about the posterior). Fall back to 1.0 when no actions recorded.
         if len(self.action_history) >= 2:
             recent = np.asarray(list(self.action_history)[-32:], dtype=float)
+            # Round-3 audit: sanitize NaN/Inf before np.var, and guard the
+            # result — the ``+ 1e-6`` floor only helps for small positive
+            # values, not for NaN (which propagates through np.log).
+            recent = np.nan_to_num(recent, nan=0.0, posinf=0.0, neginf=0.0)
             sigma_q2 = float(np.mean(np.var(recent, axis=0))) + 1e-6
+            if not np.isfinite(sigma_q2) or sigma_q2 <= 0:
+                sigma_q2 = 1.0
         else:
             sigma_q2 = 1.0
         dim = float(self.generative_model.state_dim)
@@ -274,7 +300,8 @@ class ActiveInferenceEngine(CognitiveModule):
             # Sample around the blanket-projected mean rather than around 0,
             # so the action selection uses the sensory-active coupling learned
             # by the Markov blanket.
-            candidate = mean_action + np.random.randn(self.blanket.active_dim) * 0.5
+            # Round-3 audit CRIT-1: per-module Generator
+            candidate = mean_action + self._rng.standard_normal(self.blanket.active_dim) * 0.5
             predicted_state = self.generative_model.predict_next_state(belief, candidate)
             predicted_obs = self.generative_model.predict_observation(predicted_state)
             # Pragmatic term: expected prediction error under this action.
@@ -301,8 +328,12 @@ class ActiveInferenceEngine(CognitiveModule):
         explicitly.
         """
         uncertainty = float(np.var(belief))
+        # Round-3 audit: np.var of empty/NaN arrays returns NaN; guard.
+        if not np.isfinite(uncertainty):
+            uncertainty = 1.0
         if uncertainty > 0.1:
-            exploration = np.random.randn(self.blanket.active_dim) * uncertainty
+            # Round-3 audit CRIT-1: per-module Generator
+            exploration = self._rng.standard_normal(self.blanket.active_dim) * uncertainty
             return Signal(
                 data=exploration,
                 metadata={"type": "epistemic", "uncertainty": uncertainty},
@@ -332,7 +363,11 @@ class ActiveInferenceEngine(CognitiveModule):
         if len(state) < gm.state_dim:
             state = np.pad(state, (0, gm.state_dim - len(state)))
         predicted_obs = gm.predict_observation(state)
-        return Prediction(value=predicted_obs, uncertainty=float(np.var(predicted_obs)))
+        # Round-3 audit: np.var of empty/NaN returns NaN; guard so a single
+        # bad module cannot poison the integration softmax in think().
+        var = float(np.var(predicted_obs))
+        uncertainty = var if np.isfinite(var) else 1.0
+        return Prediction(value=predicted_obs, uncertainty=uncertainty)
 
     def update(self, prediction_error: float) -> None:
         """Update the generative model from a prediction error signal.
@@ -361,5 +396,7 @@ class ActiveInferenceEngine(CognitiveModule):
         prediction_error = float(np.clip(prediction_error, -1e6, 1e6))
         if prediction_error == 0.0:
             return
-        lr = 0.001 * prediction_error
+        # Round-3 audit: clamp lr to prevent divergence when prediction_error
+        # is near the 1e6 ceiling (lr=1000 would overshoot wildly).
+        lr = float(np.clip(0.001 * prediction_error, -0.1, 0.1))
         self.generative_model.emission_gradient_step(lr)

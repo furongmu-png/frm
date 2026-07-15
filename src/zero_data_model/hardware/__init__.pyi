@@ -9,6 +9,10 @@ from .quantum import (
     SimulatorQuantumBackend,
 )
 
+# ``IBMQuantumBackend`` is conditionally available: it is set to ``None`` at
+# runtime when ``qiskit-ibm-runtime`` is not installed (see ``__init__.py``).
+IBMQuantumBackend: type[IBMQuantumBackend] | None
+
 __all__ = [
     "xp",
     "has_gpu",

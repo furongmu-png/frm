@@ -32,6 +32,18 @@ class Functor:
     object_map: dict[str, str]
     morphism_map: dict[tuple[str, str], np.ndarray]
 
+    def apply_morphism(
+        self, source_obj: str, target_obj: str, vector: np.ndarray
+    ) -> np.ndarray | None: ...
+
+    def compose_morphisms(
+        self,
+        src_a: str,
+        mid: str,
+        tgt: str,
+        vector: np.ndarray,
+    ) -> np.ndarray | None: ...
+
     def apply(self, obj: np.ndarray) -> np.ndarray: ...
 
 
@@ -42,7 +54,7 @@ class ToposEngine:
     truth_values: np.ndarray
     classifier: np.ndarray
 
-    def __init__(self, dim: int = 64) -> None: ...
+    def __init__(self, dim: int = 64, rng: np.random.Generator | None = None) -> None: ...
 
     def classify(self, signal: np.ndarray) -> np.ndarray: ...
 
@@ -60,14 +72,32 @@ class CategoryTheoryEngine(CognitiveModule):
     functors: list[Functor]
     topos: ToposEngine
 
-    def __init__(self, dim: int = 64) -> None: ...
+    def __init__(self, dim: int = 64, rng: np.random.Generator | None = None) -> None: ...
 
     def _init_default_categories(self) -> None: ...
+
+    def structural_similarity(
+        self, problem_a: np.ndarray, problem_b: np.ndarray
+    ) -> float:
+        """Cosine similarity in ``[-1, 1]`` between two problem vectors."""
+        ...
 
     def find_isomorphism(
         self, problem_a: np.ndarray, problem_b: np.ndarray
     ) -> float:
-        """Compute structural similarity between two problems."""
+        """Deprecated alias for ``structural_similarity``.
+
+        Returns a similarity score in ``[-1, 1]``; despite the name this does
+        NOT compute a category-theoretic isomorphism. Use
+        ``find_invertible_map`` for an actual invertible linear map between
+        two vectors.
+        """
+        ...
+
+    def find_invertible_map(
+        self, source: np.ndarray, target: np.ndarray
+    ) -> np.ndarray | None:
+        """Find an invertible linear map ``T`` with ``T @ source = target``."""
         ...
 
     def transfer_solution(

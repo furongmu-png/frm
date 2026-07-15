@@ -62,14 +62,27 @@ class ZeroDataModel:
     """
 
     def __init__(self, dim: int = 64, seed: int | None = None):
+        # Round-3 audit: validate dim to prevent OOM / confusing downstream
+        # errors. ``dim`` drives every cognitive module to allocate ``dim x
+        # dim`` arrays; unbounded values cause silent OOM, and ``dim <= 0``
+        # surfaces as a confusing numpy shape error deep in a module.
+        if not isinstance(dim, int) or dim < 1 or dim > 4096:
+            raise ValueError(
+                f"dim must be an int in [1, 4096], got {dim!r}"
+            )
         self.dim = dim
-        # Optional RNG seed (Fix 9). The actual concurrency-safety guarantee
-        # for the global ``np.random`` RNG used inside ``think`` comes from
-        # ``self._lock`` (Fix 7): it serializes every state-mutating cycle so
-        # the legacy global RNG is never accessed concurrently. The read-only
-        # analytics methods (classify_text, detect_anomalies, ...) use the
-        # now-pure ``compute_free_energy`` and do not touch the RNG, so they
-        # remain safe to call concurrently with each other.
+        # Optional RNG seed (Fix 9). Round-3 audit CRIT-1: each cognitive
+        # module now holds its own ``np.random.Generator`` (``self._rng``)
+        # seeded from this seed, instead of drawing from the global
+        # ``np.random`` RNG. The per-module generators advance their own state
+        # on every draw, so seeded models are reproducible without per-cycle
+        # re-seeding. ``self._lock`` (Fix 7) still serializes every
+        # state-mutating cycle so the shared generators are never accessed
+        # concurrently. The read-only analytics methods (classify_text,
+        # detect_anomalies, ...) use the now-pure ``compute_free_energy`` and
+        # do not touch the RNG, so they remain safe to call concurrently.
+        # ``np.random.seed(seed)`` below is retained only for backward
+        # compatibility (some capability modules may still use the global RNG).
         #
         # When a seed is set, also pin the BLAS thread count to 1 (B-CRIT-01):
         # multi-threaded BLAS (OpenBLAS/MKL) parallelises matmuls across cores
@@ -93,11 +106,14 @@ class ZeroDataModel:
         self._rng = np.random.default_rng(seed)
         # Re-entrant lock around every state-mutating think/solve cycle (Fix 7).
         self._lock = threading.RLock()
-        self.consciousness = ConsciousnessCore(dim=dim)
+        # Round-3 audit CRIT-1: per-module Generator — pass the seeded
+        # Generator to every cognitive module so each holds its own
+        # ``self._rng`` instead of racing on the global ``np.random`` RNG.
+        self.consciousness = ConsciousnessCore(dim=dim, rng=self._rng)
         self.active_inference = ActiveInferenceEngine(
-            state_dim=dim, obs_dim=dim, action_dim=dim // 2
+            state_dim=dim, obs_dim=dim, action_dim=dim // 2, rng=self._rng
         )
-        self.category_engine = CategoryTheoryEngine(dim=dim)
+        self.category_engine = CategoryTheoryEngine(dim=dim, rng=self._rng)
         # When a seed is set (Fix 9), force the deterministic pure-NumPy
         # ``SimulatorQuantumBackend`` instead of the Qiskit ``StatevectorSampler``.
         # The Qiskit sampler performs stochastic shot-based measurement that
@@ -107,10 +123,10 @@ class ZeroDataModel:
         # ``think()`` sequences. When no seed is set, prefer the real Qiskit
         # backend (if installed) for production use.
         self.quantum_hybrid = QuantumClassicalHybrid(
-            dim=dim, quantum_backend="simulator" if seed is not None else None
+            dim=dim, quantum_backend="simulator" if seed is not None else None, rng=self._rng
         )
-        self.biological = BiologicalSubstrate(dim=dim)
-        self.math_universe = MathematicalUniverse(dim=dim)
+        self.biological = BiologicalSubstrate(dim=dim, rng=self._rng)
+        self.math_universe = MathematicalUniverse(dim=dim, rng=self._rng)
         self.modules = [
             self.consciousness,
             self.active_inference,
@@ -181,8 +197,8 @@ class ZeroDataModel:
             rules=self.analytics_rules,
         )
         # Hardware acceleration: parallel module execution + GPU-aware arrays.
-        # When a seed is set, force sequential execution so the legacy global
-        # numpy RNG (used inside module process/predict) is never accessed
+        # When a seed is set, force sequential execution so the per-module
+        # Generators (shared via ``self._rng``, CRIT-1) are never accessed
         # concurrently across threads — guaranteeing reproducibility.
         self.parallel_executor = ParallelExecutor(
             n_workers=1 if seed is not None else None
@@ -208,8 +224,8 @@ class ZeroDataModel:
         parallel executor when multiple cores are available.
 
         The whole cycle is serialized by ``self._lock`` (Fix 7) so concurrent
-        ``think`` calls do not race on the legacy global numpy RNG or on
-        shared module state.
+        ``think`` calls do not race on the shared per-module Generators
+        (CRIT-1) or on shared module state.
 
         C-7: Per-module prediction uncertainties are computed from the input
         signal (not the integrated signal) and used to weight the integration
@@ -220,12 +236,11 @@ class ZeroDataModel:
         prediction errors drive both integration and learning).
         """
         with self._lock:
-            # When a seed is set, re-seed the global numpy RNG from the
-            # model's private Generator so each think() cycle is deterministic
-            # AND progresses across cycles. This makes two models with the
-            # same seed produce identical think() sequences.
-            if self._seed is not None:
-                np.random.seed(int(self._rng.integers(0, 2**31)))
+            # Round-3 audit CRIT-1: per-module Generator — each module holds its
+            # own ``self._rng`` (seeded once in ``__init__``), so the per-cycle
+            # global ``np.random.seed`` re-seed is no longer needed. The
+            # generators advance their own state on every draw, so two seeded
+            # models still produce identical ``think()`` sequences.
 
             if input_data is None:
                 signal = self._self_generate()
@@ -247,8 +262,17 @@ class ZeroDataModel:
             preds = self.parallel_executor.map(
                 lambda m: m.predict(signal), self.modules
             )
+            # Round-3 audit: ``max(nan, 1e-8)`` returns ``nan`` (because
+            # ``nan > 1e-8`` is False, so the first argument wins). Explicitly
+            # reject non-finite uncertainties so a single NaN-poisoned module
+            # cannot corrupt the entire softmax weighting.
             uncertainties = np.array(
-                [max(float(p.uncertainty), 1e-8) for p in preds]
+                [
+                    max(float(p.uncertainty), 1e-8)
+                    if np.isfinite(float(p.uncertainty))
+                    else 1e8
+                    for p in preds
+                ]
             )
 
             # C-7: Weighted integration by inverse uncertainty.
@@ -300,6 +324,13 @@ class ZeroDataModel:
         same result as the equal-weight mean — so the weighted path is a
         strict generalisation of the original behaviour.
         """
+        # Round-3 audit: guard against an empty ``signals`` list —
+        # ``max()`` of an empty sequence raises ``ValueError``.
+        if not signals:
+            return Signal(
+                data=np.zeros(self.dim),
+                metadata={"integrated": True, "empty": True},
+            )
         max_len = max(len(s.data) for s in signals)
         padded = np.zeros((len(signals), max_len))
         for i, s in enumerate(signals):

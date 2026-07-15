@@ -265,12 +265,59 @@ class ModelSerializer:
         with open(config_path, encoding="utf-8") as f:
             config = json.load(f)
 
+        # Round-3 audit B-batch: validate the scalar config before acting on
+        # any of it. A hostile or corrupt config.json could otherwise request
+        # a huge ``dim`` (DoS via OOM) or supply counts that silently mismatch
+        # the freshly-constructed model's architecture (silent state
+        # corruption: extra saved layers/functors would be dropped, and
+        # missing ones would leave fresh-random arrays in place of saved data).
+        if "dim" not in config:
+            raise ValueError("config.json missing required key: 'dim'")
+        try:
+            dim = int(config["dim"])
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"config['dim'] must be an int, got {config['dim']!r}"
+            ) from exc
+        if dim < 1 or dim > 4096:
+            raise ValueError(
+                f"refusing to load model with dim={dim!r}: must be in [1, 4096]"
+            )
+
         # Build a fresh model of the same dim, then overwrite every saved
         # numpy attribute from the npz. Fresh construction handles wiring up
         # the quantum backend (auto-detect on this machine), capability
         # modules, parallel executor, etc.
-        model = ZeroDataModel(dim=config["dim"])
+        model = ZeroDataModel(dim=dim)
         model.cycle_count = int(config.get("cycle_count", 0))
+
+        # Round-3 audit B-batch: detect architecture mismatches up front. The
+        # loop below silently truncates extra layers/functors, which is silent
+        # state corruption when the snapshot was saved from a different model
+        # topology. Fail loudly instead.
+        saved_n_layers = int(config.get("n_consciousness_layers", 0))
+        fresh_n_layers = len(model.consciousness.layers)
+        if saved_n_layers != fresh_n_layers:
+            raise ValueError(
+                "snapshot n_consciousness_layers mismatch: config says "
+                f"{saved_n_layers} but a fresh dim={dim} model has "
+                f"{fresh_n_layers} layers; refusing to silently truncate"
+            )
+        saved_n_functors = int(config.get("n_functors", 0))
+        fresh_n_functors = len(model.category_engine.functors)
+        if saved_n_functors != fresh_n_functors:
+            raise ValueError(
+                "snapshot n_functors mismatch: config says "
+                f"{saved_n_functors} but a fresh dim={dim} model has "
+                f"{fresh_n_functors} functors; refusing to silently truncate"
+            )
+        morph_counts = config.get("functor_morphism_counts", [])
+        if not isinstance(morph_counts, list) or len(morph_counts) != saved_n_functors:
+            raise ValueError(
+                "functor_morphism_counts must be a list of length "
+                f"n_functors={saved_n_functors}, got {type(morph_counts).__name__} "
+                f"of length {len(morph_counts) if isinstance(morph_counts, list) else 'n/a'}"
+            )
 
         with np.load(npz_path, allow_pickle=False) as data:
             # Reject any object-dtype array: it could carry arbitrary pickle
@@ -296,7 +343,7 @@ class ModelSerializer:
             model.category_engine.topos.classifier = np.asarray(
                 data["category_engine_topos_classifier"]
             )
-            morph_counts = config.get("functor_morphism_counts", [])
+            # ``morph_counts`` was validated above against ``n_functors``.
             for j, functor in enumerate(model.category_engine.functors):
                 if j >= config["n_functors"]:
                     break

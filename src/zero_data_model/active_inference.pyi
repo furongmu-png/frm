@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass
 
 import numpy as np
@@ -21,6 +22,7 @@ class MarkovBlanket:
         sensory_dim: int = 32,
         active_dim: int = 16,
         internal_dim: int = 64,
+        rng: np.random.Generator | None = None,
     ) -> MarkovBlanket: ...
 
 
@@ -32,8 +34,13 @@ class GenerativeModel:
     transition: np.ndarray
     emission: np.ndarray
     belief_state: np.ndarray
+    _last_state: np.ndarray | None
+    _last_observation: np.ndarray | None
+    _last_error: np.ndarray | None
 
-    def __init__(self, state_dim: int = 64, obs_dim: int = 32) -> None: ...
+    def __init__(
+        self, state_dim: int = 64, obs_dim: int = 32, rng: np.random.Generator | None = None
+    ) -> None: ...
 
     def predict_observation(self, state: np.ndarray) -> np.ndarray: ...
 
@@ -42,6 +49,10 @@ class GenerativeModel:
     ) -> np.ndarray: ...
 
     def infer_state(self, observation: np.ndarray) -> tuple[np.ndarray, float]: ...
+
+    def update_belief(self, observation: np.ndarray) -> tuple[np.ndarray, float]: ...
+
+    def emission_gradient_step(self, lr: float) -> None: ...
 
 
 class HomeostaticController:
@@ -69,15 +80,19 @@ class ActiveInferenceEngine(CognitiveModule):
     blanket: MarkovBlanket
     generative_model: GenerativeModel
     homeostasis: HomeostaticController
-    action_history: list[np.ndarray]
-    free_energy_history: list[float]
+    action_history: deque[np.ndarray]
+    free_energy_history: deque[float]
 
     def __init__(
-        self, state_dim: int = 64, obs_dim: int = 32, action_dim: int = 16
+        self,
+        state_dim: int = 64,
+        obs_dim: int = 32,
+        action_dim: int = 16,
+        rng: np.random.Generator | None = None,
     ) -> None: ...
 
     def compute_free_energy(self, observation: np.ndarray) -> float:
-        """F = complexity - accuracy (variational free energy)."""
+        """F = KL(q || p) + prediction error (variational free energy)."""
         ...
 
     def select_action(self, belief: np.ndarray) -> np.ndarray:

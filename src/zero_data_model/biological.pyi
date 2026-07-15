@@ -9,12 +9,12 @@ class DNAStorage(KnowledgeStore):
 
     capacity: int
 
-    def __init__(self, capacity: int = 1024) -> None: ...
+    def __init__(self, capacity: int = 1024, rng: np.random.Generator | None = None) -> None: ...
 
     def _encode(self, data: np.ndarray) -> np.ndarray: ...
 
     def _decode(
-        self, encoded: np.ndarray, original_min: float, original_max: float
+        self, encoded: np.ndarray, nbytes: int, shape: tuple[int, ...]
     ) -> np.ndarray: ...
 
     def store(self, key: str, value: np.ndarray) -> None: ...
@@ -29,12 +29,23 @@ class DNAStorage(KnowledgeStore):
 class MorphogeneticField:
     """Self-organizing structure development inspired by morphogenesis."""
 
+    _DEFAULT_DU: float
+    _DEFAULT_DV: float
+    _DEFAULT_FEED: float
+    _DEFAULT_KILL: float
+
     grid_size: int
     grid: np.ndarray
     morphogens: list[np.ndarray]
     diffusion_rate: float
+    du_rate: float
+    dv_rate: float
+    feed_rate: float
+    kill_rate: float
 
-    def __init__(self, grid_size: int = 16, n_signals: int = 3) -> None: ...
+    def __init__(
+        self, grid_size: int = 16, n_signals: int = 3, rng: np.random.Generator | None = None
+    ) -> None: ...
 
     def step(self) -> None: ...
 
@@ -48,13 +59,17 @@ class CellularAutomata:
     rule: int
     state: np.ndarray
 
-    def __init__(self, size: int = 64, rule: int = 30) -> None: ...
+    def __init__(
+        self, size: int = 64, rule: int = 30, rng: np.random.Generator | None = None
+    ) -> None: ...
 
     def _apply_rule(self, left: int, center: int, right: int) -> int: ...
 
     def step(self) -> None: ...
 
     def evolve(self, n_steps: int = 50) -> np.ndarray: ...
+
+    def step_n(self, n: int) -> np.ndarray: ...
 
 
 class BiologicalSubstrate(CognitiveModule):
@@ -70,7 +85,7 @@ class BiologicalSubstrate(CognitiveModule):
     morphogenetic: MorphogeneticField
     automata: CellularAutomata
 
-    def __init__(self, dim: int = 64) -> None: ...
+    def __init__(self, dim: int = 64, rng: np.random.Generator | None = None) -> None: ...
 
     def process(self, signal: Signal) -> Signal: ...
 

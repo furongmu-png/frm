@@ -25,9 +25,19 @@ class InformationGeometry:
 class TopologicalAnalyzer:
     """Simplified persistent homology — computes topological features."""
 
+    _VR_POINT_CAP: int
+
     dim: int
 
     def __init__(self, dim: int = 64) -> None: ...
+
+    def connected_components_1d(
+        self, data: np.ndarray, max_radius: float = 1.0
+    ) -> int: ...
+
+    def vietoris_rips_betti(
+        self, points: np.ndarray, max_radius: float = 1.0
+    ) -> dict[int, int]: ...
 
     def compute_betti_numbers(
         self, data: np.ndarray, max_radius: float = 1.0
@@ -42,7 +52,7 @@ class FractalGenerator:
     dim: int
     transforms: list[tuple[np.ndarray, np.ndarray]]
 
-    def __init__(self, dim: int = 64) -> None: ...
+    def __init__(self, dim: int = 64, rng: np.random.Generator | None = None) -> None: ...
 
     def _init_transforms(self) -> None: ...
 
@@ -64,7 +74,7 @@ class MathematicalUniverse(CognitiveModule):
     topology: TopologicalAnalyzer
     fractal: FractalGenerator
 
-    def __init__(self, dim: int = 64) -> None: ...
+    def __init__(self, dim: int = 64, rng: np.random.Generator | None = None) -> None: ...
 
     def process(self, signal: Signal) -> Signal: ...
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass
 
 import numpy as np
@@ -23,7 +24,8 @@ class SelfModel:
 
     state: np.ndarray
     confidence: float
-    history: list[np.ndarray]
+    history: deque[np.ndarray]
+    _recent: deque[np.ndarray]
 
     def __init__(self, dim: int = 64) -> None: ...
 
@@ -37,7 +39,7 @@ class GlobalWorkspace:
 
     dim: int
     capacity: int
-    buffer: list[Signal]
+    buffer: deque[Signal]
     attention_weights: np.ndarray
 
     def __init__(self, dim: int = 64, capacity: int = 16) -> None: ...
@@ -59,8 +61,11 @@ class ConsciousnessCore(CognitiveModule):
     layers: list[PredictiveLayer]
     workspace: GlobalWorkspace
     self_model: SelfModel
+    _last_process_output: np.ndarray | None
 
-    def __init__(self, dim: int = 64, n_layers: int = 3) -> None: ...
+    def __init__(
+        self, dim: int = 64, n_layers: int = 3, rng: np.random.Generator | None = None
+    ) -> None: ...
 
     def process(self, signal: Signal) -> Signal: ...
 

@@ -851,10 +851,15 @@ def create_app() -> FastAPI:
 
         Returns 201 Created with a ``Location`` header pointing at the
         canonical resource URI for the snapshot (Q-LOW-13).
+
+        Round-3 audit: acquire ``model._lock`` while serialising so a
+        concurrent ``think()`` cannot mutate arrays in-place (``+=``) while
+        ``np.savez`` reads them — that race produced silently torn snapshots.
         """
         model = get_model()
         try:
-            ModelSerializer.save(model, req.name)
+            with model._lock:
+                ModelSerializer.save(model, req.name)
         except ValueError as exc:
             # Sandbox violation -> 400, no path leakage in detail.
             raise HTTPException(status_code=400, detail="invalid snapshot name") from exc

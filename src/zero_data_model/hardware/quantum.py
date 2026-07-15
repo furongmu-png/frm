@@ -70,6 +70,12 @@ class QiskitQuantumBackend(QuantumBackend):
     def __init__(self, n_qubits: int = 8, n_layers: int = 3):
         if not _HAS_QISKIT:  # pragma: no cover - guarded by factory
             raise RuntimeError("Qiskit is not installed")
+        # Round-3 audit: bound n_qubits for the public class (factory clamps,
+        # but the class is exported in __all__ and constructible directly).
+        if n_qubits < 1 or n_qubits > 20:
+            raise ValueError(
+                f"n_qubits must be in [1, 20], got {n_qubits}"
+            )
         self.n_qubits = n_qubits
         self.n_layers = n_layers
         self._sampler = StatevectorSampler()
@@ -158,10 +164,11 @@ class SimulatorQuantumBackend(QuantumBackend):
     def __init__(self, n_qubits: int = 8, n_layers: int = 3):
         # 2**20 amplitudes * 16 bytes (complex128) = 16 MB — the upper bound
         # the factory enforces; reject explicitly if called directly with more.
-        if n_qubits > 20:
+        # Round-3 audit: also reject n_qubits < 1 (negative crashes ``1 << n``;
+        # zero returns an invalid zero-probability vector).
+        if n_qubits < 1 or n_qubits > 20:
             raise ValueError(
-                f"n_qubits={n_qubits} would materialize a 2**n_qubits state "
-                f"vector (>16 MB); the supported maximum is 20."
+                f"n_qubits must be in [1, 20], got {n_qubits}"
             )
         self.n_qubits = n_qubits
         self.n_layers = n_layers

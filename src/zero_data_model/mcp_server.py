@@ -44,13 +44,21 @@ def _error_to_dict(fn: Callable[..., dict]) -> Callable[..., dict]:
     ``functools.wraps`` preserves the original signature (via ``__wrapped__``)
     so FastMCP can introspect the real parameter schema, and the docstring is
     retained for use as the MCP tool description.
+
+    Round-3 audit: log the full exception with traceback server-side before
+    returning the error dict, so operators have visibility into MCP tool
+    failures (previously the traceback was permanently lost).
     """
+    import logging
+
+    _logger = logging.getLogger(__name__)
 
     @functools.wraps(fn)
     def _wrapper(*args: Any, **kwargs: Any) -> dict:
         try:
             return fn(*args, **kwargs)
         except Exception as exc:  # noqa: BLE001 - surface as a dict.
+            _logger.exception("MCP tool %s failed", fn.__name__)
             return {"error": f"{fn.__name__}: {exc}"}
 
     return _wrapper

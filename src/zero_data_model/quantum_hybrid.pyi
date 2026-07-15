@@ -15,11 +15,18 @@ class VariationalQuantumCircuit:
     backend: QuantumBackend
 
     def __init__(
-        self, n_qubits: int = 8, n_layers: int = 3, backend: str | None = None
+        self,
+        n_qubits: int = 8,
+        n_layers: int = 3,
+        backend: str | None = None,
+        rng: np.random.Generator | None = None,
     ) -> None: ...
 
     @property
     def backend_name(self) -> str: ...
+
+    @property
+    def is_real_quantum_hardware(self) -> bool: ...
 
     def evolve(self, input_state: np.ndarray) -> np.ndarray:
         """Run the variational ansatz; returns a normalized state vector."""
@@ -39,7 +46,7 @@ class QuantumAnnealer:
     cost_matrix: np.ndarray
     jit: bool
 
-    def __init__(self, n_vars: int = 16) -> None: ...
+    def __init__(self, n_vars: int = 16, rng: np.random.Generator | None = None) -> None: ...
 
     def optimize(self, n_iterations: int = 100) -> tuple[np.ndarray, float]: ...
 
@@ -65,6 +72,7 @@ class QuantumClassicalHybrid(CognitiveModule):
         dim: int = 64,
         n_qubits: int = 8,
         quantum_backend: str | None = None,
+        rng: np.random.Generator | None = None,
     ) -> None: ...
 
     @property

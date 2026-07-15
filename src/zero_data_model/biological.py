@@ -27,8 +27,10 @@ class DNAStorage(KnowledgeStore):
     quaternary stream round-trips to the *exact* original float bytes.
     """
 
-    def __init__(self, capacity: int = 1024):
+    def __init__(self, capacity: int = 1024, rng: np.random.Generator | None = None):
         self.capacity = capacity
+        # Round-3 audit CRIT-1: per-module Generator
+        self._rng = rng if rng is not None else np.random.default_rng()
         # ``OrderedDict`` so we can evict the oldest entry when ``capacity``
         # is exceeded (Fix 20) -- the original ``dict`` declared ``capacity``
         # but never enforced it.
@@ -80,17 +82,18 @@ class DNAStorage(KnowledgeStore):
     def generate(self, query: Signal) -> Signal:
         """Self-generate knowledge by recombining stored sequences."""
         if len(self._store) < 2:
-            return Signal(data=np.random.randn(64), metadata={"source": "dna_random"})
+            # Round-3 audit CRIT-1: per-module Generator
+            return Signal(data=self._rng.standard_normal(64), metadata={"source": "dna_random"})
         keys = list(self._store.keys())
-        k1, k2 = np.random.choice(keys, 2, replace=False)
+        k1, k2 = self._rng.choice(keys, size=2, replace=False)
         v1 = self.retrieve(k1)
         v2 = self.retrieve(k2)
         if v1 is None or v2 is None:
-            return Signal(data=np.random.randn(64), metadata={"source": "dna_random"})
+            return Signal(data=self._rng.standard_normal(64), metadata={"source": "dna_random"})
         min_len = min(len(v1.flatten()), len(v2.flatten()))
         # ``np.random.randint(1, min_len)`` crashes when ``min_len == 1``;
         # clamp the lower bound to 2 so crossover is always valid (Fix 19).
-        crossover = int(np.random.randint(1, max(2, min_len)))
+        crossover = int(self._rng.integers(1, max(2, min_len)))
         flat1 = v1.flatten()[:min_len]
         flat2 = v2.flatten()[:min_len]
         child = np.concatenate([flat1[:crossover], flat2[crossover:]])
@@ -128,11 +131,15 @@ class MorphogeneticField:
     _DEFAULT_FEED = 0.035
     _DEFAULT_KILL = 0.065
 
-    def __init__(self, grid_size: int = 16, n_signals: int = 3):
+    def __init__(
+        self, grid_size: int = 16, n_signals: int = 3, rng: np.random.Generator | None = None
+    ):
         self.grid_size = grid_size
+        # Round-3 audit CRIT-1: per-module Generator
+        self._rng = rng if rng is not None else np.random.default_rng()
         # Passive pattern grid -- still evolves under plain diffusion so the
         # ``predict`` save/restore/perturb path keeps working unchanged.
-        self.grid = np.random.randn(grid_size, grid_size) * 0.1
+        self.grid = self._rng.standard_normal((grid_size, grid_size)) * 0.1
         # Gray-Scott state. u starts at 1.0 everywhere; v at 0.0; then a
         # central square is seeded with u=0.5, v=0.25 -- the standard
         # perturbation that kicks off pattern formation.
@@ -147,7 +154,7 @@ class MorphogeneticField:
         # callers that constructed with more signals still get a list of the
         # expected length. These are not part of the Gray-Scott system.
         for _ in range(max(0, n_signals - 2)):
-            self.morphogens.append(np.random.randn(grid_size, grid_size) * 0.1)
+            self.morphogens.append(self._rng.standard_normal((grid_size, grid_size)) * 0.1)
         # Gray-Scott coefficients.
         self.du_rate = self._DEFAULT_DU
         self.dv_rate = self._DEFAULT_DV
@@ -204,10 +211,12 @@ class MorphogeneticField:
 class CellularAutomata:
     """Cellular automaton for distributed computation."""
 
-    def __init__(self, size: int = 64, rule: int = 30):
+    def __init__(self, size: int = 64, rule: int = 30, rng: np.random.Generator | None = None):
         self.size = size
         self.rule = rule
-        self.state = np.random.randint(0, 2, size)
+        # Round-3 audit CRIT-1: per-module Generator
+        self._rng = rng if rng is not None else np.random.default_rng()
+        self.state = self._rng.integers(0, 2, size=size)
 
     def _apply_rule(self, left: int, center: int, right: int) -> int:
         index = (left << 2) | (center << 1) | right
@@ -257,11 +266,13 @@ class BiologicalSubstrate(CognitiveModule):
     - Cellular automata for distributed computation
     """
 
-    def __init__(self, dim: int = 64):
+    def __init__(self, dim: int = 64, rng: np.random.Generator | None = None):
         self.dim = dim
-        self.dna_storage = DNAStorage(capacity=16)
-        self.morphogenetic = MorphogeneticField(grid_size=16)
-        self.automata = CellularAutomata(size=dim)
+        # Round-3 audit CRIT-1: per-module Generator
+        self._rng = rng if rng is not None else np.random.default_rng()
+        self.dna_storage = DNAStorage(capacity=16, rng=self._rng)
+        self.morphogenetic = MorphogeneticField(grid_size=16, rng=self._rng)
+        self.automata = CellularAutomata(size=dim, rng=self._rng)
         # Sequence counter so each ``process`` call stores under a unique key
         # (Fix 4): the original code always stored under "input", overwriting
         # the previous entry, so ``generate`` (which needs >=2 stored
@@ -314,7 +325,10 @@ class BiologicalSubstrate(CognitiveModule):
         predicted = pattern.flatten()[: self.dim]
         if len(predicted) < self.dim:
             predicted = np.pad(predicted, (0, self.dim - len(predicted)))
-        return Prediction(value=predicted[: self.dim], uncertainty=float(np.var(predicted)))
+        # Round-3 audit: np.var of empty/NaN returns NaN; guard.
+        var = float(np.var(predicted))
+        uncertainty = var if np.isfinite(var) else 1.0
+        return Prediction(value=predicted[: self.dim], uncertainty=uncertainty)
 
     def update(self, prediction_error: float) -> None:
         if not np.isfinite(prediction_error):

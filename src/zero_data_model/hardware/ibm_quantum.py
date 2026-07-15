@@ -108,7 +108,18 @@ class IBMQuantumBackend(QiskitQuantumBackend):
             else:
                 self._backend = self._service.least_busy(min_num_qubits=n_qubits)
             self._available = True
-        except Exception as exc:  # pragma: no cover - network/hardware path
+        except (
+            IBMApiError,
+            OSError,
+            RuntimeError,
+        ) as exc:  # pragma: no cover - network/hardware path
+            # Round-3 audit B-batch: narrow the catch so programming bugs
+            # (TypeError/AttributeError/NameError) propagate instead of being
+            # silently swallowed and degrading to the simulator. Only catch
+            # errors that genuinely indicate the IBM service is unavailable:
+            #   * IBMApiError  -- qiskit-ibm-runtime auth/API failures
+            #   * OSError      -- network/transport/DNS errors
+            #   * RuntimeError -- qiskit wraps some failures as RuntimeError
             warnings.warn(
                 f"IBM Quantum service initialization failed ({type(exc).__name__}); "
                 "falling back to the local simulator.",
@@ -151,7 +162,14 @@ class IBMQuantumBackend(QiskitQuantumBackend):
                 stacklevel=2,
             )
             return super().evolve_and_measure(params, entangling, n_shots)
-        except Exception as exc:  # pragma: no cover - network/hardware path
+        except (
+            OSError,
+            RuntimeError,
+        ) as exc:  # pragma: no cover - network/hardware path
+            # Round-3 audit B-batch: same narrowing as the constructor. Lets
+            # TypeError/AttributeError (programming bugs in the qiskit call
+            # chain) propagate instead of silently degrading to the simulator.
+            # IBMApiError is already caught by the except clause above.
             warnings.warn(
                 f"IBM Quantum job failed ({type(exc).__name__}); "
                 "falling back to the local simulator.",
@@ -187,14 +205,21 @@ class IBMQuantumBackend(QiskitQuantumBackend):
     def _counts_to_prob_vector(self, counts: dict) -> np.ndarray:
         """Collapse the bitstring histogram into a probability vector.
 
-        Mirrors the parsing in ``QiskitQuantumBackend.evolve_and_measure``
-        so the real-hardware output shape matches the simulator output.
+        Round-3 audit CRIT-2: the previous implementation allocated
+        ``2 * n_qubits`` entries and indexed bit-by-bit, producing a per-qubit
+        marginal that was semantically wrong AND dimensionally inconsistent
+        with the simulator path (which returns ``2**n_qubits``). Now parses
+        each bitstring as a binary basis-state index, matching the simulator's
+        ``evolve_and_measure`` output exactly.
         """
-        out = np.zeros(2 * self.n_qubits, dtype=float)
+        dim = 1 << self.n_qubits
+        out = np.zeros(dim, dtype=float)
         total = float(sum(counts.values())) + 1e-8
         for bitstring, count in counts.items():
             bits = bitstring.replace(" ", "")
-            for i, b in enumerate(bits[: len(out)]):
-                if b == "1":
-                    out[i] += count / total
+            # Parse the bitstring as a binary basis-state index (MSB-first,
+            # matching Qiskit's convention). Guard against over-long strings.
+            idx = int(bits, 2) if bits else 0
+            if 0 <= idx < dim:
+                out[idx] += count / total
         return out
