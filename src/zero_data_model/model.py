@@ -117,7 +117,11 @@ class ZeroDataModel:
         # reproducibility (spawn is deterministic given the parent seed); the
         # children are consumed in a fixed order so a seeded model's
         # ``think()`` sequence remains identical across runs.
-        _child_rngs = self._rng.spawn(6)
+        # Round-5 audit RNG5-3: the count MUST match the number of modules
+        # indexed below (_child_rngs[0]..[5]). If a 7th module is added,
+        # bump _N_COGNITIVE_MODULES or the indexing will raise IndexError.
+        _N_COGNITIVE_MODULES = 6
+        _child_rngs = self._rng.spawn(_N_COGNITIVE_MODULES)
         self.consciousness = ConsciousnessCore(dim=dim, rng=_child_rngs[0])
         self.active_inference = ActiveInferenceEngine(
             state_dim=dim, obs_dim=dim, action_dim=dim // 2, rng=_child_rngs[1]

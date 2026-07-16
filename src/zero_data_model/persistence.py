@@ -25,6 +25,14 @@ import numpy as np
 
 from .model import ZeroDataModel
 
+# Round-5 audit PERSIST5-5: cap config.json size to prevent OOM via a hostile
+# multi-MB JSON that would exhaust the parser before any validation runs.
+_MAX_CONFIG_BYTES: int = 1 << 20  # 1 MiB — a legitimate config is ~1 KiB.
+
+# Round-5 audit PERSIST5-2: cap per-functor morphism count to prevent OOM via
+# inflated counts that each trigger an npz key lookup + array allocation.
+_MAX_MORPH_COUNT: int = 4096
+
 # --------------------------------------------------------------------------- #
 # Persistence root sandbox
 # --------------------------------------------------------------------------- #
@@ -262,6 +270,17 @@ class ModelSerializer:
         if not os.path.isfile(config_path):
             raise FileNotFoundError(f"Missing config.json in: {path}")
 
+        # Round-5 audit PERSIST5-5: reject an oversized config.json before
+        # parsing. A hostile snapshot could stuff a multi-MB JSON that OOMs
+        # the parser before any validation runs.
+        config_size = os.path.getsize(config_path)
+        if config_size > _MAX_CONFIG_BYTES:
+            raise ValueError(
+                f"config.json too large ({config_size} bytes > "
+                f"{_MAX_CONFIG_BYTES}); refusing to load a potentially "
+                "hostile snapshot"
+            )
+
         with open(config_path, encoding="utf-8") as f:
             config = json.load(f)
 
@@ -326,11 +345,31 @@ class ModelSerializer:
         # non-negative int (bool rejected — ``isinstance(True, int)`` is True
         # so we explicitly exclude bool). Negative counts would silently
         # discard every transform (``k >= -5`` is always True).
+        # Round-5 audit PERSIST5-2: also enforce an upper bound to prevent OOM
+        # via inflated counts, and compare against the fresh model's functor
+        # morphism_map lengths (same pattern as n_consciousness_layers) so a
+        # mismatch is rejected loudly instead of silently truncating/leaving
+        # fresh-random transforms in place.
+        fresh_morph_counts = [
+            len(f.morphism_map) for f in model.category_engine.functors
+        ]
         for idx, mc in enumerate(morph_counts):
             if isinstance(mc, bool) or not isinstance(mc, int) or mc < 0:
                 raise ValueError(
                     f"functor_morphism_counts[{idx}] must be a non-negative int, "
                     f"got {type(mc).__name__}: {mc!r}"
+                )
+            if mc > _MAX_MORPH_COUNT:
+                raise ValueError(
+                    f"functor_morphism_counts[{idx}]={mc} exceeds cap "
+                    f"{_MAX_MORPH_COUNT}; refusing to load"
+                )
+            fresh_mc = fresh_morph_counts[idx] if idx < len(fresh_morph_counts) else 0
+            if mc != fresh_mc:
+                raise ValueError(
+                    f"functor_morphism_counts[{idx}]={mc} but a fresh dim={dim} "
+                    f"model has {fresh_mc} morphisms for functor {idx}; "
+                    "refusing to silently truncate or leave fresh-random transforms"
                 )
 
         # Round-4 audit PERSIST-1: ``n_morphogens`` and ``n_fractal_transforms``
@@ -378,16 +417,17 @@ class ModelSerializer:
         model.cycle_count = cycle_count_raw
 
         with np.load(npz_path, allow_pickle=False) as data:
-            # Reject any object-dtype array: it could carry arbitrary pickle
-            # payloads even with allow_pickle=False on modern numpy.
-            for k in data.files:
-                if data[k].dtype.kind == "O":
-                    raise ValueError(f"refusing object-dtype array: {k}")
-
             # Round-4 audit PERSIST-2: build the set of expected npz keys and
             # verify they all exist before accessing them. Without this, a
             # missing key would raise a bare ``KeyError`` deep in the load
             # loop with no context about which snapshot was being loaded.
+            # Round-5 audit PERSIST5-1: the key check MUST run before the
+            # dtype loop. The old order iterated ``data.files`` (loading every
+            # array to inspect its dtype) before checking keys — so a hostile
+            # npz with 10 000 huge junk arrays would all be loaded into memory
+            # before the missing-key check rejected the snapshot (OOM DoS).
+            # Also reject EXTRA keys: a legitimate snapshot has exactly the
+            # expected keys, so extras indicate corruption or tampering.
             expected_keys: set[str] = set()
             expected_keys.update({"active_inference_transition",
                                   "active_inference_emission",
@@ -410,11 +450,30 @@ class ModelSerializer:
             for j in range(n_fractal_transforms):
                 expected_keys.add(f"math_universe_fractal_transforms_{j}_scale")
                 expected_keys.add(f"math_universe_fractal_transforms_{j}_offset")
-            missing = expected_keys - set(data.files)
+            actual_keys = set(data.files)
+            missing = expected_keys - actual_keys
             if missing:
                 raise ValueError(
                     f"arrays.npz missing required keys: {sorted(missing)}"
                 )
+            extra = actual_keys - expected_keys
+            if extra:
+                raise ValueError(
+                    f"arrays.npz has unexpected keys: {sorted(extra)}"
+                )
+
+            # Round-5 audit PERSIST5-4: reject non-numeric dtypes. The old
+            # check only rejected kind 'O' (object), letting bytes ('S'),
+            # unicode ('U') and void/record ('V') arrays through — all of
+            # which could carry unexpected payloads. Only iterate the expected
+            # keys (already validated above) so a hostile npz cannot force us
+            # to load junk arrays.
+            for k in expected_keys:
+                kind = data[k].dtype.kind
+                if kind in ("O", "S", "U", "V"):
+                    raise ValueError(
+                        f"refusing non-numeric dtype ({kind}) array: {k}"
+                    )
 
             # Consciousness core: per-layer weights and biases (overwrites each
             # layer in-place so layer objects keep their identity).
@@ -458,55 +517,127 @@ class ModelSerializer:
             gm.belief_state = bs
 
             # Category engine: topos classifier + functor transforms.
-            model.category_engine.topos.classifier = np.asarray(
-                data["category_engine_topos_classifier"]
-            )
+            # Round-5 audit PERSIST5-3: shape-check every array against the
+            # fresh model's corresponding attribute, so a hostile npz cannot
+            # stuff huge arrays (OOM bypass) or mismatched shapes (silent
+            # broadcasting corruption).
+            topos_clf = np.asarray(data["category_engine_topos_classifier"])
+            if topos_clf.shape != model.category_engine.topos.classifier.shape:
+                raise ValueError(
+                    f"topos_classifier shape {topos_clf.shape} != "
+                    f"{model.category_engine.topos.classifier.shape}"
+                )
+            model.category_engine.topos.classifier = topos_clf
             # ``morph_counts`` was validated above against ``n_functors``.
             for j, functor in enumerate(model.category_engine.functors):
                 if j >= config["n_functors"]:
                     break
                 n_morphs = morph_counts[j] if j < len(morph_counts) else 0
                 morph_items = list(functor.morphism_map.items())
-                for k, (key, _value) in enumerate(morph_items):
+                for k, (key, fresh_transform) in enumerate(morph_items):
                     if k >= n_morphs:
                         break
-                    functor.morphism_map[key] = np.asarray(
+                    loaded = np.asarray(
                         data[f"category_engine_functor_{j}_transform_{k}"]
                     )
+                    if loaded.shape != fresh_transform.shape:
+                        raise ValueError(
+                            f"functor {j} transform {k} shape {loaded.shape} "
+                            f"!= {fresh_transform.shape}"
+                        )
+                    functor.morphism_map[key] = loaded
 
             # Quantum hybrid arrays.
-            model.quantum_hybrid.classical_weights = np.asarray(
-                data["quantum_hybrid_classical_weights"]
-            )
-            model.quantum_hybrid.quantum_circuit.params = np.asarray(
-                data["quantum_hybrid_circuit_params"]
-            )
-            model.quantum_hybrid.quantum_circuit.entangling = np.asarray(
-                data["quantum_hybrid_circuit_entangling"]
-            )
-            model.quantum_hybrid.annealer.cost_matrix = np.asarray(
-                data["quantum_hybrid_annealer_cost_matrix"]
-            )
+            qh_cw = np.asarray(data["quantum_hybrid_classical_weights"])
+            if qh_cw.shape != model.quantum_hybrid.classical_weights.shape:
+                raise ValueError(
+                    f"classical_weights shape {qh_cw.shape} != "
+                    f"{model.quantum_hybrid.classical_weights.shape}"
+                )
+            model.quantum_hybrid.classical_weights = qh_cw
+
+            qh_cp = np.asarray(data["quantum_hybrid_circuit_params"])
+            if qh_cp.shape != model.quantum_hybrid.quantum_circuit.params.shape:
+                raise ValueError(
+                    f"circuit_params shape {qh_cp.shape} != "
+                    f"{model.quantum_hybrid.quantum_circuit.params.shape}"
+                )
+            model.quantum_hybrid.quantum_circuit.params = qh_cp
+
+            qh_ce = np.asarray(data["quantum_hybrid_circuit_entangling"])
+            if qh_ce.shape != model.quantum_hybrid.quantum_circuit.entangling.shape:
+                raise ValueError(
+                    f"circuit_entangling shape {qh_ce.shape} != "
+                    f"{model.quantum_hybrid.quantum_circuit.entangling.shape}"
+                )
+            model.quantum_hybrid.quantum_circuit.entangling = qh_ce
+
+            qh_ac = np.asarray(data["quantum_hybrid_annealer_cost_matrix"])
+            if qh_ac.shape != model.quantum_hybrid.annealer.cost_matrix.shape:
+                raise ValueError(
+                    f"annealer_cost_matrix shape {qh_ac.shape} != "
+                    f"{model.quantum_hybrid.annealer.cost_matrix.shape}"
+                )
+            model.quantum_hybrid.annealer.cost_matrix = qh_ac
 
             # Biological substrate arrays.
-            model.biological.morphogenetic.grid = np.asarray(
-                data["biological_morphogenetic_grid"]
-            )
+            bio_grid = np.asarray(data["biological_morphogenetic_grid"])
+            if bio_grid.shape != model.biological.morphogenetic.grid.shape:
+                raise ValueError(
+                    f"morphogenetic_grid shape {bio_grid.shape} != "
+                    f"{model.biological.morphogenetic.grid.shape}"
+                )
+            model.biological.morphogenetic.grid = bio_grid
             # Replace the morphogen list to preserve length even if the source
             # machine had a different signal count (default is 3).
+            fresh_morphogen_shape = (
+                model.biological.morphogenetic.morphogens[0].shape
+                if model.biological.morphogenetic.morphogens
+                else None
+            )
             loaded_morphogens: list[np.ndarray] = []
             for j in range(n_morphogens):
-                loaded_morphogens.append(
-                    np.asarray(data[f"biological_morphogenetic_morphogens_{j}"])
-                )
+                mg = np.asarray(data[f"biological_morphogenetic_morphogens_{j}"])
+                if fresh_morphogen_shape is not None and mg.shape != fresh_morphogen_shape:
+                    raise ValueError(
+                        f"morphogen {j} shape {mg.shape} != {fresh_morphogen_shape}"
+                    )
+                loaded_morphogens.append(mg)
             model.biological.morphogenetic.morphogens = loaded_morphogens
-            model.biological.automata.state = np.asarray(data["biological_automata_state"])
+
+            bio_auto = np.asarray(data["biological_automata_state"])
+            if bio_auto.shape != model.biological.automata.state.shape:
+                raise ValueError(
+                    f"automata_state shape {bio_auto.shape} != "
+                    f"{model.biological.automata.state.shape}"
+                )
+            model.biological.automata.state = bio_auto
 
             # Math universe fractal transforms (scale + offset pairs).
+            fresh_scale_shape = (
+                model.math_universe.fractal.transforms[0][0].shape
+                if model.math_universe.fractal.transforms
+                else None
+            )
+            fresh_offset_shape = (
+                model.math_universe.fractal.transforms[0][1].shape
+                if model.math_universe.fractal.transforms
+                else None
+            )
             loaded_transforms: list[tuple[np.ndarray, np.ndarray]] = []
             for j in range(n_fractal_transforms):
                 scale = np.asarray(data[f"math_universe_fractal_transforms_{j}_scale"])
                 offset = np.asarray(data[f"math_universe_fractal_transforms_{j}_offset"])
+                if fresh_scale_shape is not None and scale.shape != fresh_scale_shape:
+                    raise ValueError(
+                        f"fractal transform {j} scale shape {scale.shape} "
+                        f"!= {fresh_scale_shape}"
+                    )
+                if fresh_offset_shape is not None and offset.shape != fresh_offset_shape:
+                    raise ValueError(
+                        f"fractal transform {j} offset shape {offset.shape} "
+                        f"!= {fresh_offset_shape}"
+                    )
                 loaded_transforms.append((scale, offset))
             model.math_universe.fractal.transforms = loaded_transforms
 

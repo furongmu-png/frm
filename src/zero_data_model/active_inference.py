@@ -3,12 +3,20 @@
 
 from __future__ import annotations
 
+import warnings
 from collections import deque
 from dataclasses import dataclass
 
 import numpy as np
 
 from .base import CognitiveModule, Prediction, Signal
+
+# Round-5 audit TEST5-5: named constant instead of a magic 1e6 number.
+# Returned by ``compute_free_energy`` / ``update_belief`` when the
+# observation or internal state is non-finite. Chosen large enough that
+# ``AnomalyDetector``'s z-score flags it as an outlier, but finite so it
+# does not poison downstream argmin / softmax.
+_FREE_ENERGY_SENTINEL: float = 1e6
 
 
 @dataclass
@@ -105,7 +113,33 @@ class GenerativeModel:
 
         C-batch fix: caches ``(state, observation, error)`` so ``update`` can
         do real gradient descent on ``emission`` instead of a noise walk.
+
+        Round-5 audit TEST5-2: guard against NaN/Inf observation. Unlike
+        ``compute_free_energy`` (read-only, returns the sentinel), this method
+        MUTATES ``belief_state``. A NaN observation would permanently corrupt
+        the belief (every subsequent cycle inherits the NaN), and the cached
+        context would poison the next ``emission_gradient_step``. Reject the
+        update entirely: return the current (unchanged) belief and the
+        sentinel prediction_error so ``process`` records a large free energy
+        that ``AnomalyDetector`` picks up as an anomaly.
         """
+        obs_arr = np.asarray(observation, dtype=float)
+        if not np.all(np.isfinite(obs_arr)):
+            # Round-5 audit TEST5-4: emit a warning so the rejection is
+            # observable rather than silent. Without this, a NaN upstream
+            # module would be invisible — the belief stays unchanged and
+            # the only signal is the sentinel free energy (which
+            # AnomalyDetector picks up, but the operator does not see why).
+            warnings.warn(
+                "update_belief received a non-finite observation "
+                f"(contains NaN={np.any(np.isnan(obs_arr))}, "
+                f"Inf={np.any(np.isinf(obs_arr))}); "
+                "rejecting the belief update to prevent permanent "
+                "corruption of belief_state",
+                stacklevel=2,
+            )
+            # Do NOT mutate belief_state or the inference cache.
+            return self.belief_state.copy(), _FREE_ENERGY_SENTINEL
         predicted_obs = self.predict_observation(self.belief_state)
         error = observation[: self.obs_dim] - predicted_obs[: len(observation)]
         if len(error) < self.obs_dim:
@@ -234,25 +268,23 @@ class ActiveInferenceEngine(CognitiveModule):
         term is a strict superset of the old complexity penalty, and existing
         tests that only check energy decreases still hold.
         """
-        # Round-4 audit NEW-2: sanitize the observation up-front so NaN/Inf
-        # from upstream modules cannot propagate through the entire KL
-        # computation. ``infer_state`` itself is pure and does not guard its
-        # input; without this, a single NaN observation would make
-        # ``b_norm_sq`` / ``kl_qp`` NaN, which would then poison
-        # ``select_action``'s candidate scoring and ultimately corrupt
-        # ``action_history`` (breaking future sigma_q^2 estimates).
-        observation = np.nan_to_num(
-            np.asarray(observation, dtype=float),
-            nan=0.0,
-            posinf=0.0,
-            neginf=0.0,
-        )
+        # Round-5 audit TEST5-1: do NOT sanitize the observation at entry.
+        # The Round-4 NEW-2 fix added ``np.nan_to_num`` here, but that
+        # silently turned a NaN observation into a zeros vector, producing a
+        # "normal" small free energy — masking the very anomaly that
+        # ``AnomalyDetector`` (which z-scores this value) needs to see. The
+        # downstream guards below already handle NaN/Inf correctly: a NaN
+        # observation makes ``pred_error`` NaN, which the guard clamps to the
+        # sentinel value, so the free energy spikes and the anomaly is
+        # flagged. ``infer_state`` is pure (does not mutate belief_state), so
+        # letting NaN flow through it is safe.
+        observation = np.asarray(observation, dtype=float)
         inferred, pred_error = self.generative_model.infer_state(observation)
-        # ``infer_state`` can still produce non-finite values if the emission
-        # matrix itself is corrupted; guard the final result so callers never
-        # receive a NaN free energy (which would break argmin in select_action).
+        # Guard the result so callers never receive a NaN free energy (which
+        # would break argmin in select_action). The sentinel IS the anomaly
+        # signal — do not collapse it to a small value.
         if not np.isfinite(pred_error):
-            pred_error = 1e6
+            pred_error = _FREE_ENERGY_SENTINEL
         if not np.all(np.isfinite(inferred)):
             inferred = np.nan_to_num(inferred, nan=0.0, posinf=0.0, neginf=0.0)
         # Estimate variational posterior variance sigma_q^2 from recent
@@ -272,7 +304,7 @@ class ActiveInferenceEngine(CognitiveModule):
         dim = float(self.generative_model.state_dim)
         b_norm_sq = float(np.dot(inferred, inferred))
         if not np.isfinite(b_norm_sq):
-            b_norm_sq = 1e6
+            b_norm_sq = _FREE_ENERGY_SENTINEL
         # KL(N(belief, sigma^2 I) || N(0, I))
         kl_qp = 0.5 * (
             b_norm_sq
@@ -283,8 +315,8 @@ class ActiveInferenceEngine(CognitiveModule):
         # Pragmatic term: scaled prediction error (negative log-likelihood proxy).
         fe = pred_error + kl_qp
         # Final guard: if anything still escaped (shouldn't happen, but
-        # defense-in-depth), return a large finite value rather than NaN.
-        return float(fe) if np.isfinite(fe) else 1e6
+        # defense-in-depth), return the sentinel rather than NaN.
+        return float(fe) if np.isfinite(fe) else _FREE_ENERGY_SENTINEL
 
     def select_action(self, belief: np.ndarray) -> np.ndarray:
         """Select action that minimizes expected free energy.

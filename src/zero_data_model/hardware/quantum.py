@@ -293,6 +293,19 @@ def get_quantum_backend(
             stacklevel=2,
         )
         n_qubits = 20
+    # Round-5 audit IBM5-4: clamp n_qubits < 1 (negative or zero). The
+    # backends raise ``ValueError("n_qubits must be in [1, 20]")`` for
+    # such values, but the factory's except clause only catches
+    # ``(ImportError, RuntimeError)`` — so a ValueError would propagate
+    # instead of degrading to the simulator. Clamping here is consistent
+    # with the ``> 20`` clamp above.
+    if n_qubits < 1:
+        warnings.warn(
+            f"n_qubits={n_qubits} is below the supported minimum (1); "
+            "clamping to 1.",
+            stacklevel=2,
+        )
+        n_qubits = 1
     if prefer in ("ibm", "ibm_quantum"):
         try:
             from .ibm_quantum import IBMQuantumBackend

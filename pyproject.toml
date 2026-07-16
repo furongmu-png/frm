@@ -12,7 +12,11 @@ dependencies = [
     # Core numeric stack. Upper bounds on the major version guard against
     # breaking changes (Fix 20) -- numpy 3.x and scipy 2.x are not yet
     # released at the time of writing but the caps make intent explicit.
-    "numpy>=1.24,<3",
+    # Round-5 audit NEW5-1: lower bound bumped to 1.25 because
+    # ``Generator.spawn`` (used in ``ZeroDataModel.__init__`` to give each
+    # cognitive module a bit-stream-independent child RNG) was added in
+    # NumPy 1.25. On 1.24 the model raises ``AttributeError`` at import time.
+    "numpy>=1.25,<3",
     "scipy>=1.10,<2",
 ]
 

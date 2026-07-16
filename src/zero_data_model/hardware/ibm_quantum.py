@@ -125,11 +125,16 @@ class IBMQuantumBackend(QiskitQuantumBackend):
             #     IBMInputValueError, IBMRuntimeError (incl. RuntimeJobMaxTimeout)
             #   * QiskitBackendNotFoundError (backend_name not found)
             #   * TranspilerError (ansatz incompatible with backend)
-            # ``JobError`` separately covers RuntimeJobFailureError and
-            # RuntimeJobTimeoutError (they inherit from JobError, NOT from
-            # IBMError/QiskitError). ``OSError`` covers network/transport.
-            # TypeError/AttributeError/NameError (programming bugs) still
-            # propagate — they are NOT ancestors of any caught type.
+            # Round-5 audit IBM5-1: ``JobError`` is itself a subclass of
+            # ``QiskitError`` (verified: ``JobError.__mro__`` = [JobError,
+            # QiskitError, Exception, ...]), so listing it explicitly is
+            # technically redundant — but it documents intent and future-
+            # proofs against a qiskit refactoring that moves JobError out of
+            # the QiskitError hierarchy. RuntimeJobFailureError /
+            # RuntimeJobTimeoutError inherit from JobError. ``OSError`` covers
+            # network/transport. TypeError/AttributeError/NameError
+            # (programming bugs) still propagate — they are NOT ancestors of
+            # any caught type.
             warnings.warn(
                 f"IBM Quantum service initialization failed ({type(exc).__name__}); "
                 "falling back to the local simulator.",

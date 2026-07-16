@@ -333,14 +333,25 @@ def test_ibm_qiskiterror_is_caught_by_except_clause():
 
 
 def test_new2_compute_free_energy_handles_nan_observation():
-    """compute_free_energy returns a finite value for a NaN observation.
+    """compute_free_energy returns the sentinel for a NaN observation.
 
     Round-4 audit NEW-2: before the fix, a NaN observation would propagate
     through ``infer_state`` and make ``b_norm_sq`` / ``kl_qp`` NaN, which
-    would then poison ``select_action`` and ``action_history``. The fix
-    sanitizes the observation up-front.
+    would then poison ``select_action`` and ``action_history``. The Round-4
+    fix sanitized the observation up-front.
+
+    Round-5 audit TEST5-1/TEST5-3: the entry sanitize was REMOVED because
+    it masked anomalies (a NaN observation became zeros, producing a
+    "normal" small free energy that ``AnomalyDetector`` would not flag).
+    The downstream guards now return the sentinel ``_FREE_ENERGY_SENTINEL``
+    (1e6) so the anomaly is flagged. This test asserts the sentinel value
+    — not just ``np.isfinite`` — so a regression that re-introduces entry
+    sanitize would be caught (the value would be small, not 1e6).
     """
-    from zero_data_model.active_inference import ActiveInferenceEngine
+    from zero_data_model.active_inference import (
+        _FREE_ENERGY_SENTINEL,
+        ActiveInferenceEngine,
+    )
 
     engine = ActiveInferenceEngine(
         state_dim=8, obs_dim=8, action_dim=4, rng=np.random.default_rng(0)
@@ -350,11 +361,23 @@ def test_new2_compute_free_energy_handles_nan_observation():
     fe = engine.compute_free_energy(nan_obs)
     assert np.isfinite(fe), f"free energy {fe} is not finite for NaN observation"
     assert fe >= 0, f"free energy {fe} should be non-negative"
+    # Round-5 TEST5-3: the sentinel must be returned, not a sanitized small
+    # value. This is what lets AnomalyDetector flag the anomaly.
+    assert fe == _FREE_ENERGY_SENTINEL, (
+        f"free energy {fe} != sentinel {_FREE_ENERGY_SENTINEL}; the entry "
+        "sanitize may have been re-introduced, masking the anomaly"
+    )
 
 
 def test_new2_compute_free_energy_handles_inf_observation():
-    """compute_free_energy returns a finite value for an Inf observation."""
-    from zero_data_model.active_inference import ActiveInferenceEngine
+    """compute_free_energy returns the sentinel for an Inf observation.
+
+    Round-5 audit TEST5-3: same sentinel assertion as the NaN test.
+    """
+    from zero_data_model.active_inference import (
+        _FREE_ENERGY_SENTINEL,
+        ActiveInferenceEngine,
+    )
 
     engine = ActiveInferenceEngine(
         state_dim=8, obs_dim=8, action_dim=4, rng=np.random.default_rng(0)
@@ -362,6 +385,9 @@ def test_new2_compute_free_energy_handles_inf_observation():
     inf_obs = np.full(8, np.inf)
     fe = engine.compute_free_energy(inf_obs)
     assert np.isfinite(fe), f"free energy {fe} is not finite for Inf observation"
+    assert fe == _FREE_ENERGY_SENTINEL, (
+        f"free energy {fe} != sentinel {_FREE_ENERGY_SENTINEL}"
+    )
 
 
 # --------------------------------------------------------------------------- #
