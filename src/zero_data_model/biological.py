@@ -194,8 +194,17 @@ class MorphogeneticField:
         self.morphogens[1] = v_new
         # 2) Legacy linear diffusion on grid + any extra morphogens (n_signals>2).
         self.grid += dt * self._laplacian(self.grid)
+        # Round-6 audit THEORY6-18 / NEW5-6: clip extra morphogens (n_signals>2)
+        # to [0, 1] after the diffusion update. The Gray-Scott (u, v) pair is
+        # clipped above, but the extra morphogens were left unbounded — they
+        # are initialised from N(0, 0.1²) (can be negative) and evolved under
+        # plain Laplacian diffusion with no boundary enforcement, contradicting
+        # the docstring's claim that morphogens are concentrations (which are
+        # physically non-negative) and contaminating ``develop``'s
+        # ``pattern = grid * (1 + 0.1 * morphogen_sum)`` via unbounded sums.
         for m in self.morphogens[2:]:
             m += dt * self._laplacian(m)
+            np.clip(m, 0.0, 1.0, out=m)
 
     def develop(self, n_steps: int = 50) -> np.ndarray:
         for _ in range(n_steps):

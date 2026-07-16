@@ -62,6 +62,16 @@ class NLPRules(DomainRules):
 
     def tokenize(self, text: str) -> list[str]:
         """Lightweight rule-based tokenizer (no external library)."""
+        # Round-6 audit NEW5-4: bound the input length so a direct (non-API)
+        # caller cannot pass a multi-MB string that would make the
+        # ``cleaned.replace(ch, " ")`` loop O(n · |punct|) with no early exit.
+        # The API layer caps text at 8192 chars; this is a deeper guard.
+        _MAX_TOKENIZE_CHARS = 65536
+        if len(text) > _MAX_TOKENIZE_CHARS:
+            raise ValueError(
+                f"text length {len(text)} exceeds tokenize cap "
+                f"{_MAX_TOKENIZE_CHARS}"
+            )
         cleaned = text.lower()
         for ch in self.punctuation:
             cleaned = cleaned.replace(ch, " ")

@@ -172,6 +172,11 @@ class SimulatorQuantumBackend(QuantumBackend):
             )
         self.n_qubits = n_qubits
         self.n_layers = n_layers
+        # Round-6 audit PERF6-5: cache the full 2**n_qubits index array once
+        # so each gate application reuses it instead of allocating a fresh
+        # ~8 MB int64 array on every call (234 calls per evolve at n_qubits=20
+        # previously produced ~1.9 GB of allocation churn).
+        self._all_idx = np.arange(1 << n_qubits, dtype=np.intp)
 
     def _apply_ry(self, state: np.ndarray, theta: float, qubit: int) -> np.ndarray:
         """Apply the RY(theta) gate to ``qubit`` of the multi-qubit state.
@@ -186,21 +191,26 @@ class SimulatorQuantumBackend(QuantumBackend):
         Vectorised over all 2**n basis indices via NumPy bitwise ops so the
         gate applies in O(2**n) time with no Python-level loop (critical for
         n_qubits >= 15 where the state vector has >32K amplitudes).
+
+        Round-6 audit PERF6-6: mutate ``state`` in place. The previous code
+        did ``new_state = state.copy()`` and returned the copy — at n_qubits=20
+        that allocated 16 MB per gate call, ~3.7 GB of churn per evolve. The
+        caller (``evolve_and_measure``) reassigns ``state = self._apply_ry(...)``
+        and never uses the old reference, so in-place mutation is safe.
         """
         cos_t = np.cos(theta / 2.0)
         sin_t = np.sin(theta / 2.0)
         mask = np.intp(1 << qubit)
         # Vectorised index selection: all indices whose q-th bit is unset.
-        all_idx = np.arange(len(state), dtype=np.intp)
-        bit_unset = (all_idx & mask) == 0
-        idx0 = all_idx[bit_unset]
+        bit_unset = (self._all_idx & mask) == 0
+        idx0 = self._all_idx[bit_unset]
         idx1 = idx0 | mask  # corresponding indices with the q-th bit set
         a = state[idx0]
         b = state[idx1]
-        new_state = state.copy()
-        new_state[idx0] = cos_t * a - sin_t * b
-        new_state[idx1] = sin_t * a + cos_t * b
-        return new_state
+        # In-place update: avoid the per-gate state.copy() allocation.
+        state[idx0] = cos_t * a - sin_t * b
+        state[idx1] = sin_t * a + cos_t * b
+        return state
 
     def _apply_cnot(self, state: np.ndarray, control: int, target: int) -> np.ndarray:
         """Apply CNOT(control, target): flip the target bit conditioned on control.
@@ -210,18 +220,22 @@ class SimulatorQuantumBackend(QuantumBackend):
         from ``i`` only in the target bit (``j = i ^ (1 << target)``).
 
         Vectorised over all 2**n basis indices via NumPy bitwise ops.
+
+        Round-6 audit PERF6-6: mutate ``state`` in place (see ``_apply_ry``).
         """
         c_mask = np.intp(1 << control)
         t_mask = np.intp(1 << target)
-        all_idx = np.arange(len(state), dtype=np.intp)
         # Indices where control=1 and target=0 (the "low" partner of each pair).
-        low_mask = ((all_idx & c_mask) != 0) & ((all_idx & t_mask) == 0)
-        idx_low = all_idx[low_mask]
+        low_mask = ((self._all_idx & c_mask) != 0) & ((self._all_idx & t_mask) == 0)
+        idx_low = self._all_idx[low_mask]
         idx_high = idx_low ^ t_mask
-        new_state = state.copy()
-        new_state[idx_low] = state[idx_high]
-        new_state[idx_high] = state[idx_low]
-        return new_state
+        # In-place swap via a temporary (cannot alias idx_low/idx_high in
+        # state directly because the two index sets are disjoint, but the
+        # assignment needs a buffer to avoid clobbering mid-swap).
+        tmp = state[idx_low].copy()
+        state[idx_low] = state[idx_high]
+        state[idx_high] = tmp
+        return state
 
     def evolve_and_measure(
         self, params: np.ndarray, entangling: np.ndarray, n_shots: int = 1024
@@ -282,6 +296,14 @@ def get_quantum_backend(
     Fix 24: ``n_qubits`` is clamped to <= 20 because the local state-vector
     simulator materializes a dense ``2**n_qubits`` complex amplitude vector
     (16 MB at n_qubits=20). A warning is emitted when clamping occurs.
+
+    Round-5 audit IBM5-4 (Round-6 doc): ``n_qubits < 1`` is also clamped
+    (to 1) with a UserWarning. Previously a ``ValueError`` from the backend
+    constructor escaped the narrow ``except (ImportError, RuntimeError)``
+    and crashed the caller instead of degrading to the simulator. The
+    exception contract therefore changed: callers that wrapped the factory
+    in ``try/except ValueError`` for invalid ``n_qubits`` no longer receive
+    the exception — both bounds now warn+clamp.
     """
     import warnings
 

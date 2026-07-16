@@ -289,6 +289,10 @@ class FractalGenerator:
             self.transforms.append((scale, offset))
 
     def generate(self, initial: np.ndarray, n_iterations: int = 10) -> np.ndarray:
+        # Round-6 audit NEW5-5: clamp n_iterations to avoid a hostile caller
+        # hanging the process. Each iteration is O(dim^2) (a matmul + tanh),
+        # so 10_000 iterations at dim=4096 is ~672 GFLOP — already generous.
+        n_iterations = int(min(max(n_iterations, 0), 10_000))
         x = initial[: self.dim].copy()
         if len(x) < self.dim:
             x = np.pad(x, (0, self.dim - len(x)))

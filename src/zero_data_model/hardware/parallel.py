@@ -38,7 +38,15 @@ class ParallelExecutor:
     def __init__(self, n_workers: int | None = None, backend: str = "threading"):
         self.n_workers = n_workers or _cpu_count()
         self.backend = backend
-        self.parallel = self.n_workers > 1 and _HAS_JOBLIB
+        # Round-6 audit RNG5-7: decouple the threading path from joblib. The
+        # ``backend="threading"`` path (the default) uses ``ThreadPoolExecutor``
+        # directly, NOT joblib — yet the old gate ``self.parallel = n_workers>1
+        # and _HAS_JOBLIB`` silently disabled all parallelism when joblib was
+        # missing, even though threads would have worked fine. Only the
+        # process-pool path (``backend != "threading"``) actually needs joblib.
+        self.parallel = self.n_workers > 1 and (
+            self.backend == "threading" or _HAS_JOBLIB
+        )
 
     def map(self, func: Callable[[T], R], items: Iterable[T]) -> list[R]:
         """Apply ``func`` to each item, preserving input order."""

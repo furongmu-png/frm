@@ -46,7 +46,13 @@ class IBMQuantumBackend(QiskitQuantumBackend):
     fallback path. When ``qiskit-ibm-runtime`` is not installed, or no IBM
     Quantum token is configured, the backend transparently degrades to the
     local simulator: ``evolve_and_measure`` still works and returns a
-    probability vector of length ``2 * n_qubits``.
+    probability vector of length ``2 ** n_qubits``.
+
+    Round-6 audit API6-7-1: the previous docstring said ``2 * n_qubits``
+    (a 16x understatement at n_qubits=8 — 16 vs the correct 256). The
+    returned vector spans the full computational basis of ``n_qubits``
+    qubits, indexed by the integer whose big-endian bitstring is the
+    measured basis state.
     """
 
     name = "ibm_quantum"

@@ -269,7 +269,13 @@ class CategoryTheoryEngine(CognitiveModule):
         truth = self.topos.classify(signal.data)
         for cat_name, cat in self.categories.items():
             for _obj_name, obj_repr in cat.objects.items():
-                similarity = self.find_isomorphism(signal.data, obj_repr)
+                # Round-6 audit NEW5-10: call ``structural_similarity`` directly
+                # instead of the deprecated ``find_isomorphism`` alias. The
+                # C-batch renamed the method but missed this callsite, so every
+                # ``think()`` cycle that reached this loop emitted a
+                # DeprecationWarning (with stack-frame inspection) up to 15
+                # times per cycle (3 categories x 5 objects).
+                similarity = self.structural_similarity(signal.data, obj_repr)
                 if similarity > 0.8:
                     for functor in self.functors:
                         if functor.source == cat_name:

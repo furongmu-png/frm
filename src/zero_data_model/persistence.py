@@ -19,6 +19,7 @@ import json
 import os
 import shutil
 import tempfile
+import threading
 from typing import Any
 
 import numpy as np
@@ -32,6 +33,17 @@ _MAX_CONFIG_BYTES: int = 1 << 20  # 1 MiB — a legitimate config is ~1 KiB.
 # Round-5 audit PERSIST5-2: cap per-functor morphism count to prevent OOM via
 # inflated counts that each trigger an npz key lookup + array allocation.
 _MAX_MORPH_COUNT: int = 4096
+
+# Round-6 audit CONCUR6-2 / CONCUR6-3: module-level lock serialising the
+# stage→backup→replace→cleanup sequence in ``save`` and the open-config +
+# open-npz sequence in ``load``. Without this, two concurrent saves to the
+# same ``path`` (e.g. two ``ZeroDataModel`` instances, or direct callers
+# bypassing ``api.py``'s ``model._lock``) race: Save A renames target to
+# backup, Save B sees no target and stages fresh, Save A overwrites B's
+# snapshot, then ``rmtree(backup)`` deletes the original. Save B's snapshot
+# is silently lost. The lock also prevents a concurrent ``load`` from
+# reading config.json + arrays.npz from different snapshots (torn read).
+_PERSISTENCE_LOCK = threading.Lock()
 
 # --------------------------------------------------------------------------- #
 # Persistence root sandbox
@@ -147,6 +159,15 @@ class ModelSerializer:
         The write is atomic: data lands in a sibling temp dir first,
         then is renamed into place so a crash never produces a partial
         snapshot that load() would later misread.
+
+        Round-6 audit CONCUR6-2: the stage→backup→replace→cleanup sequence
+        is serialised by ``_PERSISTENCE_LOCK`` so two concurrent saves to
+        the same ``path`` cannot lose one snapshot via the rollback path.
+
+        Raises:
+            ValueError: if ``path`` escapes the persistence root or the
+                config/npz content fails validation.
+            OSError: on filesystem errors (disk full, permissions, ...).
         """
         target = _validate_path(path)
 
@@ -154,26 +175,29 @@ class ModelSerializer:
         # filesystem so os.replace is atomic). tempfile.mkdtemp gives us
         # an exclusive, predictably-named scratch dir.
         root = get_persistence_root()
+        # Write the snapshot OUTSIDE the lock — npz serialisation is the
+        # expensive part and does not touch the shared target. Only the
+        # stage→backup→replace→cleanup swap needs to be serialised.
         staging = tempfile.mkdtemp(prefix=".save-", dir=root)
         try:
             ModelSerializer._write_snapshot(model, staging)
-
-            # Atomic replace of the target directory. If target exists,
-            # rename it aside first so os.replace works on a dir.
-            backup: str | None = None
-            if os.path.exists(target):
-                backup = target + ".bak-" + os.path.basename(staging)
-                os.replace(target, backup)
-            try:
-                os.replace(staging, target)
-            except OSError:
-                # Roll back: restore the backup if rename failed.
+            with _PERSISTENCE_LOCK:
+                # Atomic replace of the target directory. If target exists,
+                # rename it aside first so os.replace works on a dir.
+                backup: str | None = None
+                if os.path.exists(target):
+                    backup = target + ".bak-" + os.path.basename(staging)
+                    os.replace(target, backup)
+                try:
+                    os.replace(staging, target)
+                except OSError:
+                    # Roll back: restore the backup if rename failed.
+                    if backup is not None and os.path.exists(backup):
+                        os.replace(backup, target)
+                    raise
+                # Success: remove the old backup.
                 if backup is not None and os.path.exists(backup):
-                    os.replace(backup, target)
-                raise
-            # Success: remove the old backup.
-            if backup is not None and os.path.exists(backup):
-                shutil.rmtree(backup, ignore_errors=True)
+                    shutil.rmtree(backup, ignore_errors=True)
         except Exception:
             # Make sure the staging dir never lingers on failure.
             shutil.rmtree(staging, ignore_errors=True)
@@ -258,6 +282,20 @@ class ModelSerializer:
         """Reconstruct a :class:`ZeroDataModel` from a saved directory.
 
         ``path`` must be a *relative* name under the persistence root.
+
+        Round-6 audit CONCUR6-3: the open-config + open-npz sequence is
+        serialised by ``_PERSISTENCE_LOCK`` (shared with ``save``) so a
+        concurrent ``save``'s ``os.replace(staging, target)`` cannot land
+        between the config read and the npz read, which would otherwise
+        produce a torn snapshot (config from old, arrays from new).
+
+        Raises:
+            FileNotFoundError: if ``path`` or its arrays.npz / config.json
+                is missing.
+            ValueError: if the config or npz content fails validation
+                (sandbox escape, oversized config, missing/extra keys,
+                non-numeric dtype, shape mismatch, ...).
+            OSError: on filesystem errors.
         """
         target = _validate_path(path)
         if not os.path.isdir(target):
@@ -281,7 +319,10 @@ class ModelSerializer:
                 "hostile snapshot"
             )
 
-        with open(config_path, encoding="utf-8") as f:
+        # Round-6 audit CONCUR6-3: hold the persistence lock across the
+        # config + npz reads so a concurrent ``save`` cannot swap the
+        # directory mid-load (torn read between config and arrays).
+        with _PERSISTENCE_LOCK, open(config_path, encoding="utf-8") as f:
             config = json.load(f)
 
         # Round-3 audit B-batch: validate the scalar config before acting on
@@ -468,19 +509,30 @@ class ModelSerializer:
             # which could carry unexpected payloads. Only iterate the expected
             # keys (already validated above) so a hostile npz cannot force us
             # to load junk arrays.
+            #
+            # Round-6 audit PERF6-2: read each expected array ONCE into a
+            # local dict. ``NpzFile`` does not cache reads — every ``data[k]``
+            # re-decompresses the array from the zip. The previous code read
+            # each array twice (once for dtype inspection at line 513, again
+            # during the assignment loop), which doubled disk I/O. Loading
+            # into a dict once halves the read cost and lets the dtype check
+            # inspect the cached array without a second disk read.
+            loaded_arrays: dict[str, np.ndarray] = {}
             for k in expected_keys:
-                kind = data[k].dtype.kind
+                arr = np.asarray(data[k])
+                kind = arr.dtype.kind
                 if kind in ("O", "S", "U", "V"):
                     raise ValueError(
                         f"refusing non-numeric dtype ({kind}) array: {k}"
                     )
+                loaded_arrays[k] = arr
 
             # Consciousness core: per-layer weights and biases (overwrites each
             # layer in-place so layer objects keep their identity).
             for i, layer in enumerate(model.consciousness.layers):
                 if i < config["n_consciousness_layers"]:
-                    w = np.asarray(data[f"consciousness_layers_{i}_weights"])
-                    b = np.asarray(data[f"consciousness_layers_{i}_bias"])
+                    w = loaded_arrays[f"consciousness_layers_{i}_weights"]
+                    b = loaded_arrays[f"consciousness_layers_{i}_bias"]
                     # Round-4 audit PERSIST-2: shape check guards against a
                     # malicious npz that sets dim=1 in config but stuffs
                     # huge arrays into the npz (OOM bypass).
@@ -497,9 +549,9 @@ class ModelSerializer:
 
             # Active inference generative model arrays.
             gm = model.active_inference.generative_model
-            t = np.asarray(data["active_inference_transition"])
-            e = np.asarray(data["active_inference_emission"])
-            bs = np.asarray(data["active_inference_belief_state"])
+            t = loaded_arrays["active_inference_transition"]
+            e = loaded_arrays["active_inference_emission"]
+            bs = loaded_arrays["active_inference_belief_state"]
             if t.shape != (gm.state_dim, gm.state_dim):
                 raise ValueError(
                     f"transition shape {t.shape} != ({gm.state_dim},{gm.state_dim})"
@@ -521,7 +573,7 @@ class ModelSerializer:
             # fresh model's corresponding attribute, so a hostile npz cannot
             # stuff huge arrays (OOM bypass) or mismatched shapes (silent
             # broadcasting corruption).
-            topos_clf = np.asarray(data["category_engine_topos_classifier"])
+            topos_clf = loaded_arrays["category_engine_topos_classifier"]
             if topos_clf.shape != model.category_engine.topos.classifier.shape:
                 raise ValueError(
                     f"topos_classifier shape {topos_clf.shape} != "
@@ -537,9 +589,9 @@ class ModelSerializer:
                 for k, (key, fresh_transform) in enumerate(morph_items):
                     if k >= n_morphs:
                         break
-                    loaded = np.asarray(
-                        data[f"category_engine_functor_{j}_transform_{k}"]
-                    )
+                    loaded = loaded_arrays[
+                        f"category_engine_functor_{j}_transform_{k}"
+                    ]
                     if loaded.shape != fresh_transform.shape:
                         raise ValueError(
                             f"functor {j} transform {k} shape {loaded.shape} "
@@ -548,7 +600,7 @@ class ModelSerializer:
                     functor.morphism_map[key] = loaded
 
             # Quantum hybrid arrays.
-            qh_cw = np.asarray(data["quantum_hybrid_classical_weights"])
+            qh_cw = loaded_arrays["quantum_hybrid_classical_weights"]
             if qh_cw.shape != model.quantum_hybrid.classical_weights.shape:
                 raise ValueError(
                     f"classical_weights shape {qh_cw.shape} != "
@@ -556,7 +608,7 @@ class ModelSerializer:
                 )
             model.quantum_hybrid.classical_weights = qh_cw
 
-            qh_cp = np.asarray(data["quantum_hybrid_circuit_params"])
+            qh_cp = loaded_arrays["quantum_hybrid_circuit_params"]
             if qh_cp.shape != model.quantum_hybrid.quantum_circuit.params.shape:
                 raise ValueError(
                     f"circuit_params shape {qh_cp.shape} != "
@@ -564,7 +616,7 @@ class ModelSerializer:
                 )
             model.quantum_hybrid.quantum_circuit.params = qh_cp
 
-            qh_ce = np.asarray(data["quantum_hybrid_circuit_entangling"])
+            qh_ce = loaded_arrays["quantum_hybrid_circuit_entangling"]
             if qh_ce.shape != model.quantum_hybrid.quantum_circuit.entangling.shape:
                 raise ValueError(
                     f"circuit_entangling shape {qh_ce.shape} != "
@@ -572,7 +624,7 @@ class ModelSerializer:
                 )
             model.quantum_hybrid.quantum_circuit.entangling = qh_ce
 
-            qh_ac = np.asarray(data["quantum_hybrid_annealer_cost_matrix"])
+            qh_ac = loaded_arrays["quantum_hybrid_annealer_cost_matrix"]
             if qh_ac.shape != model.quantum_hybrid.annealer.cost_matrix.shape:
                 raise ValueError(
                     f"annealer_cost_matrix shape {qh_ac.shape} != "
@@ -581,7 +633,7 @@ class ModelSerializer:
             model.quantum_hybrid.annealer.cost_matrix = qh_ac
 
             # Biological substrate arrays.
-            bio_grid = np.asarray(data["biological_morphogenetic_grid"])
+            bio_grid = loaded_arrays["biological_morphogenetic_grid"]
             if bio_grid.shape != model.biological.morphogenetic.grid.shape:
                 raise ValueError(
                     f"morphogenetic_grid shape {bio_grid.shape} != "
@@ -597,7 +649,7 @@ class ModelSerializer:
             )
             loaded_morphogens: list[np.ndarray] = []
             for j in range(n_morphogens):
-                mg = np.asarray(data[f"biological_morphogenetic_morphogens_{j}"])
+                mg = loaded_arrays[f"biological_morphogenetic_morphogens_{j}"]
                 if fresh_morphogen_shape is not None and mg.shape != fresh_morphogen_shape:
                     raise ValueError(
                         f"morphogen {j} shape {mg.shape} != {fresh_morphogen_shape}"
@@ -605,7 +657,7 @@ class ModelSerializer:
                 loaded_morphogens.append(mg)
             model.biological.morphogenetic.morphogens = loaded_morphogens
 
-            bio_auto = np.asarray(data["biological_automata_state"])
+            bio_auto = loaded_arrays["biological_automata_state"]
             if bio_auto.shape != model.biological.automata.state.shape:
                 raise ValueError(
                     f"automata_state shape {bio_auto.shape} != "
@@ -626,8 +678,8 @@ class ModelSerializer:
             )
             loaded_transforms: list[tuple[np.ndarray, np.ndarray]] = []
             for j in range(n_fractal_transforms):
-                scale = np.asarray(data[f"math_universe_fractal_transforms_{j}_scale"])
-                offset = np.asarray(data[f"math_universe_fractal_transforms_{j}_offset"])
+                scale = loaded_arrays[f"math_universe_fractal_transforms_{j}_scale"]
+                offset = loaded_arrays[f"math_universe_fractal_transforms_{j}_offset"]
                 if fresh_scale_shape is not None and scale.shape != fresh_scale_shape:
                     raise ValueError(
                         f"fractal transform {j} scale shape {scale.shape} "

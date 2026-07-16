@@ -217,6 +217,20 @@ def set_model(model: ZeroDataModel | None) -> None:
     _model = model
 
 
+# Round-6 audit NEW5-2 / NEW5-3: validate that an input array is finite
+# (no NaN/Inf). NaN/Inf in a series poisons np.polyfit / np.mean / z-score;
+# NaN/Inf in ``think.input`` or ``recognize.image`` propagates through the
+# predictive hierarchy. Each array-accepting endpoint calls this helper
+# right after ``np.asarray``.
+def _ensure_finite(arr: np.ndarray, name: str) -> None:
+    """Raise HTTPException(400) if ``arr`` contains NaN or Inf."""
+    if not np.all(np.isfinite(arr)):
+        raise HTTPException(
+            status_code=400,
+            detail=f"{name} must be finite (no NaN or Inf)",
+        )
+
+
 # --------------------------------------------------------------------------- #
 # API key auth dependency (CWE-306)
 # --------------------------------------------------------------------------- #
@@ -715,6 +729,8 @@ def create_app() -> FastAPI:
         input_data = (
             np.asarray(body.input, dtype=float) if body.input else None
         )
+        if input_data is not None:
+            _ensure_finite(input_data, "input")
         start = time.perf_counter()
         signal = model.think(input_data)
         if _think_duration is not None:
@@ -779,6 +795,7 @@ def create_app() -> FastAPI:
         series = np.asarray(req.series, dtype=float).flatten()
         if series.size == 0:
             raise HTTPException(status_code=400, detail="series must be non-empty")
+        _ensure_finite(series, "series")
         preds = model.forecast(series, horizon=req.horizon)
         return ForecastResponse(
             forecast=[float(x) for x in np.asarray(preds).flatten().tolist()]
@@ -797,6 +814,7 @@ def create_app() -> FastAPI:
         series = np.asarray(req.series, dtype=float).flatten()
         if series.size == 0:
             raise HTTPException(status_code=400, detail="series must be non-empty")
+        _ensure_finite(series, "series")
         mask = model.detect_anomalies(series)
         return AnomaliesResponse(anomalies=[bool(x) for x in np.asarray(mask).tolist()])
 
@@ -813,6 +831,7 @@ def create_app() -> FastAPI:
         series = np.asarray(req.series, dtype=float).flatten()
         if series.size == 0:
             raise HTTPException(status_code=400, detail="series must be non-empty")
+        _ensure_finite(series, "series")
         out = model.analyze_trend(series)
         return TrendResponse(
             trend_slope=float(out["trend_slope"]),
@@ -837,6 +856,7 @@ def create_app() -> FastAPI:
         image = np.asarray(req.image, dtype=float)
         if image.ndim != 2:
             raise HTTPException(status_code=400, detail="image must be 2D")
+        _ensure_finite(image, "image")
         shape, conf = model.recognize_pattern(image)
         return RecognizeResponse(shape=str(shape), confidence=float(conf))
 

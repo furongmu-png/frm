@@ -267,6 +267,14 @@ class ActiveInferenceEngine(CognitiveModule):
         which reduces to ``0.5 * ||b||^2`` when ``sigma = 1`` -- so the new
         term is a strict superset of the old complexity penalty, and existing
         tests that only check energy decreases still hold.
+
+        Round-6 audit API6-3-1: returns ``_FREE_ENERGY_SENTINEL`` (1e6) when
+        ``observation`` is non-finite (NaN/Inf) or when the computed FE is
+        non-finite. Callers reading this as a finite float should treat
+        ``fe == _FREE_ENERGY_SENTINEL`` as the anomaly signal (used by
+        ``AnomalyDetector``'s z-score). The type contract is preserved
+        (always ``float``), but the value-domain on bad inputs changed in
+        Round-5 TEST5-1/TEST5-5.
         """
         # Round-5 audit TEST5-1: do NOT sanitize the observation at entry.
         # The Round-4 NEW-2 fix added ``np.nan_to_num`` here, but that
@@ -401,7 +409,20 @@ class ActiveInferenceEngine(CognitiveModule):
         # ``update_belief`` mutates the shared belief_state (this is the only
         # place analytics-callable code paths intentionally update the belief).
         belief, pred_error = self.generative_model.update_belief(signal.data)
-        free_energy = pred_error + float(np.linalg.norm(belief) ** 2) * 0.01
+        # Round-6 audit THEORY6-1: use the SAME KL-based free-energy formula
+        # as ``compute_free_energy`` so anomaly detection (which consumes
+        # ``free_energy_history``) and action selection (which calls
+        # ``compute_free_energy``) agree on what "free energy" means. The old
+        # ``pred_error + ||belief||^2 * 0.01`` was the legacy magnitude penalty
+        # that the C-batch replaced inside ``compute_free_energy`` — but
+        # ``process`` was never updated, so the two paths reported different
+        # FE values for the same observation.
+        free_energy = self.compute_free_energy(signal.data)
+        # ``compute_free_energy`` may return the sentinel when ``signal.data``
+        # is non-finite; fall back to the raw prediction error so the history
+        # always carries a finite value for downstream AnomalyDetector.
+        if free_energy == _FREE_ENERGY_SENTINEL or not np.isfinite(free_energy):
+            free_energy = float(pred_error) if np.isfinite(pred_error) else 0.0
         self.free_energy_history.append(free_energy)
         action = self.select_action(belief)
         self.action_history.append(action)
