@@ -7,7 +7,9 @@ core or when joblib is missing, so behaviour is always correct.
 
 from __future__ import annotations
 
+import contextlib
 import os
+import threading
 from collections.abc import Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import TypeVar
@@ -40,6 +42,18 @@ class ParallelExecutor:
     ``n_workers=8``, ``ZeroDataModel.think`` calls ``map`` twice per cycle,
     so the old code paid ~16 thread-spawn+join operations per cycle
     (~1-2 ms overhead) — eliminated.
+
+    Round-8 audit CONCUR8-2: fork-safety. A persistent ``ThreadPoolExecutor``
+    holds live worker threads, and ``os.fork`` (used by gunicorn ``--preload``
+    and Python ``multiprocessing``) does NOT carry those threads into the
+    child — the child inherits a ``ThreadPoolExecutor`` whose threads are
+    dead but whose internal state looks alive, so the next ``map`` deadlocks
+    on ``as_completed``. We record the PID at pool creation time and
+    recreate the pool lazily inside ``map`` when the PID has changed.
+
+    Round-8 audit CONCUR8-3/4: lazy recreation is now lock-protected, and
+    ``shutdown`` flips ``self._pool = None`` BEFORE signaling the workers so
+    a concurrent ``map`` does not observe a half-shutdown pool.
     """
 
     def __init__(self, n_workers: int | None = None, backend: str = "threading"):
@@ -55,18 +69,78 @@ class ParallelExecutor:
             self.backend == "threading" or _HAS_JOBLIB
         )
         # Round-7 audit PERF7-1: persistent thread pool, reused across calls.
+        # Round-8 audit CONCUR8-2: record the PID so a forked child can detect
+        # that the inherited pool is dead and recreate it.
         self._pool: ThreadPoolExecutor | None = None
+        self._pool_pid: int = os.getpid()
+        # Round-8 audit CONCUR8-3: serialize lazy recreation so two concurrent
+        # ``map`` calls in a forked child do not race to build two pools
+        # (the loser's pool would leak threads).
+        self._recreate_lock = threading.Lock()
         if self.parallel and self.backend == "threading":
             self._pool = ThreadPoolExecutor(max_workers=self.n_workers)
 
+    def _ensure_pool(self) -> ThreadPoolExecutor | None:
+        """Return a live thread pool for the CURRENT pid, or ``None`` if the
+        threading backend is disabled.
+
+        Lazily recreates the pool when:
+        * it was shut down (``self._pool is None``), or
+        * the process PID has changed since the pool was built (fork child).
+
+        CONCUR8-3: the recreate path is serialised by ``_recreate_lock`` so
+        two concurrent ``map`` calls cannot build two competing pools.
+        """
+        if not self.parallel or self.backend != "threading":
+            return None
+        current_pid = os.getpid()
+        pool = self._pool
+        if pool is not None and self._pool_pid == current_pid:
+            return pool
+        # Either the pool is None (shutdown) or the PID changed (fork).
+        # CONCUR8-3: serialise the recreation.
+        with self._recreate_lock:
+            # Re-check under the lock: another thread may have recreated
+            # the pool while we were waiting.
+            pool = self._pool
+            if pool is not None and self._pool_pid == current_pid:
+                return pool
+            pool = ThreadPoolExecutor(max_workers=self.n_workers)
+            self._pool = pool
+            self._pool_pid = current_pid
+            return pool
+
     def shutdown(self) -> None:
-        """Shut down the persistent thread pool (if any)."""
-        if self._pool is not None:
-            self._pool.shutdown(wait=False)
+        """Shut down the persistent thread pool (if any).
+
+        CONCUR8-4: clear ``self._pool`` BEFORE signalling the workers so a
+        concurrent ``map`` that already grabbed the (now-stale) pool handle
+        still completes its ``as_completed`` loop, while new ``map`` calls
+        lazily build a fresh pool. ``wait=False`` keeps shutdown non-blocking
+        — critical for ``atexit`` / ``__del__`` paths that must not block.
+        """
+        # Take the lock so we cannot race with ``_ensure_pool``'s recreate
+        # path: if ``shutdown`` wins the lock, any concurrent recreator
+        # will see ``self._pool is None`` after we release and build a
+        # fresh pool (which is the desired outcome — shutdown is local).
+        with self._recreate_lock:
+            pool = self._pool
+            if pool is None:
+                return
+            # Clear first so concurrent ``map`` calls bypass this pool.
             self._pool = None
+        # Release the lock before ``shutdown(wait=False)`` — the join is
+        # non-blocking and does not need to hold the recreate lock.
+        # ``shutdown`` should not raise, but a partially-initialised pool
+        # (e.g. constructor failure mid-init) might. Swallow so ``__del__``
+        # / ``atexit`` paths never propagate.
+        with contextlib.suppress(Exception):
+            pool.shutdown(wait=False)
 
     def __del__(self) -> None:
-        self.shutdown()
+        # __del__ must never raise — interpreter shutdown path.
+        with contextlib.suppress(Exception):
+            self.shutdown()
 
     def map(self, func: Callable[[T], R], items: Iterable[T]) -> list[R]:
         """Apply ``func`` to each item, preserving input order."""
@@ -77,12 +151,13 @@ class ParallelExecutor:
             return [func(x) for x in items_list]
 
         if self.backend == "threading":
-            # Round-7 audit PERF7-1: reuse the persistent pool. If it was
-            # shut down (e.g. after fork), recreate lazily.
-            pool = self._pool
-            if pool is None:
-                pool = ThreadPoolExecutor(max_workers=self.n_workers)
-                self._pool = pool
+            # Round-7 audit PERF7-1: reuse the persistent pool.
+            # Round-8 audit CONCUR8-2/3: ``_ensure_pool`` recreates the pool
+            # lazily when the PID has changed (fork) or it was shut down,
+            # and the recreate path is lock-protected.
+            pool = self._ensure_pool()
+            if pool is None:  # pragma: no cover - defensive
+                return [func(x) for x in items_list]
             futures = {pool.submit(func, x): i for i, x in enumerate(items_list)}
             results: list[R | None] = [None] * len(items_list)
             for fut in as_completed(futures):

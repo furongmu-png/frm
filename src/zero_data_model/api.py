@@ -27,10 +27,12 @@ Security & operational hardening:
 
 from __future__ import annotations
 
+import contextlib
 import hmac
 import json
 import logging
 import os
+import threading
 import time
 import uuid
 from datetime import datetime
@@ -202,19 +204,53 @@ log = _LoggerAdapter(_build_logger())
 # and the first request pays the construction cost.
 _model: ZeroDataModel | None = None
 
+# Round-8 audit CONCUR8-1: serialize get_model/set_model. FastAPI dispatches
+# each request on a threadpool worker, so ``/load`` (which replaces the
+# singleton) can race with a concurrent ``/think`` or ``/save`` — the latter
+# could grab a half-constructed model (``__init__`` mid-flight) or hold a
+# reference to the OLD model after ``set_model`` has swapped in the new one
+# and the old model's ``ParallelExecutor`` has been shut down (R8-HIGH-2),
+# causing a use-after-shutdown on ``map_modules``. The lock makes the swap
+# atomic from the readers' perspective.
+_model_lock = threading.Lock()
+
 
 def get_model() -> ZeroDataModel:
-    """Return the lazily-initialized module-level model instance."""
+    """Return the lazily-initialized module-level model instance.
+
+    CONCUR8-1: takes ``_model_lock`` so a concurrent ``set_model`` cannot
+    observe ``_model is None`` mid-construction (the previous ``if _model
+    is None: _model = ZeroDataModel(...)`` would let two threads both build
+    a model, then both assign — leaking the loser's ``ParallelExecutor``).
+    """
     global _model
-    if _model is None:
-        _model = ZeroDataModel(dim=32)
-    return _model
+    with _model_lock:
+        if _model is None:
+            _model = ZeroDataModel(dim=32)
+        return _model
 
 
 def set_model(model: ZeroDataModel | None) -> None:
-    """Replace the module-level model (used by /load and tests)."""
+    """Replace the module-level model (used by /load and tests).
+
+    R8-HIGH-2: shut down the OLD model's ``ParallelExecutor`` before the
+    swap so its persistent ``ThreadPoolExecutor`` worker threads do not
+    leak — the old code replaced ``_model`` and left the old model's
+    thread pool running indefinitely (each ``/load`` leaked ``n_workers``
+    threads + a ``ThreadPoolExecutor`` internal queue).
+
+    CONCUR8-1: the swap + shutdown are atomic w.r.t. ``get_model``.
+    """
     global _model
-    _model = model
+    with _model_lock:
+        old = _model
+        _model = model
+    # Shutdown the old model OUTSIDE ``_model_lock`` so a slow
+    # ``pool.shutdown(wait=False)`` does not block ``/think``. ``wait=False``
+    # already makes this non-blocking, but the lock-drop is still cleaner.
+    if old is not None:
+        with contextlib.suppress(Exception):
+            old.parallel_executor.shutdown()
 
 
 # Round-6 audit NEW5-2 / NEW5-3: validate that an input array is finite

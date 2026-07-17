@@ -102,6 +102,11 @@ class ZeroDataModel:
 
     def __init__(self, dim: int = 64, seed: int | None = None) -> None: ...
 
+    # Round-8 audit R8-HIGH-3: pickle / deepcopy support. Drop the
+    # unpicklable ``_lock`` + ``parallel_executor`` and rebuild on restore.
+    def __getstate__(self) -> dict[str, Any]: ...
+    def __setstate__(self, state: dict[str, Any]) -> None: ...
+
     @property
     def hardware_info(self) -> dict[str, Any]:
         """Report the active hardware backends for diagnostics."""

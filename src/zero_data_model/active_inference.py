@@ -239,6 +239,39 @@ class ActiveInferenceEngine(CognitiveModule):
         # Bounded deques so long-running engines do not leak memory (Fix 8).
         self.action_history: deque = deque(maxlen=1000)
         self.free_energy_history: deque = deque(maxlen=1000)
+        # Round-8 audit PERF8-2: cache sigma_q2 across the 9 CFE calls per
+        # think cycle (1 from process + 8 from select_action). Invalidated
+        # only when action_history changes (i.e. once per cycle in process).
+        # Without this cache, every CFE call re-materialised
+        # ``list(action_history)`` (O(N), N<=1000) and recomputed np.var —
+        # 9x redundant work per cycle. ``_sigma_q2_dirty`` is set True by
+        # ``process`` after appending to action_history.
+        self._cached_sigma_q2: float = 1.0
+        self._sigma_q2_dirty: bool = True
+
+    def _compute_sigma_q2(self) -> float:
+        """Estimate the variational posterior variance ``sigma_q^2`` from
+        recent action history, with caching.
+
+        Round-8 audit PERF8-2: previously every ``compute_free_energy`` call
+        re-materialised ``list(action_history)`` and recomputed ``np.var``.
+        Since the result is invariant across the 9 CFE calls per cycle
+        (action_history is only mutated by ``process`` after the CFE burst),
+        we cache it and invalidate only when ``process`` appends a new action.
+        """
+        if not self._sigma_q2_dirty:
+            return self._cached_sigma_q2
+        if len(self.action_history) >= 2:
+            recent = np.asarray(list(self.action_history)[-32:], dtype=float)
+            recent = np.nan_to_num(recent, nan=0.0, posinf=0.0, neginf=0.0)
+            sigma_q2 = float(np.mean(np.var(recent, axis=0))) + 1e-6
+            if not np.isfinite(sigma_q2) or sigma_q2 <= 0:
+                sigma_q2 = 1.0
+        else:
+            sigma_q2 = 1.0
+        self._cached_sigma_q2 = sigma_q2
+        self._sigma_q2_dirty = False
+        return sigma_q2
 
     def compute_free_energy(
         self, observation: np.ndarray, state: np.ndarray | None = None
@@ -320,17 +353,10 @@ class ActiveInferenceEngine(CognitiveModule):
         # Estimate variational posterior variance sigma_q^2 from recent
         # action variance (uncertainty about the next state -> uncertainty
         # about the posterior). Fall back to 1.0 when no actions recorded.
-        if len(self.action_history) >= 2:
-            recent = np.asarray(list(self.action_history)[-32:], dtype=float)
-            # Round-3 audit: sanitize NaN/Inf before np.var, and guard the
-            # result — the ``+ 1e-6`` floor only helps for small positive
-            # values, not for NaN (which propagates through np.log).
-            recent = np.nan_to_num(recent, nan=0.0, posinf=0.0, neginf=0.0)
-            sigma_q2 = float(np.mean(np.var(recent, axis=0))) + 1e-6
-            if not np.isfinite(sigma_q2) or sigma_q2 <= 0:
-                sigma_q2 = 1.0
-        else:
-            sigma_q2 = 1.0
+        # Round-8 audit PERF8-2: use the cached value — ``_compute_sigma_q2``
+        # only recomputes when ``action_history`` changes (once per cycle in
+        # ``process``), avoiding 9x redundant O(N) re-materialisations.
+        sigma_q2 = self._compute_sigma_q2()
         dim = float(gm.state_dim)
         b_norm_sq = float(np.dot(state, state))
         if not np.isfinite(b_norm_sq):
@@ -348,7 +374,11 @@ class ActiveInferenceEngine(CognitiveModule):
         # defense-in-depth), return the sentinel rather than NaN.
         return float(fe) if np.isfinite(fe) else _FREE_ENERGY_SENTINEL
 
-    def select_action(self, belief: np.ndarray) -> np.ndarray:
+    def select_action(
+        self,
+        belief: np.ndarray,
+        current_observation: np.ndarray | None = None,
+    ) -> np.ndarray:
         """Select action that minimizes expected free energy.
 
         C-batch fix: integrates three previously-disconnected pieces of the
@@ -373,6 +403,25 @@ class ActiveInferenceEngine(CognitiveModule):
 
         Uses ``compute_free_energy`` (pure) so this never mutates
         ``belief_state`` either.
+
+        Round-8 audit THEORY8-1 (CRIT): the Round-7 THEORY7-2 fix passed
+        ``predicted_obs = predicted_state @ emission`` as the observation to
+        ``compute_free_energy(state=predicted_state)``, but CFE recomputes
+        ``state @ emission`` internally — so the NLL term was identically
+        zero for every candidate, silently disabling the pragmatic term of
+        active inference. The fix is to evaluate the EFE against the
+        *current* observation (the one ``process`` just received) so the
+        pragmatic term measures how surprising the current sensory input
+        would be under the predicted next state. When no observation is
+        available (standalone callers, tests), fall back to the prior
+        observation target ``predicted_state @ emission`` so the EFE is
+        still well-defined (degenerates to the Round-7 behaviour — kept for
+        backward compat).
+
+        Round-8 audit PERF8-4: hoist ``belief @ transition`` out of the
+        8-candidate loop — it is invariant across candidates, only the
+        ``+ action`` term changes. Saves 7 redundant O(dim^2) matmuls per
+        ``select_action`` call.
         """
         best_action = None
         best_efep = float("inf")
@@ -383,19 +432,31 @@ class ActiveInferenceEngine(CognitiveModule):
             mean_action = belief @ aw
         else:
             mean_action = np.zeros(self.blanket.active_dim)
+        # Round-8 audit PERF8-4: belief @ transition is invariant across the
+        # 8 candidate actions (only the additive action term changes), so
+        # hoist it out of the loop. Saves 7 redundant O(dim^2) matmuls.
+        base_next_state = self.generative_model.predict_next_state(belief, action=None)
         for _ in range(8):
             # Sample around the blanket-projected mean rather than around 0,
             # so the action selection uses the sensory-active coupling learned
             # by the Markov blanket.
             # Round-3 audit CRIT-1: per-module Generator
             candidate = mean_action + self._rng.standard_normal(self.blanket.active_dim) * 0.5
-            predicted_state = self.generative_model.predict_next_state(belief, candidate)
-            predicted_obs = self.generative_model.predict_observation(predicted_state)
+            # Apply only the action's additive contribution (transition part
+            # already in base_next_state). Pads to state_dim.
+            padded = np.zeros(self.generative_model.state_dim)
+            padded[: len(candidate)] = candidate
+            predicted_state = base_next_state + padded
             # Pragmatic term: expected prediction error under this action.
-            # Round-7 audit THEORY7-2: evaluate the EFE under the predicted
-            # next state (not the current belief) so the action selection
-            # actually reflects the candidate action's predicted outcome.
-            efe = self.compute_free_energy(predicted_obs, state=predicted_state)
+            # Round-8 audit THEORY8-1: evaluate the EFE against the CURRENT
+            # observation (not the predicted observation) so the NLL term is
+            # non-degenerate. If no current observation is available, fall
+            # back to the prior prediction target so the EFE is well-defined.
+            if current_observation is not None:
+                efe_obs = current_observation
+            else:
+                efe_obs = self.generative_model.predict_observation(predicted_state)
+            efe = self.compute_free_energy(efe_obs, state=predicted_state)
             # Homeostatic term: deviation from the target state.
             homeostatic_dev = self.homeostasis.deviation(predicted_state)
             # Epistemic term: information gain = -var(predicted_state).
@@ -451,8 +512,15 @@ class ActiveInferenceEngine(CognitiveModule):
         if free_energy == _FREE_ENERGY_SENTINEL or not np.isfinite(free_energy):
             free_energy = float(pred_error) if np.isfinite(pred_error) else 0.0
         self.free_energy_history.append(free_energy)
-        action = self.select_action(belief)
+        # Round-8 audit THEORY8-1: pass the current observation to
+        # ``select_action`` so the EFE's pragmatic term is non-degenerate
+        # (evaluates the predicted state's surprise against the current
+        # sensory input rather than against its own prediction).
+        action = self.select_action(belief, current_observation=signal.data)
         self.action_history.append(action)
+        # Round-8 audit PERF8-2: invalidate the sigma_q2 cache now that
+        # action_history has a new entry; the next CFE burst will recompute.
+        self._sigma_q2_dirty = True
         correction = self.homeostasis.regulate(belief)
         output = belief + correction
         return Signal(data=output, metadata={"free_energy": free_energy})
@@ -488,20 +556,50 @@ class ActiveInferenceEngine(CognitiveModule):
 
             emission += 2 * lr * outer(state, error)
 
-        where ``lr = 0.001 * prediction_error`` so the step magnitude scales
-        with the error signal (preserving the test contract that
-        ``update(0.0)`` is a no-op). When no inference has been cached yet
-        (``update`` called before any ``process``), the gradient is computed
-        from ``belief_state`` and a zero target observation -- still a
-        well-defined descent step as long as ``belief_state`` is non-zero
-        (guaranteed by the C-batch init fix).
+        Round-8 audit THEORY8-3 (HIGH) + THEORY8-7 (MED): the previous
+        ``lr = 0.001 * prediction_error`` mixed two objectives — the lr
+        scale came from ``prediction_error`` (computed by ``think()`` against
+        ``signal.data`` as the state, i.e. objective A) while the gradient
+        direction came from ``emission_gradient_step`` using the cached
+        ``(_last_state, _last_observation)`` from ``update_belief`` (i.e.
+        objective B). When ``signal.data != belief_state`` (the normal
+        case), the lr and the gradient were for different problems.
+        Additionally, the symmetric ``(-1e6, 1e6)`` clip allowed negative
+        ``prediction_error`` to invert the gradient (gradient ascent).
+
+        The fix: derive ``lr`` from the SAME cached context that drives the
+        gradient direction — specifically, from ``||_last_error||^2 / dim``
+        (the belief-state-relative MSE that ``update_belief`` already
+        computed). The ``prediction_error`` argument becomes a "should-update"
+        gate (no-op when zero or non-finite, matching the test contract).
+        This makes the lr scale consistent with the gradient objective,
+        and removes the negative-lr hazard.
         """
         if not np.isfinite(prediction_error):
             return
-        prediction_error = float(np.clip(prediction_error, -1e6, 1e6))
+        # Round-8 audit THEORY8-7: clip to NON-NEGATIVE — a negative
+        # prediction_error would invert the gradient (ascent, not descent).
+        # MSE is non-negative by construction; this is defense-in-depth.
+        prediction_error = float(np.clip(prediction_error, 0.0, 1e6))
         if prediction_error == 0.0:
             return
+        # Round-8 audit THEORY8-3: derive lr from the cached inference
+        # context (the same one ``emission_gradient_step`` will use) so the
+        # lr scale and the gradient direction are from the SAME objective.
+        # ``_last_error`` is the error ``update_belief`` computed against
+        # ``belief_state`` (objective B), so the lr matches the gradient
+        # direction. Falls back to the argument when no inference has been
+        # cached yet (preserves the pre-process ``update()`` contract).
+        cached_error = self.generative_model._last_error
+        if cached_error is not None and cached_error.size > 0:
+            scale_error = float(np.dot(cached_error, cached_error)) / cached_error.size
+            if not np.isfinite(scale_error) or scale_error <= 0:
+                scale_error = prediction_error
+        else:
+            scale_error = prediction_error
         # Round-3 audit: clamp lr to prevent divergence when prediction_error
         # is near the 1e6 ceiling (lr=1000 would overshoot wildly).
-        lr = float(np.clip(0.001 * prediction_error, -0.1, 0.1))
+        lr = float(np.clip(0.001 * scale_error, 0.0, 0.1))
+        if lr == 0.0:
+            return
         self.generative_model.emission_gradient_step(lr)

@@ -82,6 +82,8 @@ class ActiveInferenceEngine(CognitiveModule):
     homeostasis: HomeostaticController
     action_history: deque[np.ndarray]
     free_energy_history: deque[float]
+    _cached_sigma_q2: float
+    _sigma_q2_dirty: bool
 
     def __init__(
         self,
@@ -91,12 +93,34 @@ class ActiveInferenceEngine(CognitiveModule):
         rng: np.random.Generator | None = None,
     ) -> None: ...
 
-    def compute_free_energy(self, observation: np.ndarray) -> float:
-        """F = KL(q || p) + prediction error (variational free energy)."""
+    def _compute_sigma_q2(self) -> float: ...
+
+    def compute_free_energy(
+        self, observation: np.ndarray, state: np.ndarray | None = None
+    ) -> float:
+        """F = KL(q || p) + prediction error (variational free energy).
+
+        Round-7 audit THEORY7-2: ``state`` lets callers evaluate the free
+        energy at an arbitrary state (e.g. a candidate next-state in
+        ``select_action``) without mutating ``belief_state``. Defaults to
+        ``belief_state`` when omitted so the read-only analytics path is
+        unchanged.
+        """
         ...
 
-    def select_action(self, belief: np.ndarray) -> np.ndarray:
-        """Select action that minimizes expected free energy."""
+    def select_action(
+        self,
+        belief: np.ndarray,
+        current_observation: np.ndarray | None = None,
+    ) -> np.ndarray:
+        """Select action that minimizes expected free energy.
+
+        Round-8 audit THEORY8-1: ``current_observation`` lets the caller pass
+        the CURRENT observation so the EFE's NLL term is non-degenerate
+        (the previous loop passed the PREDICTED observation, which made
+        ``error = 0`` inside ``compute_free_energy`` and silently disabled
+        the active-inference driving signal).
+        """
         ...
 
     def epistemic_foraging(self, belief: np.ndarray) -> Signal | None:

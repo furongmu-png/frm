@@ -287,6 +287,15 @@ class BiologicalSubstrate(CognitiveModule):
         # the previous entry, so ``generate`` (which needs >=2 stored
         # sequences) never actually performed crossover.
         self._cycle_count = 0
+        # Round-8 audit PERF8-3: cache the last ``process`` output so ``predict``
+        # does not re-run ``morphogenetic.develop(n_steps=5)`` every think()
+        # cycle. ``BiologicalSubstrate`` was the only cognitive module without
+        # this cache — every other module (ConsciousnessCore, MathUniverse,
+        # ...) already reused its process output in predict (Fix 12). The
+        # morphogenetic develop step is the heaviest per-cycle op in this
+        # module (a 16x16 grid x 5 diffusion iterations), so the redundant
+        # pass was a real per-cycle cost.
+        self._last_process_output: np.ndarray | None = None
 
     def process(self, signal: Signal) -> Signal:
         # Use a unique per-cycle key so the store accumulates a population of
@@ -304,9 +313,22 @@ class BiologicalSubstrate(CognitiveModule):
         combined = 0.4 * generated.data[: self.dim] + 0.3 * pattern_flat + 0.3 * ca_signal
         if len(combined) < self.dim:
             combined = np.pad(combined, (0, self.dim - len(combined)))
+        # Round-8 audit PERF8-3: cache for ``predict`` to reuse.
+        self._last_process_output = combined[: self.dim]
         return Signal(data=combined[: self.dim], metadata={"source": "biological"})
 
     def predict(self, signal: Signal) -> Prediction:
+        # Round-8 audit PERF8-3: reuse the cached process output when available
+        # so we do not re-run ``morphogenetic.develop(n_steps=5)`` (the
+        # heaviest op in this module) twice per think() cycle. Falls back to
+        # the full perturbed-develop pass when ``predict`` is called
+        # standalone (no prior ``process`` in this cycle), matching the
+        # ConsciousnessCore/MathUniverse pattern (Fix 12).
+        if self._last_process_output is not None:
+            predicted = self._last_process_output
+            var = float(np.var(predicted))
+            uncertainty = var if np.isfinite(var) else 1.0
+            return Prediction(value=predicted[: self.dim], uncertainty=uncertainty)
         # Seed the morphogenetic field development from the incoming signal
         # rather than ignoring it (Fix 17): project the signal onto the grid
         # via an outer product so the prediction actually reflects the input.

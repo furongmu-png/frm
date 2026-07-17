@@ -222,6 +222,44 @@ class ZeroDataModel:
         )
         self.cycle_count = 0
 
+    # Round-8 audit R8-HIGH-3: pickle support. ``ZeroDataModel`` holds two
+    # objects that are NOT picklable:
+    #
+    #   * ``self._lock`` (``threading.RLock``) — locks are tied to a
+    #     process and cannot be sent across a pipe / socket.
+    #   * ``self.parallel_executor._pool`` (``ThreadPoolExecutor``) — its
+    #     worker threads hold ``_thread.lock`` instances.
+    #
+    # Without these hooks, ``pickle.dumps(model)`` raises
+    # ``TypeError: cannot pickle '_thread.lock' object``. Some downstream
+    # paths (e.g. ``multiprocessing`` pools, ``copy.deepcopy`` in tests,
+    # frameworks that ship the model to worker processes) call pickle, so
+    # the model silently fails to integrate. ``__getstate__`` drops the
+    # two unpicklable attrs; ``__setstate__`` rebuilds them from the
+    # recorded seed (``self._seed`` is picklable) so the unpickled model
+    # behaves identically to a freshly-constructed one.
+    #
+    # Note: the model's authoritative persistence path remains
+    # ``ModelSerializer.save/load`` (npz + json), which has its own
+    # validation. These hooks only enable pickle / deepcopy.
+    def __getstate__(self) -> dict:
+        state = self.__dict__.copy()
+        # Drop the unpicklable concurrency primitives. ``_seed`` survives
+        # in the state so ``__setstate__`` can rebuild ``parallel_executor``
+        # with the same n_workers policy (1 for seeded, auto for unseeded).
+        state["_lock"] = None
+        state["parallel_executor"] = None
+        return state
+
+    def __setstate__(self, state: dict) -> None:
+        self.__dict__.update(state)
+        # Rebuild the concurrency primitives that ``__getstate__`` dropped.
+        self._lock = threading.RLock()
+        seed = self._seed
+        self.parallel_executor = ParallelExecutor(
+            n_workers=1 if seed is not None else None
+        )
+
     @property
     def hardware_info(self) -> dict:
         """Report the active hardware backends for diagnostics."""

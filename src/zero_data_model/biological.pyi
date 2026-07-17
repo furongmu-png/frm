@@ -84,6 +84,9 @@ class BiologicalSubstrate(CognitiveModule):
     dna_storage: DNAStorage
     morphogenetic: MorphogeneticField
     automata: CellularAutomata
+    _cycle_count: int
+    # Round-8 audit PERF8-3: cache for ``predict`` to reuse.
+    _last_process_output: np.ndarray | None
 
     def __init__(self, dim: int = 64, rng: np.random.Generator | None = None) -> None: ...
 
