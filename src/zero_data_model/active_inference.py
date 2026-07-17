@@ -240,11 +240,13 @@ class ActiveInferenceEngine(CognitiveModule):
         self.action_history: deque = deque(maxlen=1000)
         self.free_energy_history: deque = deque(maxlen=1000)
 
-    def compute_free_energy(self, observation: np.ndarray) -> float:
+    def compute_free_energy(
+        self, observation: np.ndarray, state: np.ndarray | None = None
+    ) -> float:
         """Pure variational free energy ``F = KL(q || p) + E_q[prediction_error]``.
 
-        Does NOT mutate ``belief_state`` (uses ``infer_state`` which now
-        returns a new state). Safe to call from read-only analytics methods.
+        Does NOT mutate ``belief_state``. Safe to call from read-only analytics
+        methods.
 
         C-batch fix: the previous implementation returned
         ``prediction_error + complexity`` where ``complexity`` was just
@@ -255,7 +257,7 @@ class ActiveInferenceEngine(CognitiveModule):
 
         where ``q(s)`` is the (Gaussian) variational posterior over states and
         ``p(s) = N(0, I)`` is the standard-normal prior. We approximate
-        ``q(s) = N(belief, sigma_q^2 I)`` with ``sigma_q^2`` estimated from
+        ``q(s) = N(state, sigma_q^2 I)`` with ``sigma_q^2`` estimated from
         the variance of recent actions (a proxy for the engine's state
         uncertainty), falling back to ``sigma_q^2 = 1`` when no actions have
         been recorded yet.
@@ -268,7 +270,19 @@ class ActiveInferenceEngine(CognitiveModule):
         term is a strict superset of the old complexity penalty, and existing
         tests that only check energy decreases still hold.
 
-        Round-6 audit API6-3-1: returns ``_FREE_ENERGY_SENTINEL`` (1e6) when
+        Round-7 audit THEORY7-1: BOTH the KL term (``||state||^2``) and the
+        pragmatic term (``||obs - state @ emission||^2``) now use the SAME
+        ``state`` reference, so the two terms share a single posterior
+        ``q(s) = N(state, sigma_q^2 I)``. The Round-6 fix used ``||inferred||^2``
+        (one gradient step ahead) for KL but ``pred_error`` from
+        ``belief_state`` for the NLL — mixing two posteriors.
+
+        Round-7 audit THEORY7-2: accepts an optional ``state`` argument so
+        ``select_action`` can evaluate the EFE under the predicted next state
+        rather than the current belief. When ``state is None``, defaults to
+        ``generative_model.belief_state``.
+
+        Round-7 audit API6-3-1: returns ``_FREE_ENERGY_SENTINEL`` (1e6) when
         ``observation`` is non-finite (NaN/Inf) or when the computed FE is
         non-finite. Callers reading this as a finite float should treat
         ``fe == _FREE_ENERGY_SENTINEL`` as the anomaly signal (used by
@@ -276,25 +290,33 @@ class ActiveInferenceEngine(CognitiveModule):
         (always ``float``), but the value-domain on bad inputs changed in
         Round-5 TEST5-1/TEST5-5.
         """
-        # Round-5 audit TEST5-1: do NOT sanitize the observation at entry.
-        # The Round-4 NEW-2 fix added ``np.nan_to_num`` here, but that
-        # silently turned a NaN observation into a zeros vector, producing a
-        # "normal" small free energy — masking the very anomaly that
-        # ``AnomalyDetector`` (which z-scores this value) needs to see. The
-        # downstream guards below already handle NaN/Inf correctly: a NaN
-        # observation makes ``pred_error`` NaN, which the guard clamps to the
-        # sentinel value, so the free energy spikes and the anomaly is
-        # flagged. ``infer_state`` is pure (does not mutate belief_state), so
-        # letting NaN flow through it is safe.
         observation = np.asarray(observation, dtype=float)
-        inferred, pred_error = self.generative_model.infer_state(observation)
+        gm = self.generative_model
+        # Round-7 audit THEORY7-1: use ``state`` for BOTH terms so they share
+        # the same posterior q(s) = N(state, sigma_q^2 I).
+        state = gm.belief_state if state is None else np.asarray(state, dtype=float)
+        # Round-7 audit TEST5-1/TEST5-3 (regression guard): when the
+        # observation is non-finite, return the EXACT sentinel value
+        # immediately — do NOT compute pred_error + kl_qp, which would yield
+        # ``sentinel + small_kl_term`` (slightly above 1e6) and break the
+        # ``fe == _FREE_ENERGY_SENTINEL`` contract that ``process`` and the
+        # Round-4 regression tests rely on for anomaly detection.
+        if not np.all(np.isfinite(observation)):
+            return _FREE_ENERGY_SENTINEL
+        predicted_obs = gm.predict_observation(state)
+        error = observation[: gm.obs_dim] - predicted_obs[: len(observation)]
+        if len(error) < gm.obs_dim:
+            error = np.pad(error, (0, gm.obs_dim - len(error)))
+        # Round-7 audit PERF7-8: np.dot(error, error) avoids the temporary
+        # ``error ** 2`` array that np.mean(error ** 2) materialises.
+        pred_error = float(np.dot(error, error)) / error.size
         # Guard the result so callers never receive a NaN free energy (which
         # would break argmin in select_action). The sentinel IS the anomaly
         # signal — do not collapse it to a small value.
         if not np.isfinite(pred_error):
-            pred_error = _FREE_ENERGY_SENTINEL
-        if not np.all(np.isfinite(inferred)):
-            inferred = np.nan_to_num(inferred, nan=0.0, posinf=0.0, neginf=0.0)
+            return _FREE_ENERGY_SENTINEL
+        if not np.all(np.isfinite(state)):
+            state = np.nan_to_num(state, nan=0.0, posinf=0.0, neginf=0.0)
         # Estimate variational posterior variance sigma_q^2 from recent
         # action variance (uncertainty about the next state -> uncertainty
         # about the posterior). Fall back to 1.0 when no actions recorded.
@@ -309,11 +331,11 @@ class ActiveInferenceEngine(CognitiveModule):
                 sigma_q2 = 1.0
         else:
             sigma_q2 = 1.0
-        dim = float(self.generative_model.state_dim)
-        b_norm_sq = float(np.dot(inferred, inferred))
+        dim = float(gm.state_dim)
+        b_norm_sq = float(np.dot(state, state))
         if not np.isfinite(b_norm_sq):
             b_norm_sq = _FREE_ENERGY_SENTINEL
-        # KL(N(belief, sigma^2 I) || N(0, I))
+        # KL(N(state, sigma^2 I) || N(0, I))
         kl_qp = 0.5 * (
             b_norm_sq
             + sigma_q2 * dim
@@ -370,7 +392,10 @@ class ActiveInferenceEngine(CognitiveModule):
             predicted_state = self.generative_model.predict_next_state(belief, candidate)
             predicted_obs = self.generative_model.predict_observation(predicted_state)
             # Pragmatic term: expected prediction error under this action.
-            efe = self.compute_free_energy(predicted_obs)
+            # Round-7 audit THEORY7-2: evaluate the EFE under the predicted
+            # next state (not the current belief) so the action selection
+            # actually reflects the candidate action's predicted outcome.
+            efe = self.compute_free_energy(predicted_obs, state=predicted_state)
             # Homeostatic term: deviation from the target state.
             homeostatic_dev = self.homeostasis.deviation(predicted_state)
             # Epistemic term: information gain = -var(predicted_state).
@@ -406,18 +431,20 @@ class ActiveInferenceEngine(CognitiveModule):
         return None
 
     def process(self, signal: Signal) -> Signal:
+        # Round-7 audit THEORY7-3 + PERF7-2: compute the free energy BEFORE
+        # ``update_belief`` mutates ``belief_state``. The Round-6 THEORY6-1
+        # fix called ``compute_free_energy`` AFTER ``update_belief``, so the
+        # recorded FE was the *posterior* surprise (after the belief had
+        # already moved toward the observation), not the *prior* surprise
+        # that ``AnomalyDetector`` (which z-scores this value) expects.
+        # Computing FE first also eliminates the redundant ``infer_state``
+        # call (PERF7-2): ``compute_free_energy`` computes its own
+        # prediction error from ``belief_state @ emission`` — no need for
+        # ``update_belief``'s return value.
+        free_energy = self.compute_free_energy(signal.data)
         # ``update_belief`` mutates the shared belief_state (this is the only
         # place analytics-callable code paths intentionally update the belief).
         belief, pred_error = self.generative_model.update_belief(signal.data)
-        # Round-6 audit THEORY6-1: use the SAME KL-based free-energy formula
-        # as ``compute_free_energy`` so anomaly detection (which consumes
-        # ``free_energy_history``) and action selection (which calls
-        # ``compute_free_energy``) agree on what "free energy" means. The old
-        # ``pred_error + ||belief||^2 * 0.01`` was the legacy magnitude penalty
-        # that the C-batch replaced inside ``compute_free_energy`` — but
-        # ``process`` was never updated, so the two paths reported different
-        # FE values for the same observation.
-        free_energy = self.compute_free_energy(signal.data)
         # ``compute_free_energy`` may return the sentinel when ``signal.data``
         # is non-finite; fall back to the raw prediction error so the history
         # always carries a finite value for downstream AnomalyDetector.

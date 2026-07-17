@@ -296,11 +296,31 @@ class ZeroDataModel:
             integrated = self._integrate(results, uncertainties)
             reflection = self.consciousness.reflect()
 
-            # Per-module prediction error (Fix 16): the original code passed
-            # every module the same mean error; pass each module its own
-            # ``pred.uncertainty`` so update() is meaningfully per-module.
+            # Per-module prediction error (Fix 16 + Round-7 THEORY7-4): the
+            # original code passed every module the same mean error; Fix 16
+            # changed it to ``pred.uncertainty`` — but ``uncertainty`` is the
+            # VARIANCE of the predicted output, not a prediction error.
+            # Modules' ``update()`` methods interpret the argument as a
+            # prediction-error magnitude and scale learning rates by it
+            # (e.g. ``lr = 0.001 * prediction_error``). Passing variance
+            # instead of error means a module with high-variance but accurate
+            # predictions gets a large learning rate, while a module with
+            # low-variance but wrong predictions barely updates — the opposite
+            # of what's intended.
+            # Round-7 fix: compute the ACTUAL per-module prediction error as
+            # the mean-squared distance between the predicted observation and
+            # the input signal. Fall back to ``pred.uncertainty`` if the
+            # prediction is non-finite (defensive — keeps update() callable).
             for module, pred in zip(self.modules, preds, strict=False):
-                module.update(pred.uncertainty)
+                pred_val = np.asarray(pred.value, dtype=float).flatten()
+                sig_slice = signal.data[: len(pred_val)]
+                if len(sig_slice) < len(pred_val):
+                    sig_slice = np.pad(sig_slice, (0, len(pred_val) - len(sig_slice)))
+                diff = pred_val - sig_slice
+                error = float(np.dot(diff, diff)) / max(len(pred_val), 1)
+                if not np.isfinite(error):
+                    error = float(pred.uncertainty)
+                module.update(error)
 
             self.cycle_count += 1
             return Signal(
@@ -393,11 +413,14 @@ class ZeroDataModel:
 
     def find_analogies(self, problem_a: np.ndarray, problem_b: np.ndarray) -> float:
         """Find structural similarity between two problems."""
-        # ``find_isomorphism`` is read-only (no module state mutation), so the
-        # lock is not strictly required; we acquire it for consistency with
-        # the rest of the public API and to avoid surprising re-entry.
+        # Round-7 audit NEW5-10 (Round-2 + Round-7): use the renamed
+        # ``structural_similarity`` instead of the deprecated
+        # ``find_isomorphism`` alias. The method is read-only (no module
+        # state mutation), so the lock is not strictly required; we acquire
+        # it for consistency with the rest of the public API and to avoid
+        # surprising re-entry.
         with self._lock:
-            return self.category_engine.find_isomorphism(problem_a, problem_b)
+            return self.category_engine.structural_similarity(problem_a, problem_b)
 
     def generate_knowledge(self, query: str = "") -> Signal:
         """Self-generate knowledge without external data."""

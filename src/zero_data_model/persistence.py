@@ -15,6 +15,7 @@ then renamed into place so a crash never leaves a partial snapshot.
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import shutil
@@ -319,11 +320,21 @@ class ModelSerializer:
                 "hostile snapshot"
             )
 
-        # Round-6 audit CONCUR6-3: hold the persistence lock across the
-        # config + npz reads so a concurrent ``save`` cannot swap the
-        # directory mid-load (torn read between config and arrays).
-        with _PERSISTENCE_LOCK, open(config_path, encoding="utf-8") as f:
-            config = json.load(f)
+        # Round-6 audit CONCUR6-3 + Round-7 audit CONCUR7-1: hold the
+        # persistence lock across BOTH the config.json read AND the npz
+        # file read so a concurrent ``save``'s ``os.replace(staging, target)``
+        # cannot swap the directory between the two reads (torn read:
+        # old config + new arrays, or vice versa). The Round-6 fix only
+        # locked the config read — the npz read ran unlocked ~130 lines
+        # later, so a save could land in that gap. Now we read the npz
+        # BYTES under the lock (cheap: sequential disk read) and defer
+        # the heavy ``np.load`` + validation + assignment to the unlocked
+        # section below, preserving load concurrency.
+        with _PERSISTENCE_LOCK:
+            with open(config_path, encoding="utf-8") as f:
+                config = json.load(f)
+            with open(npz_path, "rb") as f:
+                npz_bytes = f.read()
 
         # Round-3 audit B-batch: validate the scalar config before acting on
         # any of it. A hostile or corrupt config.json could otherwise request
@@ -457,7 +468,10 @@ class ModelSerializer:
         # Assign cycle_count now that all scalar config validation is done.
         model.cycle_count = cycle_count_raw
 
-        with np.load(npz_path, allow_pickle=False) as data:
+        # Round-7 audit CONCUR7-1: load from the in-memory bytes snapshot
+        # read under the lock above, so the npz content is guaranteed to
+        # be from the same snapshot as config (no torn read).
+        with np.load(io.BytesIO(npz_bytes), allow_pickle=False) as data:
             # Round-4 audit PERSIST-2: build the set of expected npz keys and
             # verify they all exist before accessing them. Without this, a
             # missing key would raise a bare ``KeyError`` deep in the load

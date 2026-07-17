@@ -33,6 +33,13 @@ class ParallelExecutor:
     Uses joblib's process pool when available and the core count is > 1;
     otherwise runs sequentially. Thread-pool fallback is used for light tasks
     to avoid IPC overhead.
+
+    Round-7 audit PERF7-1: the threading backend now uses a PERSISTENT
+    ``ThreadPoolExecutor`` created in ``__init__`` and reused across ``map``
+    calls, instead of spawning and tearing down a fresh pool per call. At
+    ``n_workers=8``, ``ZeroDataModel.think`` calls ``map`` twice per cycle,
+    so the old code paid ~16 thread-spawn+join operations per cycle
+    (~1-2 ms overhead) — eliminated.
     """
 
     def __init__(self, n_workers: int | None = None, backend: str = "threading"):
@@ -47,6 +54,19 @@ class ParallelExecutor:
         self.parallel = self.n_workers > 1 and (
             self.backend == "threading" or _HAS_JOBLIB
         )
+        # Round-7 audit PERF7-1: persistent thread pool, reused across calls.
+        self._pool: ThreadPoolExecutor | None = None
+        if self.parallel and self.backend == "threading":
+            self._pool = ThreadPoolExecutor(max_workers=self.n_workers)
+
+    def shutdown(self) -> None:
+        """Shut down the persistent thread pool (if any)."""
+        if self._pool is not None:
+            self._pool.shutdown(wait=False)
+            self._pool = None
+
+    def __del__(self) -> None:
+        self.shutdown()
 
     def map(self, func: Callable[[T], R], items: Iterable[T]) -> list[R]:
         """Apply ``func`` to each item, preserving input order."""
@@ -57,17 +77,20 @@ class ParallelExecutor:
             return [func(x) for x in items_list]
 
         if self.backend == "threading":
-            # Threads avoid pickling overhead for the GIL-bound numpy work
-            # the cognitive modules perform, and are fastest for this load.
-            with ThreadPoolExecutor(max_workers=self.n_workers) as ex:
-                futures = {ex.submit(func, x): i for i, x in enumerate(items_list)}
-                results: list[R | None] = [None] * len(items_list)
-                for fut in as_completed(futures):
-                    results[futures[fut]] = fut.result()
-                # Preserve None results (Fix 21): cognitive modules may
-                # legitimately return None, and dropping them desyncs the
-                # output order from the input order.
-                return results  # type: ignore[return-value]
+            # Round-7 audit PERF7-1: reuse the persistent pool. If it was
+            # shut down (e.g. after fork), recreate lazily.
+            pool = self._pool
+            if pool is None:
+                pool = ThreadPoolExecutor(max_workers=self.n_workers)
+                self._pool = pool
+            futures = {pool.submit(func, x): i for i, x in enumerate(items_list)}
+            results: list[R | None] = [None] * len(items_list)
+            for fut in as_completed(futures):
+                results[futures[fut]] = fut.result()
+            # Preserve None results (Fix 21): cognitive modules may
+            # legitimately return None, and dropping them desyncs the
+            # output order from the input order.
+            return results  # type: ignore[return-value]
 
         # Process-pool backend via joblib (heavier, true parallelism).
         return list(

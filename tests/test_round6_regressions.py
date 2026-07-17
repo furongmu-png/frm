@@ -78,9 +78,11 @@ def test_theory6_1_process_uses_kl_free_energy_formula(monkeypatch):
     engine.process(Signal(data=obs))
 
     # Monkeypatch compute_free_energy to return a distinctive sentinel.
+    # Round-7 audit THEORY7-2: the signature now accepts an optional ``state``
+    # keyword argument (used by ``select_action``), so the lambda must accept it.
     sentinel = 12345.678
     monkeypatch.setattr(
-        engine, "compute_free_energy", lambda obs: sentinel
+        engine, "compute_free_energy", lambda obs, state=None: sentinel
     )
     engine.process(Signal(data=obs))
     # The last entry in free_energy_history must be the sentinel (or

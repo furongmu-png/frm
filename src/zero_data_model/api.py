@@ -440,6 +440,11 @@ class RecognizeResponse(BaseModel):
 
 class SaveResponse(BaseModel):
     saved: bool
+    # Round-7 audit API7-1-1: the ``name`` field is part of the HTTP
+    # response body (the ``Location`` header carries the same value as a
+    # canonical URI). Declaring it here makes the OpenAPI schema match
+    # the actual 201 response body ``{"saved": True, "name": ...}``.
+    name: str
 
 
 class LoadResponse(BaseModel):
@@ -671,7 +676,21 @@ def create_app() -> FastAPI:
         """Prometheus metrics endpoint (auth-gated, S-HIGH-02)."""
         return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
-    @app.get("/health", response_model=HealthResponse, tags=["health"])
+    @app.get(
+        "/health",
+        response_model=HealthResponse,
+        responses={
+            503: {
+                "description": "Service shutting down",
+                "content": {
+                    "application/json": {
+                        "schema": {"$ref": "#/components/schemas/HealthResponse"}
+                    }
+                },
+            }
+        },
+        tags=["health"],
+    )
     def health() -> Any:
         """Liveness probe. Cheap: no model construction."""
         if _shutting_down:
@@ -680,7 +699,21 @@ def create_app() -> FastAPI:
             )
         return HealthResponse(status="ok")
 
-    @app.get("/ready", response_model=ReadyResponse, tags=["health"])
+    @app.get(
+        "/ready",
+        response_model=ReadyResponse,
+        responses={
+            503: {
+                "description": "Service degraded (model not ready)",
+                "content": {
+                    "application/json": {
+                        "schema": {"$ref": "#/components/schemas/ReadyResponse"}
+                    }
+                },
+            }
+        },
+        tags=["health"],
+    )
     def ready() -> Any:
         """Readiness probe. Constructs the model if needed and reports
         whether it is ready to serve requests."""
@@ -863,6 +896,7 @@ def create_app() -> FastAPI:
     @app.post(
         "/save",
         response_model=SaveResponse,
+        status_code=201,
         tags=["persistence"],
         dependencies=[Depends(verify_api_key)],
     )
@@ -871,6 +905,14 @@ def create_app() -> FastAPI:
 
         Returns 201 Created with a ``Location`` header pointing at the
         canonical resource URI for the snapshot (Q-LOW-13).
+
+        Round-7 audit API7-1-1: the OpenAPI schema now declares
+        ``status_code=201`` and ``SaveResponse{saved, name}`` so the contract
+        matches the actual ``JSONResponse(201, {"saved": True, "name": ...})``
+        returned below. The ``JSONResponse`` is kept (rather than returning a
+        ``SaveResponse`` instance) so the ``Location`` header survives —
+        FastAPI only emits headers when the handler returns an explicit
+        ``Response``.
 
         Round-3 audit: acquire ``model._lock`` while serialising so a
         concurrent ``think()`` cannot mutate arrays in-place (``+=``) while

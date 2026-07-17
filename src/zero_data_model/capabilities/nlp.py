@@ -125,7 +125,10 @@ class SemanticComparator:
         vb = self.encoder.encode(b)
 
         if self.category_engine is not None:
-            cos = self.category_engine.find_isomorphism(va, vb)
+            # Round-7 audit NEW5-10 (Round-2 + Round-7): use the renamed
+            # ``structural_similarity`` instead of the deprecated
+            # ``find_isomorphism`` alias.
+            cos = self.category_engine.structural_similarity(va, vb)
         else:
             na = float(np.linalg.norm(va))
             nb = float(np.linalg.norm(vb))
@@ -196,7 +199,7 @@ class ZeroShotClassifier:
         best_cos = 0.0
         for topic in sorted(self.prototypes.keys()):
             proto = self.prototypes[topic]
-            cos = self.category_engine.find_isomorphism(vec, proto)
+            cos = self.category_engine.structural_similarity(vec, proto)
             score = cos
             if self.active_inference is not None:
                 fe = float(self.active_inference.compute_free_energy(vec - proto))

@@ -288,9 +288,9 @@ class TrendAnalyzer:
             self.math_universe.info_geometry.kl_divergence(first_half, second_half)
         )
 
-        # Structural similarity between the two halves (cosine isomorphism).
+        # Structural similarity between the two halves (cosine similarity).
         isomorphism_score = float(
-            self.category_engine.find_isomorphism(first_half, second_half)
+            self.category_engine.structural_similarity(first_half, second_half)
         )
 
         return {
