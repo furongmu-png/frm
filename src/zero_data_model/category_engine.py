@@ -310,7 +310,16 @@ class CategoryTheoryEngine(CognitiveModule):
     def update(self, prediction_error: float) -> None:
         if not np.isfinite(prediction_error):
             return
-        prediction_error = float(np.clip(prediction_error, -1e6, 1e6))
+        # Round-8 audit THEORY8-clip: clip to [0, 1e6] (NON-NEGATIVE) to
+        # match ``active_inference.update`` and ``biological.update``. The
+        # previous ``[-1e6, 1e6]`` clip allowed negative values to flip
+        # the noise sign -- so a module could "learn" in the OPPOSITE
+        # direction from what the prediction error signals (gradient
+        # ascent instead of descent). ``biological.update`` uses
+        # ``tanh(prediction_error * 0.001)`` (sign-preserving but bounded);
+        # ``active_inference.update`` clips to ``[0, 1e6]``. We pick the
+        # latter for consistency with the rest of the cognitive stack.
+        prediction_error = float(np.clip(prediction_error, 0.0, 1e6))
         # Round-3 audit CRIT-1: per-module Generator
         noise = self._rng.standard_normal((self.dim, self.dim)) * prediction_error * 0.001
         self.topos.classifier += noise

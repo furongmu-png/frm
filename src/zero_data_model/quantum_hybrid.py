@@ -263,7 +263,13 @@ class QuantumClassicalHybrid(CognitiveModule):
     def update(self, prediction_error: float) -> None:
         if not np.isfinite(prediction_error):
             return
-        prediction_error = float(np.clip(prediction_error, -1e6, 1e6))
+        # Round-8 audit THEORY8-clip: clip to [0, 1e6] (NON-NEGATIVE) to
+        # match ``active_inference.update`` and ``category_engine.update``.
+        # The previous ``[-1e6, 1e6]`` clip allowed negative values to
+        # flip the noise sign -- so the module could "learn" in the
+        # OPPOSITE direction from what the prediction error signals
+        # (gradient ascent instead of descent).
+        prediction_error = float(np.clip(prediction_error, 0.0, 1e6))
         # Round-3 audit CRIT-1: per-module Generator
         noise = self._rng.standard_normal(self.classical_weights.shape) * prediction_error * 0.001
         self.classical_weights += noise

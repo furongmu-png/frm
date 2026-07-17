@@ -393,8 +393,26 @@ class ActiveInferenceEngine(CognitiveModule):
             - dim
             - dim * float(np.log(sigma_q2))
         )
-        # Pragmatic term: scaled prediction error (negative log-likelihood proxy).
-        fe = pred_error + kl_qp
+        # Round-8 audit THEORY8-2: under the variational posterior
+        # ``q(s) = N(state, sigma_q^2 I)``, the expected negative
+        # log-likelihood (pragmatic term) is
+        #   E_q[||obs - s @ emission||^2] = ||obs - state @ emission||^2
+        #                                  + sigma_q^2 * ||emission||_F^2
+        # The previous code included only the first term (``pred_error``),
+        # so when ``sigma_q2`` was large (high posterior uncertainty) the
+        # KL term grew but the pragmatic term did NOT -- the posterior
+        # variance had no effect on the pragmatic surprise, biasing
+        # ``select_action`` toward over-confident actions. Adding the
+        # missing ``sigma_q2 * ||emission||_F^2`` term makes the KL and
+        # pragmatic terms consistent: higher posterior uncertainty now
+        # RAISES the expected surprise, so ``select_action`` is rewarded
+        # for visiting well-resolved states (low sigma_q2) -- the
+        # epistemic-drive behaviour active inference predicts.
+        emission_fro_sq = float(
+            np.dot(gm.emission.ravel(), gm.emission.ravel())
+        )
+        pragmatic = pred_error + sigma_q2 * emission_fro_sq
+        fe = pragmatic + kl_qp
         # Final guard: if anything still escaped (shouldn't happen, but
         # defense-in-depth), return the sentinel rather than NaN.
         return float(fe) if np.isfinite(fe) else _FREE_ENERGY_SENTINEL
@@ -461,6 +479,22 @@ class ActiveInferenceEngine(CognitiveModule):
         # 8 candidate actions (only the additive action term changes), so
         # hoist it out of the loop. Saves 7 redundant O(dim^2) matmuls.
         base_next_state = self.generative_model.predict_next_state(belief, action=None)
+        # Round-8 audit THEORY8-12: the epistemic bonus must measure the
+        # spread of predicted states ACROSS the 8 candidate actions (i.e.
+        # how much each candidate resolves the uncertainty about which
+        # action to take), NOT the variance across the COMPONENTS of one
+        # candidate's predicted-state vector. The previous
+        # ``np.var(predicted_state)`` computed the within-candidate
+        # dimension-spread -- dominated by the magnitude profile of the
+        # state vector, not by the action's information value. We collect
+        # all candidate (action, predicted_state, efe, homeostatic_dev)
+        # tuples first, then compute the cross-candidate variance per
+        # state-dimension and assign each candidate its share of the
+        # epistemic bonus.
+        candidates: list[np.ndarray] = []
+        predicted_states: list[np.ndarray] = []
+        efes: list[float] = []
+        homeostatic_devs: list[float] = []
         for _ in range(8):
             # Sample around the blanket-projected mean rather than around 0,
             # so the action selection uses the sensory-active coupling learned
@@ -484,14 +518,32 @@ class ActiveInferenceEngine(CognitiveModule):
             efe = self.compute_free_energy(efe_obs, state=predicted_state)
             # Homeostatic term: deviation from the target state.
             homeostatic_dev = self.homeostasis.deviation(predicted_state)
-            # Epistemic term: information gain = -var(predicted_state).
-            # High variance -> high information potential -> lower EFE.
-            # Scaled by a small lambda so the pragmatic term still dominates.
-            epistemic_bonus = -0.05 * float(np.var(predicted_state))
-            total = efe + 0.1 * homeostatic_dev + epistemic_bonus
+            candidates.append(candidate)
+            predicted_states.append(predicted_state)
+            efes.append(efe)
+            homeostatic_devs.append(homeostatic_dev)
+        # THEORY8-12: cross-candidate variance per state dimension. Each
+        # candidate's epistemic bonus is proportional to how much ITS
+        # predicted state contributes to the cross-candidate spread --
+        # candidates that move the predicted state away from the mean of
+        # the other candidates have higher information potential.
+        predicted_stack = np.stack(predicted_states)  # (8, state_dim)
+        cross_candidate_var = np.var(predicted_stack, axis=0)  # (state_dim,)
+        candidate_mean = np.mean(predicted_stack, axis=0)  # (state_dim,)
+        for i in range(8):
+            # Distance of this candidate's predicted state from the
+            # cross-candidate mean, weighted by the per-dimension variance.
+            # Candidates in high-variance dimensions that are far from the
+            # mean have higher information value.
+            deviation = predicted_states[i] - candidate_mean
+            epistemic_bonus = -0.05 * float(
+                np.dot(deviation * deviation, cross_candidate_var)
+                / (np.sum(cross_candidate_var) + 1e-12)
+            )
+            total = efes[i] + 0.1 * homeostatic_devs[i] + epistemic_bonus
             if total < best_efep:
                 best_efep = total
-                best_action = candidate
+                best_action = candidates[i]
         return best_action if best_action is not None else np.zeros(self.blanket.active_dim)
 
     def epistemic_foraging(self, belief: np.ndarray) -> Signal | None:

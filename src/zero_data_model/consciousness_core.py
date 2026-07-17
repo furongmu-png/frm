@@ -90,14 +90,32 @@ class GlobalWorkspace:
         self.capacity = capacity
         self.buffer: deque = deque(maxlen=capacity)
         self.attention_weights = np.ones(dim) / dim
+        # Round-8 audit PERF8-8a: running sum of the buffered Signal.data
+        # arrays. ``np.mean([s.data for s in self.buffer], axis=0)`` on every
+        # ``broadcast`` call materialised a Python list of up to ``capacity``
+        # arrays and stacked them into a (capacity, dim) temporary -- O(cap*dim)
+        # per cycle plus the list-build overhead. The running sum is updated
+        # on each append (and on each implicit eviction from the deque's
+        # maxlen) so the integrated output is just ``self._sum / len(buffer)``.
+        # The evicted value is captured BEFORE the append via a peek at the
+        # leftmost deque entry (which the deque is about to drop).
+        self._sum = np.zeros(dim)
 
     def broadcast(self, signal: Signal) -> Signal:
         attended = signal.data * self.attention_weights[: len(signal.data)]
         attended = attended / (np.linalg.norm(attended) + 1e-8)
+        # PERF8-8a: if the deque is at capacity, the append will evict the
+        # oldest entry -- subtract it from the running sum FIRST so the sum
+        # stays consistent. ``deque[maxlen=N]`` drops the leftmost item
+        # silently on append, so we must peek at ``buffer[0]`` before the
+        # append to know what is being evicted.
+        if len(self.buffer) == self.buffer.maxlen:
+            self._sum -= self.buffer[0].data
         self.buffer.append(Signal(data=attended, metadata=signal.metadata))
+        self._sum += attended
         # ``deque(maxlen=capacity)`` evicts the oldest entry automatically, so
         # the manual ``pop(0)`` (O(n) shift) is gone (P-HIGH-03).
-        integrated = np.mean([s.data for s in self.buffer], axis=0)
+        integrated = self._sum / len(self.buffer)
         return Signal(data=integrated, metadata={"source": "global_workspace"})
 
     def update_attention(self, relevance: np.ndarray) -> None:

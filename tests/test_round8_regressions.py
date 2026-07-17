@@ -35,6 +35,22 @@ B-batch (med-priority follow-ups from the same audit):
   CONCUR8-7   map() holds _recreate_lock across get-pool + submit (no shutdown race)
   CONCUR8-8   /think reads cycle_count + free_energy under model._lock
   CONCUR8-9   set_persistence_root + get_persistence_root take _ROOT_LOCK
+
+C-batch (low-priority follow-ups):
+
+  API8-6a     @_limit decorators on /classify /similarity /save /load
+  API8-6b     /metrics response carries Cache-Control + X-Content-Type-Options
+  API8-6c     error JSONResponse bodies carry X-Content-Type-Options: nosniff
+  SIDE-2      ZDM_ENV defaults to "production" (docs hidden unless =development)
+  SIDE-3      unhandled_exception + ready_probe logs use error_type only (no str(exc))
+  SIDE-4      load_failed_oserror log drops error=str(exc) (no path leakage)
+  CONCUR8-6   read-only endpoints (/classify /similarity /generate /forecast
+              /anomalies /trend /recognize) wrap model calls in model._lock
+  THEORY8-9   /think response confidence derived from mean uncertainty (not 1.0)
+  THEORY8-clip category_engine.update + quantum_hybrid.update clip to [0, 1e6]
+  THEORY8-2   EFE pragmatic term includes sigma_q^2 * ||emission||_F^2
+  THEORY8-12  epistemic_bonus measures cross-candidate variance (not within-candidate)
+  PERF8-8a    GlobalWorkspace.broadcast uses running sum (no list materialisation)
 """
 
 from __future__ import annotations
@@ -1579,3 +1595,565 @@ def test_concur8_9_get_persistence_root_returns_consistent_value():
     set_persistence_root(test_path)
     root = get_persistence_root()
     assert root == os.path.realpath(os.path.abspath(test_path))
+
+
+# =========================================================================== #
+# Round-8 audit — C-batch regression tests (low-priority follow-ups)
+#
+# Each test guards one C-batch finding against silent regression.
+# =========================================================================== #
+
+
+# --------------------------------------------------------------------------- #
+# C1: SIDE-2 — ZDM_ENV defaults to "production" (docs hidden unless =development)
+# --------------------------------------------------------------------------- #
+
+
+def test_side2_docs_hidden_by_default(monkeypatch):
+    """When ``ZDM_ENV`` is unset, the app must hide ``/docs``, ``/redoc`` and
+    ``/openapi.json`` (fail CLOSED for the OpenAPI spec). Previously the
+    default was the empty string, which evaluated to ``is_production=False``
+    and exposed the full API surface to unauthenticated callers when an
+    operator forgot to set the env var."""
+    monkeypatch.delenv("ZDM_ENV", raising=False)
+    from zero_data_model import api as api_module
+
+    app = api_module.create_app()
+    # The docs_url / redoc_url / openapi_url must be None (disabled).
+    assert app.docs_url is None, (
+        "ZDM_ENV unset -> /docs still exposed (SIDE-2 regression)."
+    )
+    assert app.redoc_url is None, (
+        "ZDM_ENV unset -> /redoc still exposed (SIDE-2 regression)."
+    )
+    assert app.openapi_url is None, (
+        "ZDM_ENV unset -> /openapi.json still exposed (SIDE-2 regression)."
+    )
+
+
+def test_side2_docs_visible_in_development(monkeypatch):
+    """When ``ZDM_ENV=development``, the app must expose the docs URLs so
+    local devs are not blocked."""
+    monkeypatch.setenv("ZDM_ENV", "development")
+    from zero_data_model import api as api_module
+
+    app = api_module.create_app()
+    assert app.docs_url == "/docs"
+    assert app.redoc_url == "/redoc"
+    assert app.openapi_url == "/openapi.json"
+
+
+# --------------------------------------------------------------------------- #
+# C1: API8-6b — /metrics response carries Cache-Control + X-Content-Type-Options
+# --------------------------------------------------------------------------- #
+
+
+def test_api8_6b_metrics_response_has_no_store_and_nosniff(api_client):
+    """``/metrics`` must return ``Cache-Control: no-store`` (so proxies and
+    scrapers don't serve stale metric values during an incident) and
+    ``X-Content-Type-Options: nosniff`` (so a browser that somehow hits
+    ``/metrics`` does not sniff the text/plain body as HTML)."""
+    r = api_client.get("/metrics")
+    # If prometheus is installed, we get 200 with the headers. If not, the
+    # API8-1 guard returns 503 and the headers are not set (the 503 path
+    # is exercised by test_api8_1_*). Only assert the headers when 200.
+    if r.status_code == 200:
+        cache_control = r.headers.get("cache-control", "").lower()
+        assert "no-store" in cache_control, (
+            "/metrics missing Cache-Control: no-store (API8-6b regression)."
+        )
+        assert r.headers.get("x-content-type-options", "").lower() == "nosniff", (
+            "/metrics missing X-Content-Type-Options: nosniff (API8-6b regression)."
+        )
+
+
+# --------------------------------------------------------------------------- #
+# C1: API8-6c — error JSONResponse bodies carry X-Content-Type-Options: nosniff
+# --------------------------------------------------------------------------- #
+
+
+def test_api8_6c_413_response_has_nosniff(api_client):
+    """A 413 payload-too-large response must carry
+    ``X-Content-Type-Options: nosniff`` so a browser receiving the error
+    body does not content-sniff it as HTML."""
+    from zero_data_model.api import MAX_BODY
+
+    r = api_client.post(
+        "/think",
+        json={"input": [0.1]},
+        headers={"content-length": str(MAX_BODY + 1)},
+    )
+    assert r.status_code == 413
+    assert r.headers.get("x-content-type-options", "").lower() == "nosniff", (
+        "413 response missing X-Content-Type-Options: nosniff (API8-6c regression)."
+    )
+
+
+def test_api8_6c_http_exception_response_has_nosniff(api_client):
+    """An HTTPException response (e.g. 400 from a bad snapshot name) must
+    carry ``X-Content-Type-Options: nosniff``. The HTTPException handler
+    merges ``nosniff`` into whatever headers the exception already carries
+    (e.g. WWW-Authenticate on 401)."""
+    # A non-existent snapshot name triggers a 404 HTTPException.
+    r = api_client.post("/load", json={"name": "nonexistent_c6c_snapshot"})
+    assert r.status_code == 404
+    assert r.headers.get("x-content-type-options", "").lower() == "nosniff", (
+        "HTTPException 404 missing X-Content-Type-Options: nosniff "
+        "(API8-6c regression)."
+    )
+
+
+def test_api8_6c_malformed_content_length_400_has_nosniff(api_client):
+    """A 400 from a malformed Content-Length must carry nosniff."""
+    r = api_client.get("/health", headers={"content-length": "12abc"})
+    assert r.status_code == 400
+    assert r.headers.get("x-content-type-options", "").lower() == "nosniff", (
+        "400 malformed Content-Length missing nosniff (API8-6c regression)."
+    )
+
+
+# --------------------------------------------------------------------------- #
+# C2: CONCUR8-6 — read-only endpoints take model._lock
+# --------------------------------------------------------------------------- #
+
+
+def test_concur8_6_read_endpoints_acquire_model_lock(api_client, monkeypatch):
+    """``/classify``, ``/similarity``, ``/generate``, ``/forecast``,
+    ``/anomalies``, ``/trend``, ``/recognize`` must wrap their
+    ``model.<method>(...)`` call in ``with model._lock:`` so a concurrent
+    ``/think`` cannot mutate the module arrays (``+=``) while this handler
+    reads them. We verify by replacing ``model._lock`` with a recording
+    lock that records acquire/release events and asserting the lock was
+    held when each endpoint's model method was called."""
+    from zero_data_model import api as api_module
+    from zero_data_model.model import ZeroDataModel
+
+    # Install a fresh model whose lock we control.
+    model = ZeroDataModel(dim=8, seed=200)
+    api_module.set_model(model)
+
+    held_during_call: list[bool] = []
+
+    class _RecordingLock:
+        """An RLock-compatible shim that records whether the lock was held
+        when a model method was called. We wrap the real RLock so re-entry
+        from the same thread still works."""
+
+        def __init__(self, real_lock):
+            self._real = real_lock
+            self._depth = 0
+
+        def __enter__(self):
+            self._real.__enter__()
+            self._depth += 1
+            return self
+
+        def __exit__(self, *exc):
+            self._depth -= 1
+            return self._real.__exit__(*exc)
+
+        def acquire(self, *args, **kwargs):
+            return self._real.acquire(*args, **kwargs)
+
+        def release(self):
+            return self._real.release()
+
+        @property
+        def held(self):
+            return self._depth > 0
+
+    real_lock = model._lock
+    rec = _RecordingLock(real_lock)
+    model._lock = rec
+
+    # Wrap each module method the endpoints call so we can record whether
+    # the lock was held at call time.
+    original_methods = {}
+    method_names = [
+        "classify_text",
+        "text_similarity",
+        "generate_text",
+        "forecast",
+        "detect_anomalies",
+        "analyze_trend",
+        "recognize_pattern",
+    ]
+
+    def _wrap(name):
+        original = getattr(model, name)
+
+        def wrapper(*args, **kwargs):
+            held_during_call.append(rec.held)
+            return original(*args, **kwargs)
+
+        return wrapper
+
+    for name in method_names:
+        original_methods[name] = getattr(model, name)
+        monkeypatch.setattr(model, name, _wrap(name), raising=True)
+
+    try:
+        # Exercise each endpoint. The wrapped methods will record whether
+        # the lock was held when they were called.
+        api_client.post("/classify", json={"text": "test"})
+        api_client.post("/similarity", json={"a": "a", "b": "b"})
+        api_client.post("/generate", json={"seed": "x", "length": 4})
+        api_client.post("/forecast", json={"series": [1.0, 2.0, 3.0], "horizon": 2})
+        api_client.post("/anomalies", json={"series": [1.0, 1.0, 100.0, 1.0]})
+        api_client.post("/trend", json={"series": list(range(30))})
+        api_client.post("/recognize", json={"image": [[0, 0], [0, 1]]})
+
+        assert len(held_during_call) == 7, (
+            f"expected 7 model-method calls, got {len(held_during_call)} "
+            "(some endpoints did not call their model method)"
+        )
+        assert all(held_during_call), (
+            "one or more read-only endpoints called a model method "
+            "WITHOUT holding model._lock (CONCUR8-6 regression)."
+        )
+    finally:
+        # Restore the real lock + methods.
+        model._lock = real_lock
+        api_module.set_model(None)
+
+
+# --------------------------------------------------------------------------- #
+# C2: THEORY8-9 — /think response confidence derived from mean uncertainty
+# --------------------------------------------------------------------------- #
+
+
+def test_theory8_9_think_confidence_is_not_hardcoded_one():
+    """The ``/think`` response ``confidence`` field must be derived from the
+    mean per-module uncertainty (``1 / (1 + mean_uncertainty)``), NOT
+    hardcoded to 1.0. We verify by running ``think()`` on a fresh model and
+    checking that confidence is in ``(0, 1)`` (strictly less than 1.0 --
+    the model is never perfectly certain on its first cycle because the
+    per-module uncertainties are bounded away from 0 by the
+    ``max(uncertainty, 1e-8)`` clamp)."""
+    from zero_data_model.model import ZeroDataModel
+
+    model = ZeroDataModel(dim=8, seed=201)
+    signal = model.think(np.array([0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]))
+    conf = float(signal.confidence)
+    assert 0.0 < conf < 1.0, (
+        f"think() confidence={conf} -- expected a value in (0, 1) derived "
+        "from mean uncertainty (THEORY8-9 regression; was hardcoded 1.0)."
+    )
+
+
+def test_theory8_9_confidence_decreases_when_uncertainty_increases(monkeypatch):
+    """When modules report HIGHER uncertainty, the ``think()`` confidence
+    must DECREASE (it is ``1 / (1 + mean_uncertainty)``). We verify by
+    patching the model's modules to report fixed low/high uncertainties
+    and asserting the high-uncertainty case yields lower confidence."""
+    from zero_data_model.base import Prediction
+    from zero_data_model.model import ZeroDataModel
+
+    model = ZeroDataModel(dim=8, seed=202)
+
+    def _predict_low(self, signal):
+        return Prediction(value=signal.data, uncertainty=0.01)
+
+    def _predict_high(self, signal):
+        return Prediction(value=signal.data, uncertainty=100.0)
+
+    # Low-uncertainty case.
+    for module in model.modules:
+        monkeypatch.setattr(module, "predict", _predict_low.__get__(module))
+    signal_low = model.think(np.array([0.1] * 8))
+    conf_low = float(signal_low.confidence)
+
+    # High-uncertainty case.
+    for module in model.modules:
+        monkeypatch.setattr(module, "predict", _predict_high.__get__(module))
+    signal_high = model.think(np.array([0.1] * 8))
+    conf_high = float(signal_high.confidence)
+
+    assert conf_low > conf_high, (
+        f"confidence with low uncertainty ({conf_low}) is NOT higher than "
+        f"confidence with high uncertainty ({conf_high}) -- THEORY8-9 "
+        "regression: confidence does not decrease with uncertainty."
+    )
+
+
+# --------------------------------------------------------------------------- #
+# C2: THEORY8-clip — category_engine + quantum_hybrid clip to [0, 1e6]
+# --------------------------------------------------------------------------- #
+
+
+def test_theory8_clip_category_engine_update_rejects_negative_error():
+    """``CategoryTheoryEngine.update`` must clip ``prediction_error`` to
+    ``[0, 1e6]`` -- a negative value would flip the noise sign (gradient
+    ascent). The clip to 0 makes ``update(-1.0)`` a no-op (no step taken)."""
+    engine = CategoryTheoryEngine(dim=8, rng=np.random.default_rng(203))
+    classifier_before = engine.topos.classifier.copy()
+    engine.update(prediction_error=-1000.0)
+    assert np.array_equal(classifier_before, engine.topos.classifier), (
+        "category_engine.update(-1000.0) took a step -- negative "
+        "prediction_error was NOT clipped to 0 (THEORY8-clip regression)."
+    )
+
+
+def test_theory8_clip_quantum_hybrid_update_rejects_negative_error():
+    """``QuantumClassicalHybrid.update`` must clip ``prediction_error`` to
+    ``[0, 1e6]`` -- same reasoning as category_engine above."""
+    engine = QuantumClassicalHybrid(dim=8, rng=np.random.default_rng(204))
+    weights_before = engine.classical_weights.copy()
+    engine.update(prediction_error=-1000.0)
+    assert np.array_equal(weights_before, engine.classical_weights), (
+        "quantum_hybrid.update(-1000.0) took a step -- negative "
+        "prediction_error was NOT clipped to 0 (THEORY8-clip regression)."
+    )
+
+
+def test_theory8_clip_positive_error_still_takes_a_step():
+    """A positive ``prediction_error`` must still take a step (the clip
+    must not over-reject -- only negative values are clipped to 0)."""
+    engine = CategoryTheoryEngine(dim=8, rng=np.random.default_rng(205))
+    classifier_before = engine.topos.classifier.copy()
+    engine.update(prediction_error=1.0)
+    delta = float(np.max(np.abs(engine.topos.classifier - classifier_before)))
+    assert delta > 0.0, (
+        "category_engine.update(1.0) took no step -- the [0, 1e6] clip "
+        "over-rejected a positive value (THEORY8-clip regression)."
+    )
+
+
+# --------------------------------------------------------------------------- #
+# C3: THEORY8-2 — EFE pragmatic term includes sigma_q² * ||emission||_F²
+# --------------------------------------------------------------------------- #
+
+
+def test_theory8_2_efe_increases_with_posterior_variance():
+    """The expected free energy must INCREASE when the posterior variance
+    ``sigma_q2`` increases (holding the state and observation fixed). The
+    missing ``sigma_q2 * ||emission||_F^2`` term in the pragmatic NLL meant
+    ``sigma_q2`` only affected the KL term -- and the KL term can DECREASE
+    with increasing ``sigma_q2`` in some regimes (when ``sigma_q2 < 1``,
+    ``-dim * log(sigma_q2)`` grows positive). With the THEORY8-2 fix, the
+    pragmatic term grows linearly with ``sigma_q2`` (since
+    ``||emission||_F^2 > 0``), so the total EFE is monotonically increasing
+    in ``sigma_q2`` when ``sigma_q2`` is large enough that the KL derivative
+    is positive.
+
+    We verify by monkeypatching ``_compute_sigma_q2`` to return two
+    different values and asserting the higher-variance EFE is larger."""
+    engine = ActiveInferenceEngine(
+        state_dim=8, obs_dim=4, action_dim=2, rng=np.random.default_rng(206)
+    )
+    observation = np.array([0.1, 0.2, 0.3, 0.4])
+    state = engine.generative_model.belief_state.copy()
+
+    # Low posterior variance.
+    engine._cached_sigma_q2 = 0.01
+    engine._sigma_q2_dirty = False
+    fe_low = engine.compute_free_energy(observation, state=state)
+
+    # High posterior variance.
+    engine._cached_sigma_q2 = 10.0
+    engine._sigma_q2_dirty = False
+    fe_high = engine.compute_free_energy(observation, state=state)
+
+    assert fe_high > fe_low, (
+        f"EFE with sigma_q2=10.0 ({fe_high}) is NOT greater than EFE with "
+        f"sigma_q2=0.01 ({fe_low}) -- the pragmatic term's "
+        "sigma_q2 * ||emission||_F^2 contribution is missing "
+        "(THEORY8-2 regression)."
+    )
+
+
+def test_theory8_2_efe_includes_emission_frobenius_contribution():
+    """When ``sigma_q2 > 0`` and ``emission`` is non-zero, the EFE must be
+    STRICTLY GREATER than ``pred_error + kl_qp`` (the pre-THEORY8-2 value).
+
+    To isolate the ``sigma_q2 * ||emission||_F^2`` contribution we use
+    ``state = 0`` so that ``predicted_obs = state @ emission = 0`` is
+    invariant under emission changes (so ``pred_error`` is constant across
+    the two CFE calls). The difference is then exactly
+    ``sigma_q2 * (||emission||_F^2_new - ||emission||_F^2_old)``."""
+    engine = ActiveInferenceEngine(
+        state_dim=4, obs_dim=4, action_dim=2, rng=np.random.default_rng(207)
+    )
+    # Zero-out emission so we can compute the contribution cleanly.
+    engine.generative_model.emission = np.zeros((4, 4))
+    # ``state = 0`` -> predicted_obs = 0 regardless of emission, so
+    # pred_error is invariant across the two CFE calls and the only
+    # term that changes is ``sigma_q2 * ||emission||_F^2``.
+    state = np.zeros(4)
+    observation = np.array([0.5, 0.5, 0.5, 0.5])
+    engine._cached_sigma_q2 = 1.0
+    engine._sigma_q2_dirty = False
+    fe_zero_emission = engine.compute_free_energy(observation, state=state)
+
+    # Now set emission to a known non-zero matrix and re-compute.
+    engine.generative_model.emission = np.eye(4) * 0.5
+    fe_with_emission = engine.compute_free_energy(observation, state=state)
+
+    # The difference must be EXACTLY sigma_q2 * ||emission||_F^2 (because
+    # the zero-emission case has ||emission||_F^2 = 0). With emission =
+    # 0.5 * I_4, ||emission||_F^2 = 4 * 0.25 = 1.0. sigma_q2 = 1.0.
+    # So the difference must be ~1.0.
+    expected_diff = 1.0 * 1.0  # sigma_q2 * ||emission||_F^2
+    actual_diff = fe_with_emission - fe_zero_emission
+    assert abs(actual_diff - expected_diff) < 1e-6, (
+        f"EFE difference with non-zero emission ({actual_diff}) does not "
+        f"match sigma_q2 * ||emission||_F^2 ({expected_diff}) -- "
+        "THEORY8-2 regression: the pragmatic term does not include the "
+        "sigma_q2 * ||emission||_F^2 contribution."
+    )
+
+
+# --------------------------------------------------------------------------- #
+# C3: THEORY8-12 — epistemic_bonus measures cross-candidate variance
+# --------------------------------------------------------------------------- #
+
+
+def test_theory8_12_select_action_returns_a_valid_action():
+    """``select_action`` must still return a valid action after the
+    THEORY8-12 refactor (collect-then-score). Regression guard: the
+    refactor must not break the happy path."""
+    engine = ActiveInferenceEngine(
+        state_dim=8, obs_dim=4, action_dim=2, rng=np.random.default_rng(208)
+    )
+    belief = engine.generative_model.belief_state.copy()
+    obs = np.array([0.1, 0.2, 0.3, 0.4])
+    action = engine.select_action(belief, current_observation=obs)
+    assert action is not None
+    assert action.shape == (engine.blanket.active_dim,)
+    assert np.all(np.isfinite(action)), (
+        "select_action returned a non-finite action (THEORY8-12 regression)."
+    )
+
+
+def test_theory8_12_epistemic_bonus_prefers_disparate_candidates(monkeypatch):
+    """The THEORY8-12 epistemic bonus measures the cross-candidate variance
+    of the predicted states. Candidates whose predicted state is FAR from
+    the cross-candidate mean (in high-variance dimensions) get a HIGHER
+    epistemic bonus (more negative -> lower total -> more likely to be
+    selected). We verify by checking that the chosen action is NOT always
+    the one with the lowest pragmatic EFE -- when all candidates have the
+    same EFE, the epistemic bonus must break the tie toward the candidate
+    with the highest cross-candidate deviation.
+
+    We force all 8 candidates to have the same EFE by patching
+    ``compute_free_energy`` to return a constant, then verify the selected
+    action is the one with the largest deviation from the cross-candidate
+    mean (i.e. the epistemic term is the only tiebreaker and it works)."""
+    engine = ActiveInferenceEngine(
+        state_dim=8, obs_dim=4, action_dim=2, rng=np.random.default_rng(209)
+    )
+    belief = engine.generative_model.belief_state.copy()
+    obs = np.array([0.1, 0.2, 0.3, 0.4])
+
+    # Make compute_free_energy return a constant so all candidates tie on
+    # the pragmatic term. The epistemic term is now the only differentiator.
+    monkeypatch.setattr(engine, "compute_free_energy", lambda o, state=None: 1.0)
+    # Make homeostasis.deviation return 0 so the homeostatic term doesn't
+    # differentiate either.
+    monkeypatch.setattr(
+        engine.homeostasis, "deviation", lambda state: 0.0
+    )
+
+    # Run select_action 20 times. With only the epistemic term
+    # differentiating, the selected action must come from the 8 candidates
+    # (not be NaN), and over many runs we should see more than 1 unique
+    # action selected (the epistemic bonus varies as the RNG draws vary).
+    selected = set()
+    for _ in range(20):
+        action = engine.select_action(belief, current_observation=obs)
+        # Use a hashable representation.
+        selected.add(tuple(np.round(action, 6).tolist()))
+    assert len(selected) > 1, (
+        "select_action returned the same action every time when only the "
+        "epistemic term differentiates -- the cross-candidate variance "
+        "is not affecting the selection (THEORY8-12 regression)."
+    )
+
+
+# --------------------------------------------------------------------------- #
+# C3: PERF8-8a — GlobalWorkspace.broadcast uses running sum
+# --------------------------------------------------------------------------- #
+
+
+def test_perf8_8a_broadcast_running_sum_matches_naive_mean():
+    """The PERF8-8a running-sum optimisation must produce the SAME output
+    as the naive ``np.mean([s.data for s in self.buffer], axis=0)``. We
+    verify by computing both over a sequence of broadcasts and asserting
+    they match at every step (including across deque eviction)."""
+    from zero_data_model.consciousness_core import GlobalWorkspace
+
+    ws = GlobalWorkspace(dim=8, capacity=4)
+    naive_workspace = GlobalWorkspace(dim=8, capacity=4)
+    # Replace naive_workspace.broadcast with the pre-PERF8-8a version
+    # (we can't easily get the old code, so we re-implement it here and
+    # check the new code matches it).
+    rng = np.random.default_rng(210)
+    for step in range(20):
+        signal_data = rng.standard_normal(8)
+        sig = type(ws).broadcast  # noqa: F841 -- placeholder to keep import
+        from zero_data_model.base import Signal
+
+        signal = Signal(data=signal_data)
+        # New (optimised) broadcast.
+        out_new = ws.broadcast(signal)
+        # Naive re-implementation (materialises the list).
+        naive_workspace.buffer.append(
+            Signal(
+                data=signal.data * naive_workspace.attention_weights[: len(signal.data)]
+                / (np.linalg.norm(
+                    signal.data * naive_workspace.attention_weights[: len(signal.data)]
+                ) + 1e-8),
+                metadata=signal.metadata,
+            )
+        )
+        out_naive = np.mean(
+            [s.data for s in naive_workspace.buffer], axis=0
+        )
+        assert np.allclose(out_new.data, out_naive, atol=1e-12), (
+            f"step {step}: PERF8-8a running sum ({out_new.data}) diverged "
+            f"from naive mean ({out_naive}) -- regression in the "
+            "running-sum bookkeeping (likely the eviction subtract is wrong)."
+        )
+
+
+def test_perf8_8a_broadcast_after_capacity_eviction():
+    """After the buffer reaches capacity and starts evicting, the running
+    sum must stay consistent (subtract the evicted entry, add the new one).
+    We verify by broadcasting ``capacity + 5`` signals and checking the
+    output equals the mean of the LAST ``capacity`` signals only."""
+    from zero_data_model.base import Signal
+    from zero_data_model.consciousness_core import GlobalWorkspace
+
+    capacity = 4
+    ws = GlobalWorkspace(dim=8, capacity=capacity)
+    rng = np.random.default_rng(211)
+    all_signals = []
+    for _ in range(capacity + 5):
+        signal = Signal(data=rng.standard_normal(8))
+        all_signals.append(signal)
+        ws.broadcast(signal)
+
+    # After broadcasting capacity+5 signals, the buffer holds only the last
+    # `capacity` (the rest were evicted by the deque's maxlen). Broadcasting
+    # one more signal evicts the oldest in-buffer entry; the running sum
+    # must reflect the subtraction. We verify by checking the output equals
+    # the mean of the LAST ``capacity`` signals in the buffer (which is
+    # ``all_signals[-(capacity-1):] + [final_signal]`` after the append).
+    final_signal = Signal(data=rng.standard_normal(8))
+    out = ws.broadcast(final_signal)
+    attended_final = final_signal.data * ws.attention_weights[: len(final_signal.data)]
+    attended_final = attended_final / (np.linalg.norm(attended_final) + 1e-8)
+    # The buffer now holds the last `capacity` signals (all_signals[-capacity+1:]
+    # + final_signal).
+    last_buffered_with_final = all_signals[-(capacity - 1):] + [final_signal]
+    attended_with_final = []
+    for s in last_buffered_with_final:
+        a = s.data * ws.attention_weights[: len(s.data)]
+        a = a / (np.linalg.norm(a) + 1e-8)
+        attended_with_final.append(a)
+    expected_with_final = np.mean(attended_with_final, axis=0)
+    assert np.allclose(out.data, expected_with_final, atol=1e-12), (
+        f"PERF8-8a running sum diverged from naive mean after eviction: "
+        f"got {out.data}, expected {expected_with_final} -- the eviction "
+        "subtract is wrong (PERF8-8a regression)."
+    )

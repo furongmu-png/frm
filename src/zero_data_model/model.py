@@ -375,6 +375,16 @@ class ZeroDataModel:
                 module.update(error)
 
             self.cycle_count += 1
+            # Round-8 audit THEORY8-9: previously the returned Signal left
+            # ``confidence`` at its default of 1.0 (base.Signal dataclass),
+            # so every ``/think`` response reported ``confidence: 1.0`` to
+            # clients regardless of how uncertain the model actually was.
+            # Derive a meaningful confidence in (0, 1] from the mean
+            # per-module uncertainty: when modules are very confident
+            # (uncertainty -> 0), confidence -> 1; when they are uncertain,
+            # confidence -> 0. The 1/(1+x) form keeps it bounded and smooth.
+            mean_uncertainty = float(np.mean(uncertainties))
+            confidence = float(1.0 / (1.0 + mean_uncertainty))
             return Signal(
                 data=integrated.data,
                 metadata={
@@ -382,6 +392,7 @@ class ZeroDataModel:
                     "self_reflection": reflection.metadata,
                     "module_count": len(self.modules),
                 },
+                confidence=confidence,
             )
 
     def _self_generate(self) -> Signal:

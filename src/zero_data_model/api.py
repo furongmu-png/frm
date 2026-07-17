@@ -578,7 +578,10 @@ async def _limit_body_size(request: Request, call_next):  # type: ignore[no-unty
                     "detail": "invalid Content-Length header",
                     "request_id": request_id,
                 },
-                headers={"X-Request-ID": request_id},
+                headers={
+                    "X-Request-ID": request_id,
+                    "X-Content-Type-Options": "nosniff",
+                },
             )
         if cl_int > MAX_BODY:
             request_id = getattr(request.state, "request_id", "-")
@@ -588,7 +591,10 @@ async def _limit_body_size(request: Request, call_next):  # type: ignore[no-unty
                     "detail": "payload too large",
                     "request_id": request_id,
                 },
-                headers={"X-Request-ID": request_id},
+                headers={
+                    "X-Request-ID": request_id,
+                    "X-Content-Type-Options": "nosniff",
+                },
             )
     return await call_next(request)
 
@@ -619,7 +625,13 @@ _allowed_hosts = [
 
 def create_app() -> FastAPI:
     """Build and return a configured FastAPI application."""
-    is_production = os.environ.get("ZDM_ENV", "").lower() == "production"
+    # Round-8 audit SIDE-2: fail CLOSED for docs. Previously the default was
+    # the empty string, so ``is_production`` was ``False`` unless the operator
+    # explicitly set ``ZDM_ENV=production`` -- leaking the full OpenAPI spec
+    # (every endpoint, every Pydantic schema) to unauthenticated callers when
+    # an operator forgot the env var. Defaulting to ``production`` keeps the
+    # spec hidden unless ``ZDM_ENV=development`` (or ``=test``) is set.
+    is_production = os.environ.get("ZDM_ENV", "production").lower() != "development"
 
     app = FastAPI(
         title="ZeroDataModel API",
@@ -727,9 +739,17 @@ def create_app() -> FastAPI:
         # so error bodies share the same shape as the unhandled-exception
         # handler below. Headers (e.g. WWW-Authenticate) are preserved.
         request_id = getattr(request.state, "request_id", "-")
+        # Round-8 audit API8-6c: merge ``X-Content-Type-Options: nosniff``
+        # into whatever headers the HTTPException already carries (e.g.
+        # WWW-Authenticate on 401). Without nosniff, a browser receiving
+        # an error body that reflects user input could content-sniff the
+        # body as HTML and execute it (XSS sink).
+        exc_headers = dict(getattr(exc, "headers", None) or {})
+        exc_headers.setdefault("X-Request-ID", request_id)
+        exc_headers.setdefault("X-Content-Type-Options", "nosniff")
         return JSONResponse(
             status_code=exc.status_code,
-            headers=exc.headers if getattr(exc, "headers", None) else None,
+            headers=exc_headers,
             content={"detail": exc.detail, "request_id": request_id},
         )
 
@@ -741,16 +761,24 @@ def create_app() -> FastAPI:
         # one slips through here we still treat it generically. We log the
         # full detail server-side and return a generic 500 body.
         request_id = getattr(request.state, "request_id", uuid.uuid4().hex)
+        # Round-8 audit SIDE-3: log only the exception TYPE, not its
+        # message. ``str(exc)`` for many exception types carries file
+        # paths, request payloads, or internal variable names that the
+        # response body intentionally withheld. The full traceback is
+        # retained at DEBUG level for ops triage.
         log.error(
             "unhandled_exception",
             request_id=request_id,
-            error=str(exc),
-            exc_info=exc,
+            error_type=type(exc).__name__,
         )
+        log.debug("unhandled_exception_traceback", request_id=request_id, exc_info=exc)
         return JSONResponse(
             status_code=500,
             content={"detail": "internal error", "request_id": request_id},
-            headers={"X-Request-ID": request_id},
+            headers={
+                "X-Request-ID": request_id,
+                "X-Content-Type-Options": "nosniff",
+            },
         )
 
     # ---------------------------------------------------------------- #
@@ -780,7 +808,21 @@ def create_app() -> FastAPI:
                     "'prometheus_client' and 'prometheus_fastapi_instrumentator'"
                 ),
             )
-        return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+        # Round-8 audit API8-6b: prometheus exposition format is text/plain.
+        # ``Cache-Control: no-store`` prevents intermediate proxies (or the
+        # scraper's own HTTP cache) from serving stale metric values during
+        # an incident. ``X-Content-Type-Options: nosniff`` prevents browsers
+        # that somehow hit /metrics (misconfigured ingress, dev port-forward)
+        # from sniffing the body as HTML and executing any ``<script>`` that
+        # might appear in a metric label value (stored-XSS via labels).
+        return Response(
+            generate_latest(),
+            media_type=CONTENT_TYPE_LATEST,
+            headers={
+                "Cache-Control": "no-store, no-cache, must-revalidate",
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
 
     @app.get(
         "/health",
@@ -801,7 +843,9 @@ def create_app() -> FastAPI:
         """Liveness probe. Cheap: no model construction."""
         if _shutting_down:
             return JSONResponse(
-                status_code=503, content={"status": "shutting_down"}
+                status_code=503,
+                content={"status": "shutting_down"},
+                headers={"X-Content-Type-Options": "nosniff"},
             )
         return HealthResponse(status="ok")
 
@@ -827,10 +871,13 @@ def create_app() -> FastAPI:
             get_model()
             return ReadyResponse(status="ok", model_ready=True)
         except Exception as exc:  # pragma: no cover - defensive
-            log.warning("ready_probe_failed", error=str(exc))
+            # SIDE-3: log only the type, not the message (which may carry
+            # filesystem paths or internal variable names).
+            log.warning("ready_probe_failed", error_type=type(exc).__name__)
             return JSONResponse(
                 status_code=503,
                 content={"status": "degraded", "model_ready": False},
+                headers={"X-Content-Type-Options": "nosniff"},
             )
 
     @app.get(
@@ -904,10 +951,20 @@ def create_app() -> FastAPI:
         tags=["nlp"],
         dependencies=[Depends(verify_api_key)],
     )
-    def classify(req: ClassifyRequest) -> ClassifyResponse:
+    @_limit("30/minute")
+    def classify(request: Request, req: ClassifyRequest) -> ClassifyResponse:
         """Zero-shot classify ``text`` into a topic."""
         model = get_model()
-        topic, conf = model.classify_text(req.text)
+        # Round-8 audit CONCUR8-6: read endpoints must take ``model._lock``
+        # so a concurrent ``/think`` cannot mutate the module arrays in
+        # place (``+=``) while this handler reads them. NumPy ``+=`` is NOT
+        # atomic, so an unsynchronised read can observe a half-mutated
+        # ``topos.classifier`` / ``emission`` / ``classical_weights`` and
+        # return garbled topic scores. ``_lock`` is an ``RLock`` so the
+        # same thread can re-enter it (e.g. via ``model._lock`` inside
+        # ``classify_text`` if it ever needs to).
+        with model._lock:
+            topic, conf = model.classify_text(req.text)
         return ClassifyResponse(topic=str(topic), confidence=float(conf))
 
     @app.post(
@@ -916,10 +973,13 @@ def create_app() -> FastAPI:
         tags=["nlp"],
         dependencies=[Depends(verify_api_key)],
     )
-    def similarity(req: SimilarityRequest) -> SimilarityResponse:
+    @_limit("30/minute")
+    def similarity(request: Request, req: SimilarityRequest) -> SimilarityResponse:
         """Semantic similarity in [0, 1] between two texts."""
         model = get_model()
-        score = model.text_similarity(req.a, req.b)
+        # CONCUR8-6: see /classify — read under model._lock.
+        with model._lock:
+            score = model.text_similarity(req.a, req.b)
         return SimilarityResponse(similarity=float(score))
 
     @app.post(
@@ -932,7 +992,9 @@ def create_app() -> FastAPI:
     def generate(request: Request, req: GenerateRequest) -> GenerateResponse:
         """Generate ``length`` printable characters from a seed."""
         model = get_model()
-        text = model.generate_text(req.seed, length=req.length)
+        # CONCUR8-6: see /classify — read under model._lock.
+        with model._lock:
+            text = model.generate_text(req.seed, length=req.length)
         return GenerateResponse(text=str(text))
 
     @app.post(
@@ -949,7 +1011,9 @@ def create_app() -> FastAPI:
         if series.size == 0:
             raise HTTPException(status_code=400, detail="series must be non-empty")
         _ensure_finite(series, "series")
-        preds = model.forecast(series, horizon=req.horizon)
+        # CONCUR8-6: see /classify — read under model._lock.
+        with model._lock:
+            preds = model.forecast(series, horizon=req.horizon)
         return ForecastResponse(
             forecast=[float(x) for x in np.asarray(preds).flatten().tolist()]
         )
@@ -968,7 +1032,9 @@ def create_app() -> FastAPI:
         if series.size == 0:
             raise HTTPException(status_code=400, detail="series must be non-empty")
         _ensure_finite(series, "series")
-        mask = model.detect_anomalies(series)
+        # CONCUR8-6: see /classify — read under model._lock.
+        with model._lock:
+            mask = model.detect_anomalies(series)
         return AnomaliesResponse(anomalies=[bool(x) for x in np.asarray(mask).tolist()])
 
     @app.post(
@@ -985,7 +1051,9 @@ def create_app() -> FastAPI:
         if series.size == 0:
             raise HTTPException(status_code=400, detail="series must be non-empty")
         _ensure_finite(series, "series")
-        out = model.analyze_trend(series)
+        # CONCUR8-6: see /classify — read under model._lock.
+        with model._lock:
+            out = model.analyze_trend(series)
         return TrendResponse(
             trend_slope=float(out["trend_slope"]),
             regime=str(out["regime"]),
@@ -1039,7 +1107,9 @@ def create_app() -> FastAPI:
         if image.ndim != 2:
             raise HTTPException(status_code=400, detail="image must be 2D")
         _ensure_finite(image, "image")
-        shape, conf = model.recognize_pattern(image)
+        # CONCUR8-6: see /classify — read under model._lock.
+        with model._lock:
+            shape, conf = model.recognize_pattern(image)
         return RecognizeResponse(shape=str(shape), confidence=float(conf))
 
     @app.post(
@@ -1049,7 +1119,8 @@ def create_app() -> FastAPI:
         tags=["persistence"],
         dependencies=[Depends(verify_api_key)],
     )
-    def save(req: PathRequest) -> JSONResponse:
+    @_limit("5/minute")
+    def save(request: Request, req: PathRequest) -> JSONResponse:
         """Persist the current model state to ``name`` (relative) on disk.
 
         Returns 201 Created with a ``Location`` header pointing at the
@@ -1088,7 +1159,8 @@ def create_app() -> FastAPI:
         tags=["persistence"],
         dependencies=[Depends(verify_api_key)],
     )
-    def load(req: PathRequest) -> LoadResponse:
+    @_limit("5/minute")
+    def load(request: Request, req: PathRequest) -> LoadResponse:
         """Replace the live model with one loaded from ``name`` (relative).
 
         Round-8 audit API8-5: previously only ``ValueError`` (sandbox),
@@ -1115,10 +1187,17 @@ def create_app() -> FastAPI:
             # API8-5: disk I/O errors (permission denied, disk full, IO
             # error during unpickling, ``IsADirectoryError``). Previously
             # escaped as a bare 500 via the unhandled-exception handler.
+            # Round-8 audit SIDE-4: ``str(exc)`` for OSError subclasses
+            # almost always includes the resolved filesystem path
+            # (e.g. ``PermissionError: [Errno 13] Permission denied:
+            # '/var/lib/zdm/snapshots/prod.pkl'``). The HTTP response body
+            # returns a generic ``{"detail": "load failed"}`` with no path,
+            # but the log line would leak the absolute path -- drop it and
+            # log only the type + the user-supplied relative name (which
+            # was already validated by the persistence sandbox).
             log.warning(
                 "load_failed_oserror",
                 name=req.name,
-                error=str(exc),
                 error_type=type(exc).__name__,
             )
             raise HTTPException(status_code=500, detail="load failed") from exc
