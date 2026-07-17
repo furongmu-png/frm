@@ -201,6 +201,16 @@ class QuantumClassicalHybrid(CognitiveModule):
         )
         self.annealer = QuantumAnnealer(dim, rng=self._rng)
         self.classical_weights = self._rng.standard_normal((dim, dim)) * 0.05
+        # Round-8 audit PERF8-6: cache of the last ``process`` output so
+        # ``predict`` can reuse it instead of re-running the O(dim^2)
+        # classical matmul + tanh. Matches the Fix 12 pattern used by
+        # ConsciousnessCore / MathUniverse / BiologicalSubstrate /
+        # CategoryTheoryEngine. Note: ``predict`` previously returned the
+        # pure classical path (no quantum features); reusing the cached
+        # ``combined`` value (0.3*qf + 0.7*classical) is more informative
+        # and consistent with how the other modules' predict reuses their
+        # process output.
+        self._last_process_output: np.ndarray | None = None
 
     @property
     def quantum_backend_name(self) -> str:
@@ -221,12 +231,23 @@ class QuantumClassicalHybrid(CognitiveModule):
         else:
             classical = np.tanh(x @ self.classical_weights)
         combined = 0.3 * qf + 0.7 * classical
+        # Round-8 audit PERF8-6: cache for ``predict`` to reuse.
+        self._last_process_output = combined
         return Signal(
             data=combined,
             metadata={"quantum_features": True, "quantum_backend": self.quantum_backend_name},
         )
 
     def predict(self, signal: Signal) -> Prediction:
+        # Round-8 audit PERF8-6: reuse the cached process output so we do not
+        # re-run the O(dim^2) classical matmul + tanh twice per think()
+        # cycle. Falls back to a fresh classical forward pass when
+        # ``predict`` is called standalone (no prior ``process`` in this
+        # cycle), matching the ConsciousnessCore/MathUniverse/Biological/
+        # CategoryEngine pattern (Fix 12 / PERF8-3 / PERF8-5).
+        if self._last_process_output is not None:
+            predicted = self._last_process_output
+            return Prediction(value=predicted, uncertainty=float(np.var(predicted)))
         x = signal.data[: self.dim]
         if len(x) < self.dim:
             x = np.pad(x, (0, self.dim - len(x)))

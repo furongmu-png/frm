@@ -364,6 +364,21 @@ class BiologicalSubstrate(CognitiveModule):
     def update(self, prediction_error: float) -> None:
         if not np.isfinite(prediction_error):
             return
-        prediction_error = float(np.clip(prediction_error, -1e6, 1e6))
-        new_rate = self.morphogenetic.diffusion_rate + prediction_error * 0.01
+        # Round-8 audit THEORY8-11: clip to NON-NEGATIVE (MSE is non-negative
+        # by construction; a negative value would invert the rate update,
+        # matching the THEORY8-7 fix in active_inference.update).
+        prediction_error = float(np.clip(prediction_error, 0.0, 1e6))
+        if prediction_error == 0.0:
+            return
+        # Round-8 audit THEORY8-11: use ``tanh`` to keep the rate update
+        # bounded and proportional. The previous ``rate += err * 0.01`` saturated
+        # to the [0.001, 0.2] clip boundaries for any |err| > 20, turning the
+        # update into a binary "small error -> floor, large error -> ceiling"
+        # control with no gradient in between. ``tanh`` preserves the
+        # small-error/small-update gradient while capping large errors.
+        # ``0.01 * tanh(err * 0.001)`` ranges in [-0.01, 0.01] (err=1e3 ->
+        # ~0.01, err=1 -> 1e-5), so a single update never moves the rate by
+        # more than 0.01 — well inside the [0.001, 0.2] stability window.
+        delta = 0.01 * float(np.tanh(prediction_error * 0.001))
+        new_rate = self.morphogenetic.diffusion_rate + delta
         self.morphogenetic.diffusion_rate = min(0.2, max(0.001, new_rate))

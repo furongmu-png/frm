@@ -155,6 +155,11 @@ class CategoryTheoryEngine(CognitiveModule):
         self.functors: list[Functor] = []
         self.topos = ToposEngine(dim, rng=self._rng)
         self._init_default_categories()
+        # Round-8 audit PERF8-5: cache of the last ``process`` output so
+        # ``predict`` can reuse it instead of re-running ``topos.classify``
+        # (an O(dim^2) matmul + sigmoid). Matches the Fix 12 pattern used by
+        # ConsciousnessCore / MathUniverse / BiologicalSubstrate.
+        self._last_process_output: np.ndarray | None = None
 
     def _init_default_categories(self):
         nlp = Category(name="NLP")
@@ -280,11 +285,26 @@ class CategoryTheoryEngine(CognitiveModule):
                     for functor in self.functors:
                         if functor.source == cat_name:
                             transferred = functor.apply(obj_repr)
+                            # Round-8 audit PERF8-5: cache the process output
+                            # so ``predict`` reuses it (matches the
+                            # ConsciousnessCore/MathUniverse/BiologicalSubstrate
+                            # pattern from Fix 12 / PERF8-3).
+                            self._last_process_output = transferred
                             return Signal(data=transferred, metadata={"transferred_from": cat_name})
+        # Round-8 audit PERF8-5: cache for ``predict`` to reuse.
+        self._last_process_output = truth
         return Signal(data=truth, metadata={"classified": True})
 
     def predict(self, signal: Signal) -> Prediction:
-        truth = self.topos.classify(signal.data)
+        # Round-8 audit PERF8-5: reuse the cached process output so we do not
+        # re-run ``topos.classify`` (an O(dim^2) matmul + sigmoid) twice per
+        # think() cycle. Falls back to a fresh classify when ``predict`` is
+        # called standalone (no prior ``process`` in this cycle), matching
+        # the ConsciousnessCore/MathUniverse/BiologicalSubstrate pattern.
+        if self._last_process_output is not None:
+            truth = self._last_process_output
+        else:
+            truth = self.topos.classify(signal.data)
         return Prediction(value=truth, uncertainty=float(1.0 - np.mean(np.abs(truth))))
 
     def update(self, prediction_error: float) -> None:

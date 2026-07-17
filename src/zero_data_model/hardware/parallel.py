@@ -110,6 +110,35 @@ class ParallelExecutor:
             self._pool_pid = current_pid
             return pool
 
+    def _ensure_pool_locked(self) -> ThreadPoolExecutor | None:
+        """Same as ``_ensure_pool`` but assumes ``_recreate_lock`` is already
+        held by the caller.
+
+        Round-8 audit CONCUR8-7: ``map`` needs to atomically "get pool +
+        submit all futures" so a concurrent ``shutdown`` cannot land between
+        ``_ensure_pool`` returning a (now-stale) pool handle and the first
+        ``pool.submit`` -- which would raise
+        ``RuntimeError: cannot schedule new futures after interpreter shutdown``.
+        Holding ``_recreate_lock`` across submit makes the get+submit
+        sequence atomic w.r.t. ``shutdown`` (which also takes the lock).
+
+        ``_ensure_pool`` itself takes ``_recreate_lock``, so re-entry would
+        deadlock on a non-reentrant ``Lock``. This locked variant does the
+        same recreate work WITHOUT re-taking the lock -- the caller already
+        holds it.
+        """
+        if not self.parallel or self.backend != "threading":
+            return None
+        current_pid = os.getpid()
+        pool = self._pool
+        if pool is not None and self._pool_pid == current_pid:
+            return pool
+        # Pool is None or PID changed; recreate (caller holds the lock).
+        pool = ThreadPoolExecutor(max_workers=self.n_workers)
+        self._pool = pool
+        self._pool_pid = current_pid
+        return pool
+
     def shutdown(self) -> None:
         """Shut down the persistent thread pool (if any).
 
@@ -143,7 +172,24 @@ class ParallelExecutor:
             self.shutdown()
 
     def map(self, func: Callable[[T], R], items: Iterable[T]) -> list[R]:
-        """Apply ``func`` to each item, preserving input order."""
+        """Apply ``func`` to each item, preserving input order.
+
+        Round-8 audit CONCUR8-5: when one future raises, ``fut.result()``
+        re-raises the exception and the loop bails out -- but the OTHER
+        in-flight futures keep running on the pool, leaking resources and
+        delaying the exception's propagation to the caller (``as_completed``
+        would still drain them if we let it, but we never get there). Now we
+        ``cancel`` every not-yet-started future on the way out so the pool
+        is free for the next ``map`` call. (``cancel`` only kills pending
+        futures -- already-running ones finish, but that is unavoidable.)
+
+        Round-8 audit CONCUR8-7: the get-pool + submit-all step is wrapped
+        in ``_recreate_lock`` so a concurrent ``shutdown`` cannot land
+        between ``_ensure_pool_locked`` returning a (now-stale) pool handle
+        and the first ``pool.submit`` -- the previous code raised
+        ``RuntimeError: cannot schedule new futures after interpreter
+        shutdown`` in that window.
+        """
         items_list = list(items)
         if not items_list:
             return []
@@ -155,13 +201,31 @@ class ParallelExecutor:
             # Round-8 audit CONCUR8-2/3: ``_ensure_pool`` recreates the pool
             # lazily when the PID has changed (fork) or it was shut down,
             # and the recreate path is lock-protected.
-            pool = self._ensure_pool()
-            if pool is None:  # pragma: no cover - defensive
-                return [func(x) for x in items_list]
-            futures = {pool.submit(func, x): i for i, x in enumerate(items_list)}
+            # Round-8 audit CONCUR8-7: hold ``_recreate_lock`` across the
+            # get-pool + submit-all step so ``shutdown`` cannot land
+            # mid-submit and leave us calling ``pool.submit`` on a
+            # half-shutdown pool (RuntimeError).
+            with self._recreate_lock:
+                pool = self._ensure_pool_locked()
+                if pool is None:  # pragma: no cover - defensive
+                    return [func(x) for x in items_list]
+                futures = {
+                    pool.submit(func, x): i for i, x in enumerate(items_list)
+                }
             results: list[R | None] = [None] * len(items_list)
-            for fut in as_completed(futures):
-                results[futures[fut]] = fut.result()
+            try:
+                for fut in as_completed(futures):
+                    results[futures[fut]] = fut.result()
+            except BaseException:
+                # CONCUR8-5: a future raised (or the caller was cancelled
+                # / interrupted). Cancel every not-yet-started future so the
+                # pool is free for the next ``map`` call instead of letting
+                # the remaining work run to completion in the background.
+                # ``cancel`` returns False for already-running futures --
+                # those will finish on their own and we cannot help that.
+                for fut in futures:
+                    fut.cancel()
+                raise
             # Preserve None results (Fix 21): cognitive modules may
             # legitimately return None, and dropping them desyncs the
             # output order from the input order.

@@ -82,6 +82,9 @@ class ActiveInferenceEngine(CognitiveModule):
     homeostasis: HomeostaticController
     action_history: deque[np.ndarray]
     free_energy_history: deque[float]
+    # Round-8 audit PERF8-7: bounded 32-entry mirror of ``action_history``
+    # so ``_compute_sigma_q2`` materialises O(32) instead of O(1000).
+    _recent_actions: deque[np.ndarray]
     _cached_sigma_q2: float
     _sigma_q2_dirty: bool
 

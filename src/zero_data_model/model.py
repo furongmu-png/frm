@@ -239,11 +239,25 @@ class ZeroDataModel:
     # recorded seed (``self._seed`` is picklable) so the unpickled model
     # behaves identically to a freshly-constructed one.
     #
+    # Round-8 audit SIDE-1: ``__getstate__`` takes ``self._lock`` so a
+    # concurrent ``think()`` cannot mutate the numpy arrays (in-place
+    # ``emission[:, :] += ...``, ``layer.weights += ...``) while pickle
+    # walks the dict. Without the lock, pickle could serialise a
+    # half-mutated array — the bytes on disk would be inconsistent and
+    # the unpickled model would be silently corrupted. ``RLock`` is
+    # reentrant so a thread that already holds the lock (e.g. ``think``
+    # calling ``pickle.dumps`` internally — not currently done but
+    # possible in user code) does not deadlock.
+    #
     # Note: the model's authoritative persistence path remains
     # ``ModelSerializer.save/load`` (npz + json), which has its own
     # validation. These hooks only enable pickle / deepcopy.
     def __getstate__(self) -> dict:
-        state = self.__dict__.copy()
+        # Take the lock so in-place numpy mutations (emission += ...,
+        # weights += ...) cannot race with pickle's array walk. The
+        # ``_lock`` reference itself is dropped from the state below.
+        with self._lock:
+            state = self.__dict__.copy()
         # Drop the unpicklable concurrency primitives. ``_seed`` survives
         # in the state so ``__setstate__`` can rebuild ``parallel_executor``
         # with the same n_workers policy (1 for seeded, auto for unseeded).

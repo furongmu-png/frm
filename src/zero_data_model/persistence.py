@@ -46,6 +46,18 @@ _MAX_MORPH_COUNT: int = 4096
 # reading config.json + arrays.npz from different snapshots (torn read).
 _PERSISTENCE_LOCK = threading.Lock()
 
+# Round-8 audit CONCUR8-9: separate lock guarding the module-level
+# ``_PERSISTENCE_ROOT`` string. ``set_persistence_root`` previously wrote the
+# global with NO lock, racing with ``get_persistence_root`` (called by every
+# ``_validate_path`` from ``save`` / ``load``). A torn read could observe
+# the OLD root (and write the snapshot there) while another ``/save``
+# request already sees the NEW root -- so a snapshot would be saved to one
+# directory and a subsequent ``/load`` would look in another, returning 404.
+# Kept SEPARATE from ``_PERSISTENCE_LOCK`` so ``save``/``load``'s long
+# stage→backup→replace critical section does not block ``set_persistence_root``
+# (which only touches the global, not the on-disk state).
+_ROOT_LOCK = threading.Lock()
+
 # --------------------------------------------------------------------------- #
 # Persistence root sandbox
 # --------------------------------------------------------------------------- #
@@ -67,16 +79,28 @@ def set_persistence_root(path: str) -> None:
 
     The directory is created if missing so callers can point at a fresh
     tmp_path without an extra mkdir.
+
+    Round-8 audit CONCUR8-9: now takes ``_ROOT_LOCK`` so a concurrent
+    ``get_persistence_root`` (called from ``_validate_path`` -> ``save`` /
+    ``load``) cannot observe a half-assigned global. The ``makedirs`` runs
+    OUTSIDE the lock so a slow filesystem does not block readers.
     """
     global _PERSISTENCE_ROOT
     resolved = os.path.realpath(os.path.abspath(path))
     os.makedirs(resolved, exist_ok=True)
-    _PERSISTENCE_ROOT = resolved
+    with _ROOT_LOCK:
+        _PERSISTENCE_ROOT = resolved
 
 
 def get_persistence_root() -> str:
-    """Return the current persistence root (resolved absolute path)."""
-    return os.path.realpath(os.path.abspath(_PERSISTENCE_ROOT))
+    """Return the current persistence root (resolved absolute path).
+
+    Round-8 audit CONCUR8-9: takes ``_ROOT_LOCK`` so the read cannot race
+    with ``set_persistence_root``'s write.
+    """
+    with _ROOT_LOCK:
+        root = _PERSISTENCE_ROOT
+    return os.path.realpath(os.path.abspath(root))
 
 
 def _validate_path(path: str) -> str:

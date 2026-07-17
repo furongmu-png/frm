@@ -191,7 +191,18 @@ class GenerativeModel:
                 error = np.pad(error, (0, self.obs_dim - len(error)))
         # Descent step: emission += 2 * lr * outer(state, error).
         # ``emission`` is (state_dim, obs_dim); outer(state, error) matches.
-        self.emission[:, : self.obs_dim] += 2.0 * lr * np.outer(state, error)
+        # Round-8 audit THEORY8-10: clip the gradient's Frobenius norm so a
+        # large ``state`` or ``error`` (e.g. an upstream module emitting a
+        # near-sentinel value through ``Signal``) cannot blow up ``emission``
+        # in a single step. ``emission`` starts at scale 0.1 and the lr is
+        # already clipped to [0, 0.1], so a per-step change of magnitude 1.0
+        # is more than enough headroom for normal learning while capping the
+        # pathological case (|state|*|error| up to 1e12 without the clip).
+        grad = np.outer(state, error)
+        grad_norm = float(np.linalg.norm(grad))
+        if grad_norm > 1.0:
+            grad = grad / grad_norm
+        self.emission[:, : self.obs_dim] += 2.0 * lr * grad
 
 
 class HomeostaticController:
@@ -239,6 +250,13 @@ class ActiveInferenceEngine(CognitiveModule):
         # Bounded deques so long-running engines do not leak memory (Fix 8).
         self.action_history: deque = deque(maxlen=1000)
         self.free_energy_history: deque = deque(maxlen=1000)
+        # Round-8 audit PERF8-7: dedicated recent-only deque (maxlen=32) so
+        # ``_compute_sigma_q2`` does not have to materialise the full
+        # ``action_history`` (O(1000)) just to slice off the last 32 entries
+        # every CFE call. Kept in lockstep with ``action_history`` by
+        # ``process`` (both append the same action back-to-back). Matches the
+        # SelfModel._recent pattern (P-CRIT-02).
+        self._recent_actions: deque = deque(maxlen=32)
         # Round-8 audit PERF8-2: cache sigma_q2 across the 9 CFE calls per
         # think cycle (1 from process + 8 from select_action). Invalidated
         # only when action_history changes (i.e. once per cycle in process).
@@ -258,11 +276,18 @@ class ActiveInferenceEngine(CognitiveModule):
         Since the result is invariant across the 9 CFE calls per cycle
         (action_history is only mutated by ``process`` after the CFE burst),
         we cache it and invalidate only when ``process`` appends a new action.
+
+        Round-8 audit PERF8-7: ``list(action_history)[-32:]`` still
+        materialised the entire 1000-entry deque (then sliced to 32). The
+        dedicated ``_recent_actions: deque(maxlen=32)`` is kept in lockstep
+        with ``action_history`` by ``process``, so we only ever materialise
+        up to 32 entries — O(32) instead of O(1000) per CFE burst (×9 per
+        cycle when the cache is cold).
         """
         if not self._sigma_q2_dirty:
             return self._cached_sigma_q2
         if len(self.action_history) >= 2:
-            recent = np.asarray(list(self.action_history)[-32:], dtype=float)
+            recent = np.asarray(list(self._recent_actions), dtype=float)
             recent = np.nan_to_num(recent, nan=0.0, posinf=0.0, neginf=0.0)
             sigma_q2 = float(np.mean(np.var(recent, axis=0))) + 1e-6
             if not np.isfinite(sigma_q2) or sigma_q2 <= 0:
@@ -518,6 +543,11 @@ class ActiveInferenceEngine(CognitiveModule):
         # sensory input rather than against its own prediction).
         action = self.select_action(belief, current_observation=signal.data)
         self.action_history.append(action)
+        # Round-8 audit PERF8-7: keep ``_recent_actions`` in lockstep with
+        # ``action_history`` so ``_compute_sigma_q2`` can read from the
+        # bounded 32-entry deque instead of materialising the full
+        # 1000-entry ``action_history`` every CFE call.
+        self._recent_actions.append(action)
         # Round-8 audit PERF8-2: invalidate the sigma_q2 cache now that
         # action_history has a new entry; the next CFE burst will recompute.
         self._sigma_q2_dirty = True

@@ -390,6 +390,12 @@ class RecognizeRequest(BaseModel):
             raise ValueError("image must be non-empty")
         if len(v) > 512:
             raise ValueError("image must have at most 512 rows")
+        # Round-8 audit API8-2: validate the OUTER list + per-row length cap
+        # here (these are pure schema constraints and yield 422 on violation).
+        # The STRUCTURAL checks (each row non-empty, rectangular shape) are
+        # done in the ``/recognize`` endpoint so that ``[[]]`` -- the case
+        # explicitly exercised by ``test_post_recognize_empty_image_returns_4xx``
+        # -- returns 400 (endpoint business check) rather than 422 (schema).
         for row in v:
             if not isinstance(row, list):
                 raise ValueError("image must be a list of rows")
@@ -545,10 +551,45 @@ async def _limit_body_size(request: Request, call_next):  # type: ignore[no-unty
 
     Only the declared length is checked (the body is not buffered here) so
     huge uploads are rejected before they hit the application.
+
+    Round-8 audit API8-3: ``int(cl)`` raises ``ValueError`` on a malformed
+    Content-Length header (e.g. ``"12abc"``, ``"1, 2"``). Starlette does
+    NOT validate this header before handing it to the app, so the previous
+    code surfaced as a bare 500 with no diagnostic. Now we return 400 with
+    an actionable message.
+
+    Round-8 audit API8-4: the 413 / 400 response bodies now include
+    ``request_id`` (read from ``request.state`` -- set by the OUTER
+    ``request_tracing_middleware``) and the matching ``X-Request-ID``
+    header, so clients can correlate the rejection with their access log
+    line. Previously the body was ``{"detail": "payload too large"}`` with
+    no request_id, so a client reporting a 413 could not be matched to a
+    server-side log entry.
     """
     cl = request.headers.get("content-length")
-    if cl and int(cl) > MAX_BODY:
-        return JSONResponse(status_code=413, content={"detail": "payload too large"})
+    if cl:
+        try:
+            cl_int = int(cl)
+        except (TypeError, ValueError):
+            request_id = getattr(request.state, "request_id", "-")
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "detail": "invalid Content-Length header",
+                    "request_id": request_id,
+                },
+                headers={"X-Request-ID": request_id},
+            )
+        if cl_int > MAX_BODY:
+            request_id = getattr(request.state, "request_id", "-")
+            return JSONResponse(
+                status_code=413,
+                content={
+                    "detail": "payload too large",
+                    "request_id": request_id,
+                },
+                headers={"X-Request-ID": request_id},
+            )
     return await call_next(request)
 
 
@@ -598,13 +639,25 @@ def create_app() -> FastAPI:
 
         app.add_middleware(SlowAPIMiddleware)
 
-    # Structured access log + X-Request-ID.
-    app.middleware("http")(request_tracing_middleware)
-
-    # Body size limit (S-HIGH-03): reject payloads larger than MAX_BODY before
-    # they reach the application. Registered after the tracing middleware so
-    # 413 responses are still logged with a request_id.
+    # Structured access log + X-Request-ID + body-size limit (S-HIGH-03).
+    # Round-8 audit API8-4: middleware registration order was BACKWARDS.
+    # Starlette's ``add_middleware`` / ``app.middleware("http")`` are LIFO:
+    # the LAST registered middleware is the OUTERMOST (runs first on
+    # inbound). The previous code registered ``request_tracing_middleware``
+    # FIRST and ``_limit_body_size`` SECOND, so the actual execution order
+    # was: ``_limit_body_size`` -> ``request_tracing`` -> endpoint. That
+    # meant (a) 413 rejections from ``_limit_body_size`` were never captured
+    # in the access log (they never reached ``request_tracing``), and (b)
+    # ``request.state.request_id`` was unset when ``_limit_body_size`` ran,
+    # so the 413 body had no request_id for client-side correlation.
+    #
+    # The fix: register ``_limit_body_size`` FIRST (so it is the INNER
+    # middleware) and ``request_tracing_middleware`` SECOND (so it is the
+    # OUTER one). Execution order is now: ``request_tracing`` ->
+    # ``_limit_body_size`` -> endpoint. 413s are logged and carry the
+    # request_id set by the tracing middleware.
     app.middleware("http")(_limit_body_size)
+    app.middleware("http")(request_tracing_middleware)
 
     # CORS (S-MED-13): only the configured origins may issue credentialed
     # cross-origin requests. ``allow_credentials=False`` keeps the policy
@@ -709,7 +762,24 @@ def create_app() -> FastAPI:
         dependencies=[Depends(verify_api_key)],
     )
     def _metrics() -> Response:
-        """Prometheus metrics endpoint (auth-gated, S-HIGH-02)."""
+        """Prometheus metrics endpoint (auth-gated, S-HIGH-02).
+
+        Round-8 audit API8-1: when ``prometheus_client`` /
+        ``prometheus_fastapi_instrumentator`` are not installed, the module
+        sets ``generate_latest = None`` and ``CONTENT_TYPE_LATEST = ""``.
+        Calling ``Response(None, media_type="")`` then raises inside
+        Starlette (None body cannot be encoded) and surfaces as a bare 500
+        with no diagnostic. Return an explicit 503 so the operator sees
+        *why* metrics are unavailable.
+        """
+        if not _HAS_PROMETHEUS or generate_latest is None:
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "prometheus metrics unavailable: install "
+                    "'prometheus_client' and 'prometheus_fastapi_instrumentator'"
+                ),
+            )
         return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
     @app.get(
@@ -804,12 +874,26 @@ def create_app() -> FastAPI:
         signal = model.think(input_data)
         if _think_duration is not None:
             _think_duration.observe(time.perf_counter() - start)
+        # Round-8 audit CONCUR8-8: read cycle_count and the last free energy
+        # under ``model._lock`` so the two prometheus gauges are consistent
+        # with each other AND with this think() call. Without the lock, a
+        # concurrent think() could land BETWEEN our think() return and these
+        # reads -- incrementing cycle_count and appending a new free energy
+        # value -- so ``zdm_cycle_count`` would point at cycle N+1 while
+        # ``zdm_free_energy_last`` would point at the next cycle's energy,
+        # and neither would match the ``cycle`` field returned in the HTTP
+        # response body. ``model._lock`` is an ``RLock`` so re-entering it
+        # from the same thread (think() already released it) is safe.
+        with model._lock:
+            cycle_count_snapshot = model.cycle_count
+            fe_history = model.active_inference.free_energy_history
+            last_fe = fe_history[-1] if fe_history else None
         if _cycle_count is not None:
-            _cycle_count.set(model.cycle_count)
-        if _free_energy is not None and model.active_inference.free_energy_history:
-            _free_energy.set(model.active_inference.free_energy_history[-1])
+            _cycle_count.set(cycle_count_snapshot)
+        if _free_energy is not None and last_fe is not None:
+            _free_energy.set(float(last_fe))
         return ThinkResponse(
-            cycle=int(signal.metadata.get("cycle", model.cycle_count)),
+            cycle=int(signal.metadata.get("cycle", cycle_count_snapshot)),
             output=[float(x) for x in np.asarray(signal.data).flatten().tolist()],
             confidence=float(signal.confidence),
         )
@@ -918,10 +1002,39 @@ def create_app() -> FastAPI:
     )
     @_limit("30/minute")
     def recognize(request: Request, req: RecognizeRequest) -> RecognizeResponse:
-        """Recognize a shape/pattern in a 2D grayscale image (list of rows)."""
+        """Recognize a shape/pattern in a 2D grayscale image (list of rows).
+
+        Round-8 audit API8-2: the schema validator only checks the outer list
+        length + per-row length cap. The STRUCTURAL checks (each row
+        non-empty, rectangular shape) live here so that ``[[]]`` returns
+        400 (endpoint business check) rather than 422 (schema), preserving
+        the contract exercised by ``test_post_recognize_empty_image_returns_4xx``.
+        A JAGGED image (``[[1,2],[3]]``) previously produced an ``object``
+        dtype array that crashed inside ``model.recognize_pattern`` -- now
+        it is rejected at the endpoint boundary with an actionable 400.
+        """
         model = get_model()
         if not req.image or not req.image[0]:
             raise HTTPException(status_code=400, detail="image must be non-empty")
+        # API8-2: every row must be non-empty (``[[]]`` is caught here).
+        for i, row in enumerate(req.image):
+            if not row:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"image row {i} must be non-empty",
+                )
+        # API8-2: rectangular check (reject jagged arrays before np.asarray
+        # silently produces an ``object`` dtype 1D array).
+        expected_len = len(req.image[0])
+        for i, row in enumerate(req.image):
+            if len(row) != expected_len:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"image must be rectangular: row {i} has "
+                        f"{len(row)} values, expected {expected_len}"
+                    ),
+                )
         image = np.asarray(req.image, dtype=float)
         if image.ndim != 2:
             raise HTTPException(status_code=400, detail="image must be 2D")
@@ -976,7 +1089,19 @@ def create_app() -> FastAPI:
         dependencies=[Depends(verify_api_key)],
     )
     def load(req: PathRequest) -> LoadResponse:
-        """Replace the live model with one loaded from ``name`` (relative)."""
+        """Replace the live model with one loaded from ``name`` (relative).
+
+        Round-8 audit API8-5: previously only ``ValueError`` (sandbox),
+        ``FileNotFoundError`` and ``KeyError`` (pickle schema mismatch)
+        were caught. Any OTHER ``OSError`` -- permission denied on the
+        snapshot file, disk read error, ``EOFError`` during unpickling when
+        the file is truncated, ``IsADirectoryError`` -- escaped as a bare
+        500 with no ``request_id`` body and no server-side context (the
+        centralized ``Exception`` handler would log it generically as
+        ``unhandled_exception``). Catch ``OSError`` explicitly and return
+        a clean 500 with the standard error body shape. ``KeyError`` is
+        kept because it is not a subclass of ``OSError``.
+        """
         try:
             new_model = ModelSerializer.load(req.name)
         except ValueError as exc:
@@ -986,6 +1111,17 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail="snapshot not found") from exc
         except KeyError as exc:
             raise HTTPException(status_code=400, detail="load failed") from exc
+        except OSError as exc:
+            # API8-5: disk I/O errors (permission denied, disk full, IO
+            # error during unpickling, ``IsADirectoryError``). Previously
+            # escaped as a bare 500 via the unhandled-exception handler.
+            log.warning(
+                "load_failed_oserror",
+                name=req.name,
+                error=str(exc),
+                error_type=type(exc).__name__,
+            )
+            raise HTTPException(status_code=500, detail="load failed") from exc
         set_model(new_model)
         return LoadResponse(loaded=True)
 

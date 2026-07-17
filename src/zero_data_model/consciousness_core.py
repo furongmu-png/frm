@@ -58,6 +58,16 @@ class SelfModel:
         self._recent: deque = deque(maxlen=10)
 
     def update(self, signal: np.ndarray) -> None:
+        # Round-8 audit THEORY8-13: guard against NaN/Inf signal. Without
+        # this guard, a NaN propagated from a runaway ConsciousnessCore
+        # hierarchy (or any upstream module) is permanently written into
+        # ``self.state`` and ``self.history``, and every subsequent
+        # ``reflect()`` returns NaN — metacognition is silently disabled
+        # for the rest of the process lifetime. Reject the update so the
+        # EMA stays finite; the anomaly surfaces through other channels
+        # (AnomalyDetector z-scores the free energy).
+        if not np.all(np.isfinite(signal)):
+            return
         self.history.append(signal.copy())
         self._recent.append(signal.copy())
         # ``self.history`` is always non-empty here (we just appended).
@@ -128,6 +138,16 @@ class ConsciousnessCore(CognitiveModule):
         for layer in self.layers:
             prediction = layer.predict(x)
             error = layer.prediction_error(x, prediction)
+            # Round-8 audit THEORY8-13: clip the error before injecting it as
+            # noise std. ``prediction_error`` is MSE; with ``predicted`` bounded
+            # to (-1, 1) by tanh/relu but ``actual = x`` unbounded (the input
+            # signal may carry large values from upstream modules), MSE can
+            # reach 1e6+ and the noise ``randn * MSE * 0.01`` becomes
+            # ``randn * 1e4``, which then feeds the next layer's MSE and
+            # diverges to inf/NaN within ~3 layers. Cap to 4.0 — the maximum
+            # MSE between two vectors in (-1, 1)^d is 4.0 — so well-posed
+            # inputs are unaffected and runaway inputs no longer diverge.
+            error = float(np.clip(error, 0.0, 4.0))
             # Round-3 audit CRIT-1: per-module Generator
             x = prediction + self._rng.standard_normal(self.dim) * error * 0.01
 
