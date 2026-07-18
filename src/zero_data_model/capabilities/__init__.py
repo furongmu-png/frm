@@ -5,10 +5,14 @@ import contextlib
 from .rules import (
     AnalyticsRules,
     AudioRules,
+    CausalRules,
+    CodeRules,
     DomainRules,
     GraphRules,
     NLPRules,
+    ReasoningRules,
     RoboticsRules,
+    TimeRules,
     VisionRules,
 )
 from .vision import (
@@ -114,6 +118,23 @@ with contextlib.suppress(ImportError):  # pragma: no cover - optional sibling mo
         TrajectoryOptimizer,
     )
 
+# Time-series capability modules (encoding, seasonality, frequency, events,
+# anomaly timing, cycle phase, forecastability).
+with contextlib.suppress(ImportError):  # pragma: no cover - optional sibling module
+    from .time import (
+        EventTimestampAnalyzer,
+        FrequencyAnalyzer,
+        SeasonalityDetector,
+        TimeSeriesEncoder,
+    )
+
+with contextlib.suppress(ImportError):  # pragma: no cover - optional sibling module
+    from .time_advanced import (
+        AnomalyTimingDetector,
+        CyclePhaseTracker,
+        ForecastabilityScorer,
+    )
+
 __all__ = [
     "DomainRules",
     "NLPRules",
@@ -122,6 +143,10 @@ __all__ = [
     "AudioRules",
     "GraphRules",
     "RoboticsRules",
+    "TimeRules",
+    "CodeRules",
+    "ReasoningRules",
+    "CausalRules",
     "TextEncoder",
     "SemanticComparator",
     "ZeroShotClassifier",
@@ -170,4 +195,12 @@ __all__ = [
     "TrajectoryOptimizer",
     "CollisionChecker",
     "MPCController",
+    # Time capabilities.
+    "TimeSeriesEncoder",
+    "SeasonalityDetector",
+    "FrequencyAnalyzer",
+    "EventTimestampAnalyzer",
+    "AnomalyTimingDetector",
+    "CyclePhaseTracker",
+    "ForecastabilityScorer",
 ]

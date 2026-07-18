@@ -239,3 +239,99 @@ class RoboticsRules(DomainRules):
             "safety_margin": self.safety_margin,
             "mpc_horizon": self.mpc_horizon,
         }
+
+
+@dataclass
+class TimeRules(DomainRules):
+    """Time-series processing priors: FFT parameters, seasonality thresholds."""
+
+    sample_rate: float = 1.0
+    fft_window_size: int = 64
+    fft_hop_size: int = 32
+    seasonality_max_lag: int = 128
+    seasonality_threshold: float = 0.3
+    event_threshold_std: float = 2.0
+    forecast_min_samples: int = 8
+
+    def __post_init__(self):
+        super().__init__()
+        self.rules = {
+            "sample_rate": self.sample_rate,
+            "fft_window_size": self.fft_window_size,
+            "fft_hop_size": self.fft_hop_size,
+            "seasonality_max_lag": self.seasonality_max_lag,
+            "seasonality_threshold": self.seasonality_threshold,
+            "event_threshold_std": self.event_threshold_std,
+            "forecast_min_samples": self.forecast_min_samples,
+        }
+
+
+@dataclass
+class CodeRules(DomainRules):
+    """Code analysis priors: style thresholds, complexity limits."""
+
+    max_line_length: int = 100
+    indent_size: int = 4
+    max_function_complexity: int = 10
+    max_function_lines: int = 50
+    naming_convention: str = "snake_case"
+    defect_patterns: tuple[str, ...] = (
+        "mutable_default",
+        "bare_except",
+        "equals_none",
+    )
+
+    def __post_init__(self):
+        super().__init__()
+        self.rules = {
+            "max_line_length": self.max_line_length,
+            "indent_size": self.indent_size,
+            "max_function_complexity": self.max_function_complexity,
+            "max_function_lines": self.max_function_lines,
+            "naming_convention": self.naming_convention,
+            "defect_patterns": self.defect_patterns,
+        }
+
+
+@dataclass
+class ReasoningRules(DomainRules):
+    """Reasoning priors: inference depth, contradiction thresholds."""
+
+    max_inference_depth: int = 10
+    consistency_check: bool = True
+    default_confidence: float = 0.5
+    contradiction_threshold: float = 0.5
+    abduction_max_hypotheses: int = 5
+
+    def __post_init__(self):
+        super().__init__()
+        self.rules = {
+            "max_inference_depth": self.max_inference_depth,
+            "consistency_check": self.consistency_check,
+            "default_confidence": self.default_confidence,
+            "contradiction_threshold": self.contradiction_threshold,
+            "abduction_max_hypotheses": self.abduction_max_hypotheses,
+        }
+
+
+@dataclass
+class CausalRules(DomainRules):
+    """Causal/Decision priors: tree depth, Nash iterations, bandit epsilon."""
+
+    max_tree_depth: int = 5
+    min_samples_split: int = 2
+    nash_max_iter: int = 100
+    bandit_epsilon: float = 0.1
+    pomdp_horizon: int = 10
+    causal_significance: float = 0.05
+
+    def __post_init__(self):
+        super().__init__()
+        self.rules = {
+            "max_tree_depth": self.max_tree_depth,
+            "min_samples_split": self.min_samples_split,
+            "nash_max_iter": self.nash_max_iter,
+            "bandit_epsilon": self.bandit_epsilon,
+            "pomdp_horizon": self.pomdp_horizon,
+            "causal_significance": self.causal_significance,
+        }

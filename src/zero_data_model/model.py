@@ -68,7 +68,19 @@ from .capabilities.rules import (
     GraphRules,
     NLPRules,
     RoboticsRules,
+    TimeRules,
     VisionRules,
+)
+from .capabilities.time import (
+    EventTimestampAnalyzer,
+    FrequencyAnalyzer,
+    SeasonalityDetector,
+    TimeSeriesEncoder,
+)
+from .capabilities.time_advanced import (
+    AnomalyTimingDetector,
+    CyclePhaseTracker,
+    ForecastabilityScorer,
 )
 from .capabilities.vision import FeatureExtractor, ImageEncoder, PatternRecognizer, ShapeAnalyzer
 from .capabilities.vision_advanced import (
@@ -298,6 +310,25 @@ class ZeroDataModel:
             dim=dim,
             active_inference=self.active_inference,
             rules=self.robotics_rules,
+        )
+        # Time-series domain capabilities (reuse existing core module instances).
+        self.time_rules = TimeRules()
+        self.time_encoder = TimeSeriesEncoder(
+            dim=dim, math_universe=self.math_universe, rules=self.time_rules
+        )
+        self.time_seasonality = SeasonalityDetector(dim=dim, rules=self.time_rules)
+        self.time_frequency = FrequencyAnalyzer(
+            dim=dim, math_universe=self.math_universe, rules=self.time_rules
+        )
+        self.time_events = EventTimestampAnalyzer(dim=dim, rules=self.time_rules)
+        self.time_anomaly_timing = AnomalyTimingDetector(
+            dim=dim, active_inference=self.active_inference, rules=self.time_rules
+        )
+        self.time_cycle_phase = CyclePhaseTracker(
+            dim=dim, biological=self.biological, rules=self.time_rules
+        )
+        self.time_forecastability = ForecastabilityScorer(
+            dim=dim, math_universe=self.math_universe, rules=self.time_rules
         )
         # Hardware acceleration: parallel module execution + GPU-aware arrays.
         # When a seed is set, force sequential execution so the per-module
@@ -897,3 +928,44 @@ class ZeroDataModel:
             return self.robotics_mpc.control(
                 current_state, target_state, obstacles=obstacles
             )
+
+    # ------------------------------------------------------------------ #
+    # Time-series domain facades
+    # ------------------------------------------------------------------ #
+
+    def encode_time_series(self, series: np.ndarray) -> np.ndarray:
+        """Encode a 1D time series into a ``dim``-length L2-normalized vector."""
+        with self._lock:
+            return self.time_encoder.encode(series)
+
+    def detect_seasonality(self, series: np.ndarray) -> dict:
+        """Detect seasonal periods via autocorrelation peaks."""
+        with self._lock:
+            return self.time_seasonality.detect(series)
+
+    def analyze_frequency(self, series: np.ndarray) -> dict:
+        """Analyze the frequency content of a series (FFT + spectral entropy)."""
+        with self._lock:
+            return self.time_frequency.analyze(series)
+
+    def analyze_event_timestamps(self, timestamps: np.ndarray) -> dict:
+        """Analyze event timing (inter-arrival, rate, burstiness)."""
+        with self._lock:
+            return self.time_events.analyze(timestamps)
+
+    def detect_anomalous_timing(self, timestamps: np.ndarray) -> dict:
+        """Detect anomalous inter-arrival gaps via z-score."""
+        with self._lock:
+            return self.time_anomaly_timing.detect(timestamps)
+
+    def track_cycle_phase(
+        self, series: np.ndarray, period: int | None = None
+    ) -> dict:
+        """Track phase within a periodic cycle."""
+        with self._lock:
+            return self.time_cycle_phase.track(series, period=period)
+
+    def score_forecastability(self, series: np.ndarray) -> dict:
+        """Score how forecastable a series is (entropy + stationarity + autocorr)."""
+        with self._lock:
+            return self.time_forecastability.score(series)
