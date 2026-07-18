@@ -169,6 +169,24 @@ with contextlib.suppress(ImportError):  # pragma: no cover - optional sibling mo
         DefeasibleReasoner,
     )
 
+# Causal/Decision capability modules (decision trees, game theory,
+# counterfactual reasoning, bandits, POMDP, causal graph discovery,
+# intervention analysis).
+with contextlib.suppress(ImportError):  # pragma: no cover - optional sibling module
+    from .causal import (
+        CounterfactualReasoner,
+        DecisionTreeBuilder,
+        GameTheoryAnalyzer,
+        MultiArmedBandit,
+    )
+
+with contextlib.suppress(ImportError):  # pragma: no cover - optional sibling module
+    from .causal_advanced import (
+        CausalGraphBuilder,
+        InterventionAnalyzer,
+        POMDPApproximator,
+    )
+
 __all__ = [
     "DomainRules",
     "NLPRules",
@@ -253,4 +271,12 @@ __all__ = [
     "AbductiveReasoner",
     "DefeasibleReasoner",
     "CausalChainReasoner",
+    # Causal/Decision capabilities.
+    "DecisionTreeBuilder",
+    "GameTheoryAnalyzer",
+    "CounterfactualReasoner",
+    "MultiArmedBandit",
+    "POMDPApproximator",
+    "CausalGraphBuilder",
+    "InterventionAnalyzer",
 ]

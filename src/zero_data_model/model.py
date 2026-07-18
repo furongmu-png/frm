@@ -34,6 +34,17 @@ from .capabilities.audio_advanced import (
     SpeakerRecognizer,
     SpeechSegmenter,
 )
+from .capabilities.causal import (
+    CounterfactualReasoner,
+    DecisionTreeBuilder,
+    GameTheoryAnalyzer,
+    MultiArmedBandit,
+)
+from .capabilities.causal_advanced import (
+    CausalGraphBuilder,
+    InterventionAnalyzer,
+    POMDPApproximator,
+)
 from .capabilities.code import (
     ASTAnalyzer,
     CodeEncoder,
@@ -87,6 +98,7 @@ from .capabilities.robotics_advanced import (
 from .capabilities.rules import (
     AnalyticsRules,
     AudioRules,
+    CausalRules,
     CodeRules,
     GraphRules,
     NLPRules,
@@ -392,6 +404,28 @@ class ZeroDataModel:
         )
         self.reasoning_causal_chain = CausalChainReasoner(
             dim=dim, rules=self.reasoning_rules
+        )
+        # Causal/Decision domain capabilities (reuse existing core module
+        # instances for free-energy scoring where relevant).
+        self.causal_rules = CausalRules()
+        self.causal_tree = DecisionTreeBuilder(dim=dim, rules=self.causal_rules)
+        self.causal_game = GameTheoryAnalyzer(dim=dim, rules=self.causal_rules)
+        self.causal_counterfactual = CounterfactualReasoner(
+            dim=dim,
+            active_inference=self.active_inference,
+            rules=self.causal_rules,
+        )
+        self.causal_bandit = MultiArmedBandit(dim=dim, rules=self.causal_rules)
+        self.causal_pomdp = POMDPApproximator(
+            dim=dim,
+            active_inference=self.active_inference,
+            rules=self.causal_rules,
+        )
+        self.causal_graph = CausalGraphBuilder(dim=dim, rules=self.causal_rules)
+        self.causal_intervention = InterventionAnalyzer(
+            dim=dim,
+            active_inference=self.active_inference,
+            rules=self.causal_rules,
         )
         # Hardware acceleration: parallel module execution + GPU-aware arrays.
         # When a seed is set, force sequential execution so the per-module
@@ -1141,3 +1175,69 @@ class ZeroDataModel:
         """Trace the causal chain starting from ``start`` (DFS with cycle detection)."""
         with self._lock:
             return self.reasoning_causal_chain.trace(start, max_depth=max_depth)
+
+    # ------------------------------------------------------------------ #
+    # Causal / Decision domain facades.
+    # ------------------------------------------------------------------ #
+
+    def fit_decision_tree(self, features: np.ndarray, labels: np.ndarray) -> dict:
+        """Fit an ID3-style decision tree to ``(features, labels)``."""
+        with self._lock:
+            return self.causal_tree.fit(features, labels)
+
+    def analyze_game(
+        self,
+        payoff_a: np.ndarray,
+        payoff_b: np.ndarray | None = None,
+    ) -> dict:
+        """Analyze a 2-player normal-form game; find pure Nash equilibria."""
+        with self._lock:
+            return self.causal_game.analyze(payoff_a, payoff_b)
+
+    def counterfactual(
+        self,
+        observed: np.ndarray,
+        intervention: dict,
+        model_fn=None,
+    ) -> dict:
+        """Estimate the counterfactual outcome under ``intervention``."""
+        with self._lock:
+            return self.causal_counterfactual.counterfactual(
+                observed, intervention, model_fn=model_fn
+            )
+
+    def select_bandit_arm(self, rewards_history: list[list[float]]) -> dict:
+        """Select the next bandit arm (epsilon-greedy + UCB1)."""
+        with self._lock:
+            return self.causal_bandit.select(rewards_history)
+
+    def solve_pomdp(
+        self,
+        transitions: np.ndarray,
+        observations: np.ndarray,
+        rewards: np.ndarray,
+    ) -> dict:
+        """Solve a (PO)MDP via value iteration."""
+        with self._lock:
+            return self.causal_pomdp.solve(transitions, observations, rewards)
+
+    def discover_causal_graph(
+        self,
+        data: np.ndarray,
+        var_names: list[str] | None = None,
+    ) -> dict:
+        """Discover a causal graph from observational data (PC-style)."""
+        with self._lock:
+            return self.causal_graph.discover(data, var_names=var_names)
+
+    def intervene(
+        self,
+        data: np.ndarray,
+        intervention_var: int,
+        intervention_value: float,
+    ) -> dict:
+        """Estimate the effect of ``do(X[intervention_var] = value)``."""
+        with self._lock:
+            return self.causal_intervention.intervene(
+                data, intervention_var, intervention_value
+            )
