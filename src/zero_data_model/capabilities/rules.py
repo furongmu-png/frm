@@ -152,3 +152,90 @@ class AnalyticsRules(DomainRules):
         mu = float(np.mean(series))
         sigma = float(np.std(series)) + 1e-8
         return (series - mu) / sigma
+
+
+@dataclass
+class AudioRules(DomainRules):
+    """Audio-processing priors: STFT parameters, mel scale, onset thresholds.
+
+    All defaults follow common speech-processing conventions (16 kHz mono,
+    1024-point STFT, 26 mel bins). No learned parameters are involved.
+    """
+
+    sample_rate: int = 16000
+    frame_size: int = 1024
+    hop_size: int = 512
+    n_mels: int = 26
+    onset_threshold: float = 0.3
+    pitch_min_hz: float = 80.0
+    pitch_max_hz: float = 500.0
+    texture_labels: tuple[str, ...] = ("speech", "music", "noise", "silence")
+
+    def __post_init__(self):
+        super().__init__()
+        self.rules = {
+            "sample_rate": self.sample_rate,
+            "frame_size": self.frame_size,
+            "hop_size": self.hop_size,
+            "n_mels": self.n_mels,
+            "onset_threshold": self.onset_threshold,
+            "pitch_min_hz": self.pitch_min_hz,
+            "pitch_max_hz": self.pitch_max_hz,
+            "texture_labels": self.texture_labels,
+        }
+
+    @staticmethod
+    def hz_to_mel(hz: float) -> float:
+        """Convert Hz to mel scale (rule-based, 1127 * ln(1 + hz/700))."""
+        return 1127.0 * float(np.log1p(hz / 700.0))
+
+    @staticmethod
+    def mel_to_hz(mel: float) -> float:
+        """Convert mel to Hz (inverse of ``hz_to_mel``)."""
+        return 700.0 * (float(np.exp(mel / 1127.0)) - 1.0)
+
+
+@dataclass
+class GraphRules(DomainRules):
+    """Graph-processing priors: community resolution, path heuristics."""
+
+    default_weight: float = 1.0
+    community_resolution: float = 1.0
+    path_heuristic_weight: float = 1.0
+    centrality_normalized: bool = True
+    isomorphism_max_iter: int = 5
+
+    def __post_init__(self):
+        super().__init__()
+        self.rules = {
+            "default_weight": self.default_weight,
+            "community_resolution": self.community_resolution,
+            "path_heuristic_weight": self.path_heuristic_weight,
+            "centrality_normalized": self.centrality_normalized,
+            "isomorphism_max_iter": self.isomorphism_max_iter,
+        }
+
+
+@dataclass
+class RoboticsRules(DomainRules):
+    """Robotics priors: control timestep, velocity/acceleration limits."""
+
+    dt: float = 0.01
+    max_velocity: float = 1.0
+    max_acceleration: float = 5.0
+    arm_segments: int = 3
+    arm_length: float = 1.0
+    safety_margin: float = 0.05
+    mpc_horizon: int = 10
+
+    def __post_init__(self):
+        super().__init__()
+        self.rules = {
+            "dt": self.dt,
+            "max_velocity": self.max_velocity,
+            "max_acceleration": self.max_acceleration,
+            "arm_segments": self.arm_segments,
+            "arm_length": self.arm_length,
+            "safety_margin": self.safety_margin,
+            "mpc_horizon": self.mpc_horizon,
+        }

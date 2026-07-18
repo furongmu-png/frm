@@ -23,13 +23,24 @@ from .capabilities.analytics_advanced import (
     CausalInference,
     ChangePointDetector,
 )
+from .capabilities.audio import (
+    AudioClassifier,
+    AudioEncoder,
+    OnsetDetector,
+    PitchDetector,
+)
+from .capabilities.audio_advanced import (
+    MusicAnalyzer,
+    SpeakerRecognizer,
+    SpeechSegmenter,
+)
 from .capabilities.nlp import SemanticComparator, TextEncoder, TextGenerator, ZeroShotClassifier
 from .capabilities.nlp_advanced import (
     MultiLingualEncoder,
     SentenceEncoder,
     SyntacticAnalyzer,
 )
-from .capabilities.rules import AnalyticsRules, NLPRules, VisionRules
+from .capabilities.rules import AnalyticsRules, AudioRules, NLPRules, VisionRules
 from .capabilities.vision import FeatureExtractor, ImageEncoder, PatternRecognizer, ShapeAnalyzer
 from .capabilities.vision_advanced import (
     DepthEstimator,
@@ -211,6 +222,23 @@ class ZeroDataModel:
             dim=dim,
             active_inference=self.active_inference,
             rules=self.analytics_rules,
+        )
+        # Audio domain capabilities (reuse existing core module instances).
+        self.audio_rules = AudioRules()
+        self.audio_encoder = AudioEncoder(
+            dim=dim, math_universe=self.math_universe, rules=self.audio_rules
+        )
+        self.audio_onset = OnsetDetector(dim=dim, rules=self.audio_rules)
+        self.audio_pitch = PitchDetector(dim=dim, rules=self.audio_rules)
+        self.audio_classifier = AudioClassifier(dim=dim, rules=self.audio_rules)
+        self.audio_segmenter = SpeechSegmenter(
+            dim=dim, biological=self.biological, rules=self.audio_rules
+        )
+        self.audio_music = MusicAnalyzer(
+            dim=dim, biological=self.biological, rules=self.audio_rules
+        )
+        self.audio_speaker = SpeakerRecognizer(
+            dim=dim, math_universe=self.math_universe, rules=self.audio_rules
         )
         # Hardware acceleration: parallel module execution + GPU-aware arrays.
         # When a seed is set, force sequential execution so the per-module
@@ -643,3 +671,42 @@ class ZeroDataModel:
         """Detect distributional change points in ``series`` (returns int indices)."""
         with self._lock:
             return self.analytics_changepoint.detect(series)
+
+    # ------------------------------------------------------------------ #
+    # Audio domain facades
+    # ------------------------------------------------------------------ #
+
+    def encode_audio(self, signal: np.ndarray, sample_rate: int = 16000) -> np.ndarray:
+        """Encode a 1D audio signal into a ``dim``-length L2-normalized vector."""
+        with self._lock:
+            return self.audio_encoder.encode(signal, sample_rate=sample_rate)
+
+    def detect_onsets(self, signal: np.ndarray, sample_rate: int = 16000) -> dict:
+        """Detect note/onset events via spectral flux."""
+        with self._lock:
+            return self.audio_onset.detect(signal, sample_rate=sample_rate)
+
+    def detect_pitch(self, signal: np.ndarray, sample_rate: int = 16000) -> dict:
+        """Detect the fundamental frequency via autocorrelation."""
+        with self._lock:
+            return self.audio_pitch.detect(signal, sample_rate=sample_rate)
+
+    def classify_audio(self, signal: np.ndarray, sample_rate: int = 16000) -> dict:
+        """Classify audio texture (speech/music/noise/silence)."""
+        with self._lock:
+            return self.audio_classifier.classify(signal, sample_rate=sample_rate)
+
+    def segment_speech(self, signal: np.ndarray, sample_rate: int = 16000) -> dict:
+        """Segment audio into speech/silence regions via VAD."""
+        with self._lock:
+            return self.audio_segmenter.segment(signal, sample_rate=sample_rate)
+
+    def analyze_music(self, signal: np.ndarray, sample_rate: int = 16000) -> dict:
+        """Analyze music for tempo and beats."""
+        with self._lock:
+            return self.audio_music.analyze(signal, sample_rate=sample_rate)
+
+    def extract_speaker_features(self, signal: np.ndarray, sample_rate: int = 16000) -> np.ndarray:
+        """Extract speaker-discriminative LPC + formant features."""
+        with self._lock:
+            return self.audio_speaker.extract_features(signal, sample_rate=sample_rate)

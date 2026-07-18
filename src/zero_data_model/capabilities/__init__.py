@@ -2,7 +2,15 @@
 
 import contextlib
 
-from .rules import AnalyticsRules, DomainRules, NLPRules, VisionRules
+from .rules import (
+    AnalyticsRules,
+    AudioRules,
+    DomainRules,
+    GraphRules,
+    NLPRules,
+    RoboticsRules,
+    VisionRules,
+)
 from .vision import (
     FeatureExtractor,
     ImageEncoder,
@@ -54,11 +62,32 @@ with contextlib.suppress(ImportError):  # pragma: no cover - optional sibling mo
         ChangePointDetector,
     )
 
+# Audio capability modules (STFT encoding, onset / pitch detection, audio
+# texture classification, speech segmentation, music analysis, speaker
+# feature extraction). Same optional import guard.
+with contextlib.suppress(ImportError):  # pragma: no cover - optional sibling module
+    from .audio import (
+        AudioClassifier,
+        AudioEncoder,
+        OnsetDetector,
+        PitchDetector,
+    )
+
+with contextlib.suppress(ImportError):  # pragma: no cover - optional sibling module
+    from .audio_advanced import (
+        MusicAnalyzer,
+        SpeakerRecognizer,
+        SpeechSegmenter,
+    )
+
 __all__ = [
     "DomainRules",
     "NLPRules",
     "VisionRules",
     "AnalyticsRules",
+    "AudioRules",
+    "GraphRules",
+    "RoboticsRules",
     "TextEncoder",
     "SemanticComparator",
     "ZeroShotClassifier",
@@ -83,4 +112,12 @@ __all__ = [
     "CausalInference",
     "BayesianEstimator",
     "ChangePointDetector",
+    # Audio capabilities.
+    "AudioEncoder",
+    "OnsetDetector",
+    "PitchDetector",
+    "AudioClassifier",
+    "MusicAnalyzer",
+    "SpeechSegmenter",
+    "SpeakerRecognizer",
 ]
