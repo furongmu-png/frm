@@ -56,6 +56,119 @@ def _partial_correlation(x: np.ndarray, y: np.ndarray, z: np.ndarray) -> float:
     return float((rxy - rxz * ryz) / denom)
 
 
+# --------------------------------------------------------------------------- #
+# Student-t survival function (no scipy / statsmodels dependency).
+# --------------------------------------------------------------------------- #
+#
+# Round-9 audit R9-011: ``CausalInference.infer_cause`` previously
+# approximated the two-tailed p-value of the Pearson correlation
+# coefficient via the *standard normal* CDF
+# (``math.erf(t_stat / sqrt(2))``) despite the comment claiming a
+# "Student-t approximation". For small samples (the typical case in a
+# rule-based causal probe with ``n - lag`` ~ 3-30 points) the t
+# distribution's tail is dramatically heavier than the normal's -- e.g.
+# at ``df = 5`` and ``t = 2.5`` the true two-tailed p-value is ~0.054
+# while the normal approximation gives ~0.012, a 4.5x underestimate
+# that turns a non-significant result into a false-positive discovery.
+#
+# We implement the regularized incomplete beta function ``I_x(a, b)``
+# via Lentz's continued-fraction algorithm (Numerical Recipes §6.4)
+# and use the identity
+#     two-sided t survival = I_{df/(df + t^2)}(df/2, 1/2)
+# which is exact for the Student-t distribution.
+
+
+def _beta_cf(a: float, b: float, x: float, max_iter: int = 300, eps: float = 3e-16) -> float:
+    """Continued-fraction expansion for the incomplete beta function.
+
+    Lentz's algorithm (Numerical Recipes §5.2 ``betacf``). Returns the
+    convergent of the modified Lentz recursion -- multiply by the
+    prefactor ``x^a (1-x)^b / (a * B(a, b))`` to obtain ``I_x(a, b)``.
+    """
+    # Tiny-floor to avoid divide-by-zero when a partial denominator collapses.
+    fpmin = 1e-300
+    qab = a + b
+    qap = a + 1.0
+    qam = a - 1.0
+    c = 1.0
+    d = 1.0 - qab * x / qap
+    if abs(d) < fpmin:
+        d = fpmin
+    d = 1.0 / d
+    h = d
+    for m in range(1, max_iter + 1):
+        m2 = 2 * m
+        # Even step.
+        aa = m * (b - m) * x / ((qam + m2) * (a + m2))
+        d = 1.0 + aa * d
+        if abs(d) < fpmin:
+            d = fpmin
+        c = 1.0 + aa / c
+        if abs(c) < fpmin:
+            c = fpmin
+        d = 1.0 / d
+        h *= d * c
+        # Odd step.
+        aa = -(a + m) * (qab + m) * x / ((a + m2) * (qap + m2))
+        d = 1.0 + aa * d
+        if abs(d) < fpmin:
+            d = fpmin
+        c = 1.0 + aa / c
+        if abs(c) < fpmin:
+            c = fpmin
+        d = 1.0 / d
+        delta = d * c
+        h *= delta
+        if abs(delta - 1.0) < eps:
+            break
+    return h
+
+
+def _betai(a: float, b: float, x: float) -> float:
+    """Regularized incomplete beta function ``I_x(a, b)``.
+
+    Uses the symmetric transformation recommended by Numerical Recipes
+    (§6.4 ``betai``): when ``x >= (a+1)/(a+b+2)`` evaluate
+    ``1 - I_{1-x}(b, a)`` instead to keep the continued fraction inside
+    its rapid-convergence region.
+    """
+    if x <= 0.0:
+        return 0.0
+    if x >= 1.0:
+        return 1.0
+    # ``1/B(a, b) = Γ(a+b) / (Γ(a) Γ(b)) = exp(+lbeta)`` where
+    # ``lbeta = lgamma(a+b) - lgamma(a) - lgamma(b)``.
+    lbeta = math.lgamma(a + b) - math.lgamma(a) - math.lgamma(b)
+    if x < (a + 1.0) / (a + b + 2.0):
+        # Direct evaluation: I_x(a, b) = (x^a (1-x)^b / (a B(a,b))) * cf
+        prefactor = math.exp(
+            a * math.log(x) + b * math.log1p(-x) + lbeta - math.log(a)
+        )
+        return prefactor * _beta_cf(a, b, x)
+    # Mirror evaluation: I_x(a, b) = 1 - I_{1-x}(b, a)
+    prefactor = math.exp(
+        b * math.log1p(-x) + a * math.log(x) + lbeta - math.log(b)
+    )
+    return 1.0 - prefactor * _beta_cf(b, a, 1.0 - x)
+
+
+def _student_t_two_sided_pvalue(t_stat: float, df: int) -> float:
+    """Two-sided survival of Student's t: ``P(|T| > |t|)`` for ``df`` dof.
+
+    Uses the identity ``survival = I_{x}(df/2, 1/2)`` where
+    ``x = df / (df + t^2)`` (exact for the Student-t distribution).
+    Returns 1.0 for ``t == 0`` and 0.0 for non-finite ``t_stat``.
+    """
+    if df <= 0:
+        return 1.0
+    if not math.isfinite(t_stat):
+        return 0.0 if abs(t_stat) == math.inf else 1.0
+    if t_stat == 0.0:
+        return 1.0
+    x = df / (df + t_stat * t_stat)
+    return _betai(df / 2.0, 0.5, x)
+
+
 class CausalInference:
     """Granger-causality-style causal inference between two series (no statsmodels).
 
@@ -148,15 +261,27 @@ class CausalInference:
         causal_strength = float(np.clip(causal_strength, -1.0, 1.0))
 
         # Rule-based p-value approximation from sample size + |r|.
-        # Uses the standard Student-t approximation: t = r * sqrt((n-2)/(1-r^2))
-        # and converts the two-tailed survival to a p-value via the normal CDF
-        # (a closed-form, learning-free approximation that needs no statsmodels).
+        # Uses the exact two-sided Student-t survival function with
+        # ``df = sample_size - 2`` degrees of freedom (the canonical test
+        # for "is this Pearson correlation different from zero?").
+        #
+        # Round-9 audit R9-011: the previous implementation built the
+        # ``t_stat = r * sqrt((n-2)/(1-r^2))`` quantity (the right
+        # test statistic for "H0: r = 0") but then converted it to a
+        # p-value via the *standard-normal* CDF
+        # (``2 * (1 - Φ(|t|))``). For small ``df`` the t distribution is
+        # much heavier-tailed than the normal, so the normal approximation
+        # systematically underestimates p -- producing false-positive
+        # causal discoveries. We now route through
+        # ``_student_t_two_sided_pvalue`` (regularized incomplete beta
+        # via Lentz's continued fraction), which is exact for any ``df``
+        # and adds no external dependency.
         sample_size = max(3, n - lag)
         r_eff = abs(causal_strength)
         denom = max(1e-8, 1.0 - r_eff * r_eff)
         t_stat = r_eff * math.sqrt((sample_size - 2) / denom)
-        # Two-tailed p-value via the standard normal survival function.
-        p_value = float(2.0 * (1.0 - 0.5 * (1.0 + math.erf(t_stat / math.sqrt(2.0)))))
+        df = sample_size - 2
+        p_value = float(_student_t_two_sided_pvalue(t_stat, df))
         p_value = float(np.clip(p_value, 0.0, 1.0))
 
         return {

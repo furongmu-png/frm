@@ -82,9 +82,13 @@ def test_p1_householder_reflection_is_orthogonal(source, target):
     assert T.shape == (n, n)
     na = float(np.linalg.norm(source))
     nb = float(np.linalg.norm(target))
-    # Scaled orthogonality: T @ T.T == (nb/na)^2 * I.
+    # Scaled orthogonality: T @ T.T == (nb/na)^2 * I. Same magnitude-aware
+    # tolerance as P3 (the product accumulates float64 round-off scaled by
+    # the input magnitude, so a fixed atol would spuriously fail on
+    # large-magnitude inputs).
     scale_sq = (nb / na) ** 2
-    np.testing.assert_allclose(T @ T.T, scale_sq * np.eye(n), atol=1e-10, rtol=1e-10)
+    tol = 1e-8 * max(scale_sq, 1.0)
+    np.testing.assert_allclose(T @ T.T, scale_sq * np.eye(n), atol=tol, rtol=1e-8)
 
 
 @given(
@@ -135,8 +139,16 @@ def test_p3_householder_maps_source_to_target_direction(source, target):
     if na < 1e-12 or nb < 1e-12:
         return
     # Documented contract: T @ source == target (with magnitude).
+    # Tolerance scales with input magnitude: Householder arithmetic on
+    # large-magnitude inputs (|source| ~ 1e3) accumulates float64 round-off
+    # of order ``eps * |input|`` per operation, which dominates the absolute
+    # tolerance for ``target[i] ~ 0`` entries. A fixed ``atol=1e-10`` would
+    # spuriously fail on ``source = [1, 954, ...], target = [0, 619, ...]``
+    # where the residual at the zero entry is ``~1e-10`` (a relative error of
+    # ``1e-13`` -- float64 noise, not a logic bug).
     mapped = T @ source
-    np.testing.assert_allclose(mapped, target, atol=1e-10, rtol=1e-10)
+    tol = 1e-8 * max(na, nb, 1.0)
+    np.testing.assert_allclose(mapped, target, atol=tol, rtol=1e-8)
 
 
 # --------------------------------------------------------------------------- #
