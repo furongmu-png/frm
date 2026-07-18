@@ -62,6 +62,17 @@ from .capabilities.nlp_advanced import (
     SentenceEncoder,
     SyntacticAnalyzer,
 )
+from .capabilities.reasoning import (
+    AnalogicalReasoner,
+    DeductiveReasoner,
+    InductiveReasoner,
+    PropositionalLogicEngine,
+)
+from .capabilities.reasoning_advanced import (
+    AbductiveReasoner,
+    CausalChainReasoner,
+    DefeasibleReasoner,
+)
 from .capabilities.robotics import (
     GaitGenerator,
     KinematicsSolver,
@@ -79,6 +90,7 @@ from .capabilities.rules import (
     CodeRules,
     GraphRules,
     NLPRules,
+    ReasoningRules,
     RoboticsRules,
     TimeRules,
     VisionRules,
@@ -353,6 +365,34 @@ class ZeroDataModel:
         self.code_control_flow = ControlFlowAnalyzer(dim=dim, rules=self.code_rules)
         self.code_style = CodeStyleAnalyzer(dim=dim, rules=self.code_rules)
         self.code_dependency = DependencyGraphBuilder(dim=dim, rules=self.code_rules)
+        # Reasoning domain capabilities (reuse existing core module instances).
+        self.reasoning_rules = ReasoningRules()
+        self.reasoning_propositional = PropositionalLogicEngine(
+            dim=dim, rules=self.reasoning_rules
+        )
+        self.reasoning_deductive = DeductiveReasoner(
+            dim=dim, rules=self.reasoning_rules
+        )
+        self.reasoning_inductive = InductiveReasoner(
+            dim=dim, rules=self.reasoning_rules
+        )
+        self.reasoning_analogical = AnalogicalReasoner(
+            dim=dim,
+            category_engine=self.category_engine,
+            math_universe=self.math_universe,
+            rules=self.reasoning_rules,
+        )
+        self.reasoning_abductive = AbductiveReasoner(
+            dim=dim,
+            active_inference=self.active_inference,
+            rules=self.reasoning_rules,
+        )
+        self.reasoning_defeasible = DefeasibleReasoner(
+            dim=dim, rules=self.reasoning_rules
+        )
+        self.reasoning_causal_chain = CausalChainReasoner(
+            dim=dim, rules=self.reasoning_rules
+        )
         # Hardware acceleration: parallel module execution + GPU-aware arrays.
         # When a seed is set, force sequential execution so the per-module
         # child Generators (spawned in ``__init__``) are consumed in a fixed
@@ -1031,3 +1071,73 @@ class ZeroDataModel:
         """Build a module-level import dependency graph."""
         with self._lock:
             return self.code_dependency.build(source)
+
+    # ------------------------------------------------------------------ #
+    # Reasoning domain facades
+    # ------------------------------------------------------------------ #
+
+    def add_logical_fact(self, proposition: str, value: bool) -> None:
+        """Add a fact to the propositional logic knowledge base."""
+        with self._lock:
+            self.reasoning_propositional.add_fact(proposition, value)
+
+    def add_logical_rule(self, antecedent: str, consequent: str) -> None:
+        """Add a modus-ponens rule ``antecedent -> consequent``."""
+        with self._lock:
+            self.reasoning_propositional.add_rule(antecedent, consequent)
+
+    def infer_logical(self) -> dict:
+        """Run forward inference (modus ponens) until fixpoint."""
+        with self._lock:
+            return self.reasoning_propositional.infer()
+
+    def syllogism(self, major: tuple, minor: tuple) -> dict:
+        """Apply a categorical syllogism (Barbara / Celarent / Darii / Ferio)."""
+        with self._lock:
+            return self.reasoning_deductive.syllogism(major, minor)
+
+    def induct_rule(
+        self, examples: list[dict], labels: list[bool]
+    ) -> dict:
+        """Induce the best (key, value) rule from labeled examples."""
+        with self._lock:
+            return self.reasoning_inductive.generalize(examples, labels)
+
+    def analogize(self, source: dict, target: dict) -> dict:
+        """Map source attributes to target attributes by structural similarity."""
+        with self._lock:
+            return self.reasoning_analogical.analogize(source, target)
+
+    def abduce(
+        self,
+        observation: str,
+        hypotheses: list[str],
+        priors: list[float] | None = None,
+    ) -> dict:
+        """Find the best explanation for ``observation`` among ``hypotheses``."""
+        with self._lock:
+            return self.reasoning_abductive.explain(
+                observation, hypotheses, priors=priors
+            )
+
+    def add_default_rule(
+        self, rule: tuple, exception: tuple | None = None
+    ) -> None:
+        """Add a defeasible default rule with optional exception."""
+        with self._lock:
+            self.reasoning_defeasible.add_default(rule, exception=exception)
+
+    def conclude_defaults(self, facts: dict) -> dict:
+        """Apply defaults to ``facts`` (returns conclusions, defeated, ambiguous)."""
+        with self._lock:
+            return self.reasoning_defeasible.conclude(facts)
+
+    def add_causal_link(self, cause: str, effect: str) -> None:
+        """Add a causal edge ``cause -> effect``."""
+        with self._lock:
+            self.reasoning_causal_chain.add_causal(cause, effect)
+
+    def trace_causal_chain(self, start: str, max_depth: int = 5) -> dict:
+        """Trace the causal chain starting from ``start`` (DFS with cycle detection)."""
+        with self._lock:
+            return self.reasoning_causal_chain.trace(start, max_depth=max_depth)

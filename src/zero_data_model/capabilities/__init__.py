@@ -152,6 +152,23 @@ with contextlib.suppress(ImportError):  # pragma: no cover - optional sibling mo
         DependencyGraphBuilder,
     )
 
+# Reasoning capability modules (propositional logic, deduction, induction,
+# analogy, abduction, defeasible reasoning, causal chains).
+with contextlib.suppress(ImportError):  # pragma: no cover - optional sibling module
+    from .reasoning import (
+        AnalogicalReasoner,
+        DeductiveReasoner,
+        InductiveReasoner,
+        PropositionalLogicEngine,
+    )
+
+with contextlib.suppress(ImportError):  # pragma: no cover - optional sibling module
+    from .reasoning_advanced import (
+        AbductiveReasoner,
+        CausalChainReasoner,
+        DefeasibleReasoner,
+    )
+
 __all__ = [
     "DomainRules",
     "NLPRules",
@@ -228,4 +245,12 @@ __all__ = [
     "ControlFlowAnalyzer",
     "CodeStyleAnalyzer",
     "DependencyGraphBuilder",
+    # Reasoning capabilities.
+    "PropositionalLogicEngine",
+    "DeductiveReasoner",
+    "InductiveReasoner",
+    "AnalogicalReasoner",
+    "AbductiveReasoner",
+    "DefeasibleReasoner",
+    "CausalChainReasoner",
 ]
