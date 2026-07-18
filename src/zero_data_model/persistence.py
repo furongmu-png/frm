@@ -28,6 +28,26 @@ import numpy as np
 
 from .model import ZeroDataModel
 
+
+# Round-10 audit R10-A-001: helper to convert a numpy bit_generator.state
+# dict (which may contain numpy scalars/arrays for some bit generators
+# such as MT19937) into a JSON-serializable structure. PCG64 (the default
+# Generator) already returns plain Python ints, but we recurse defensively
+# so any bit generator type round-trips through JSON cleanly.
+def _rng_state_to_jsonable(state: Any) -> Any:
+    """Recursively convert numpy types in an RNG state dict to JSON-safe."""
+    if isinstance(state, dict):
+        return {k: _rng_state_to_jsonable(v) for k, v in state.items()}
+    if isinstance(state, (list, tuple)):
+        return [_rng_state_to_jsonable(v) for v in state]
+    if isinstance(state, np.integer):
+        return int(state)
+    if isinstance(state, np.floating):
+        return float(state)
+    if isinstance(state, np.ndarray):
+        return state.tolist()
+    return state
+
 # Round-5 audit PERSIST5-5: cap config.json size to prevent OOM via a hostile
 # multi-MB JSON that would exhaust the parser before any validation runs.
 _MAX_CONFIG_BYTES: int = 1 << 20  # 1 MiB — a legitimate config is ~1 KiB.
@@ -323,9 +343,38 @@ class ModelSerializer:
             "functor_morphism_counts": functor_morphism_counts,
             "n_morphogens": len(model.biological.morphogenetic.morphogens),
             "n_fractal_transforms": len(model.math_universe.fractal.transforms),
+            # Round-10 audit R10-A-001: persist the seed so the loaded model
+            # is reconstructed with the same quantum backend choice
+            # (``"simulator"`` when a seed is set, auto-detected otherwise)
+            # AND so the RNG state file below is interpreted against the
+            # correct seeding context. ``None`` (unseeded) is saved as JSON
+            # ``null`` and round-trips cleanly.
+            "seed": int(model._seed) if model._seed is not None else None,
         }
         with open(os.path.join(path, "config.json"), "w", encoding="utf-8") as f:
             json.dump(config, f, indent=2, sort_keys=True)
+
+        # Round-10 audit R10-A-001: persist the parent Generator's bit state
+        # and each cognitive module's child Generator state. Without this,
+        # save→load silently swaps the RNG position to the beginning of a
+        # fresh entropy stream, so a seeded model's think() outputs diverge
+        # across save→load — defeating the entire purpose of seeded
+        # reproducibility. The file is OPTIONAL (old snapshots don't have
+        # it) so backward compatibility on load is preserved; new snapshots
+        # always write it. The state dict is converted to JSON-safe types
+        # via ``_rng_state_to_jsonable`` because some bit generators
+        # (MT19937) embed numpy arrays / scalars in their state.
+        rng_state = {
+            "parent_state": _rng_state_to_jsonable(
+                model._rng.bit_generator.state
+            ),
+            "child_states": [
+                _rng_state_to_jsonable(m._rng.bit_generator.state)
+                for m in model.modules
+            ],
+        }
+        with open(os.path.join(path, "rng_state.json"), "w", encoding="utf-8") as f:
+            json.dump(rng_state, f, indent=2, sort_keys=True)
 
     # ------------------------------------------------------------------ #
     # load
@@ -382,11 +431,21 @@ class ModelSerializer:
         # BYTES under the lock (cheap: sequential disk read) and defer
         # the heavy ``np.load`` + validation + assignment to the unlocked
         # section below, preserving load concurrency.
+        # Round-10 audit R10-A-001: also read rng_state.json under the
+        # same lock so it cannot be torn relative to config + npz.
+        rng_state_path = os.path.join(target, "rng_state.json")
+        rng_state_text: str | None = None
         with _PERSISTENCE_LOCK:
             with open(config_path, encoding="utf-8") as f:
                 config = json.load(f)
             with open(npz_path, "rb") as f:
                 npz_bytes = f.read()
+            # rng_state.json is OPTIONAL (old snapshots predating R10-A-001
+            # don't have it). Read it under the lock if present so a
+            # concurrent save cannot swap it out from under us.
+            if os.path.isfile(rng_state_path):
+                with open(rng_state_path, encoding="utf-8") as f:
+                    rng_state_text = f.read()
 
         # Round-3 audit B-batch: validate the scalar config before acting on
         # any of it. A hostile or corrupt config.json could otherwise request
@@ -412,11 +471,38 @@ class ModelSerializer:
                 f"refusing to load model with dim={dim!r}: must be in [1, 4096]"
             )
 
+        # Round-10 audit R10-A-001: validate the optional ``seed`` field so
+        # the loaded model is reconstructed with the same seed as the saved
+        # model. This matters because the constructor branches on ``seed``:
+        #   * it forces ``quantum_backend="simulator"`` when a seed is set
+        #     (so seeded models stay reproducible across save→load), and
+        #   * it pins BLAS thread count + spawns deterministic child RNGs.
+        # Old snapshots predating R10-A-001 omit ``seed`` entirely; we treat
+        # that as ``None`` (the previous default behaviour).
+        seed_raw = config.get("seed", None)
+        if seed_raw is None:
+            seed = None
+        elif isinstance(seed_raw, bool) or not isinstance(seed_raw, int):
+            raise ValueError(
+                "config['seed'] must be a plain int or null, got "
+                f"{type(seed_raw).__name__}: {seed_raw!r}"
+            )
+        elif seed_raw < 0 or seed_raw > 2**63 - 1:
+            raise ValueError(
+                f"config['seed']={seed_raw!r} out of supported range "
+                f"[0, 2^63 - 1]"
+            )
+        else:
+            seed = int(seed_raw)
+
         # Build a fresh model of the same dim, then overwrite every saved
         # numpy attribute from the npz. Fresh construction handles wiring up
         # the quantum backend (auto-detect on this machine), capability
         # modules, parallel executor, etc.
-        model = ZeroDataModel(dim=dim)
+        # Round-10 audit R10-A-001: pass the saved ``seed`` so the quantum
+        # backend choice (simulator vs. real) is consistent with the saved
+        # model. RNG states are restored AFTER construction below.
+        model = ZeroDataModel(dim=dim, seed=seed)
 
         # Round-3 audit B-batch: detect architecture mismatches up front. The
         # loop below silently truncates extra layers/functors, which is silent
@@ -758,6 +844,53 @@ class ModelSerializer:
                     )
                 loaded_transforms.append((scale, offset))
             model.math_universe.fractal.transforms = loaded_transforms
+
+        # Round-10 audit R10-A-001: restore the parent + child RNG states so
+        # the loaded model resumes from the exact RNG position the saved
+        # model left off. Without this, save→load silently swaps the RNG to
+        # a fresh entropy stream — seeded reproducibility breaks because
+        # the next ``think()`` cycle draws different stochastic noise.
+        # We restore AFTER construction (which seeded fresh generators) so
+        # we overwrite the freshly-seeded state with the saved state.
+        if rng_state_text is not None:
+            try:
+                rng_state = json.loads(rng_state_text)
+            except json.JSONDecodeError as exc:
+                raise ValueError(
+                    f"rng_state.json is not valid JSON: {exc}"
+                ) from exc
+            if not isinstance(rng_state, dict) \
+                    or "parent_state" not in rng_state \
+                    or "child_states" not in rng_state:
+                raise ValueError(
+                    "rng_state.json must be an object with 'parent_state' "
+                    "and 'child_states' keys"
+                )
+            child_states = rng_state["child_states"]
+            if not isinstance(child_states, list) \
+                    or len(child_states) != len(model.modules):
+                raise ValueError(
+                    f"rng_state.json child_states must be a list of length "
+                    f"{len(model.modules)} (number of cognitive modules), got "
+                    f"{type(child_states).__name__} of length "
+                    f"{len(child_states) if isinstance(child_states, list) else 'n/a'}"
+                )
+            try:
+                model._rng.bit_generator.state = rng_state["parent_state"]
+            except (ValueError, TypeError, KeyError) as exc:
+                raise ValueError(
+                    f"could not restore parent RNG state from rng_state.json: {exc}"
+                ) from exc
+            for idx, (module, child_state) in enumerate(
+                zip(model.modules, child_states, strict=True)
+            ):
+                try:
+                    module._rng.bit_generator.state = child_state
+                except (ValueError, TypeError, KeyError) as exc:
+                    raise ValueError(
+                        f"could not restore child RNG state {idx} "
+                        f"({type(module).__name__}) from rng_state.json: {exc}"
+                    ) from exc
 
         return model
 

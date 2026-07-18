@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -253,6 +254,18 @@ class CategoryTheoryEngine(CognitiveModule):
         nb = float(np.linalg.norm(b))
         if na < 1e-12 or nb < 1e-12:
             return None
+        # Round-10 audit R10-A-004: reject extreme norm ratios so the
+        # scaled Householder map ``T = (nb/na) * (I - 2vv^T)`` does not
+        # become ill-conditioned. A scale of 1e6 produces a condition
+        # number of ~1e12 (scale² * orthogonal matrix), which amplifies
+        # float64 round-off (~1e-15) into the significant digits of any
+        # downstream ``transfer_solution`` call. The threshold ``1e6``
+        # matches the maximum ``prediction_error`` clip used across the
+        # cognitive stack and is generous enough to admit any practical
+        # solution-transfer scenario.
+        scale = nb / na
+        if not math.isfinite(scale) or scale > 1e6 or scale < 1e-6:
+            return None
         a_hat = a / na
         b_hat = b / nb
         v = a_hat - b_hat
@@ -260,12 +273,11 @@ class CategoryTheoryEngine(CognitiveModule):
         if v_norm < 1e-12:
             # source and target are already aligned up to magnitude:
             # T = (nb/na) * I maps source -> target exactly.
-            return (nb / na) * np.eye(n)
+            return scale * np.eye(n)
         v = v / v_norm
         # Scaled Householder reflection: orthogonal reflection (I - 2 v v^T)
         # maps a_hat -> b_hat, then the (nb/na) scalar rescales the magnitude
         # so T @ source = (nb/na) * (|source| * b_hat) = nb * b_hat = target.
-        scale = nb / na
         return scale * (np.eye(n) - 2.0 * np.outer(v, v))
 
     def transfer_solution(

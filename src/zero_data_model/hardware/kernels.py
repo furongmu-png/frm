@@ -184,6 +184,17 @@ def _betti_numbers(sorted_vals, max_radius):
     sorted points are in the same component iff the gap between them is
     ``<= max_radius``). The previous ``max_radius / n_points`` shrank as
     the point count grew, making the count meaningless for large inputs.
+
+    Round-10 audit R10-A-008: ``betti_1`` is now always 0. A 1D point
+    cloud's Vietoris-Rips complex is at most a 1-dimensional simplicial
+    complex (vertices + edges); it has no 2-simplices, so its first
+    homology group ``H_1`` is trivially zero (no 1-loops). The previous
+    ``betti_1 = n_points - betti_0`` formula computed an unrelated
+    quantity (it would return 9 for a 10-point cloud with 1 component),
+    violating the function's documented contract. The only current
+    caller (``connected_components_1d``) discards ``betti_1`` via
+    ``betti_0, _ = _betti_numbers(...)``, so the change is behaviorally
+    a no-op for active callers but honors the contract for future use.
     """
     n_points = len(sorted_vals)
     betti_0 = 1
@@ -191,10 +202,8 @@ def _betti_numbers(sorted_vals, max_radius):
         gap = sorted_vals[i] - sorted_vals[i - 1]
         if gap > max_radius:
             betti_0 += 1
-    betti_1 = n_points - betti_0
-    if betti_1 < 0:
-        betti_1 = 0
-    return betti_0, betti_1
+    # 1D point clouds have no 1-loops: the first Betti number is 0.
+    return betti_0, 0
 
 
 # ---------------------------------------------------------------------------

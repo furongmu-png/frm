@@ -351,7 +351,21 @@ class BayesianEstimator:
             return
         prior_prec = 1.0 / max(self.normal_var, 1e-12)
         prior_prec = min(prior_prec, 1e12)
-        lik_prec = 1.0 / self.known_var
+        # Round-10 audit R10-A-006: clamp ``lik_prec`` symmetrically with
+        # ``prior_prec``. The previous ``1.0 / self.known_var`` had no
+        # upper bound, so a degenerate ``known_var`` (e.g. 1e-20) made
+        # ``lik_prec = 1e20`` dominate the prior entirely (single
+        # observation overrode any prior strength) AND drove
+        # ``posterior_var = 1 / (1e12 + 1e20) ≈ 1e-20`` -- a spurious
+        # over-confidence that collapsed subsequent predictive
+        # confidence intervals. ``known_var <= 0`` raised
+        # ZeroDivisionError. Symmetric clamp with ``prior_prec`` keeps
+        # the update numerically stable while preserving the conjugate
+        # formula's semantics for any sane ``known_var``.
+        lik_prec = 1.0 / max(float(self.known_var), 1e-12)
+        lik_prec = min(lik_prec, 1e12)
+        if not math.isfinite(lik_prec) or lik_prec <= 0:
+            return
         # Online update: treat each scalar as a single observation.
         new_prec = prior_prec + lik_prec
         new_mean = (self.normal_mean * prior_prec + obs * lik_prec) / new_prec

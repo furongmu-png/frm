@@ -257,10 +257,19 @@ class TopologicalAnalyzer:
         return {0: self.connected_components_1d(data, max_radius), 1: 0}
 
     def topological_features(self, data: np.ndarray) -> np.ndarray:
-        betti = self.compute_betti_numbers(data)
+        # Round-10 audit R10-C-002: call the non-deprecated API directly.
+        # The previous ``self.compute_betti_numbers(data)`` call internally
+        # emitted a DeprecationWarning on every ``model.think()`` cycle
+        # (since ``topological_features`` is on the hot path) -- harmless
+        # behaviorally, but polluted the warning stream and would crash
+        # any caller running with ``warnings.filterwarnings("error",
+        # category=DeprecationWarning)``. The deprecation wrapper only
+        # forwards to ``connected_components_1d`` anyway, so calling the
+        # underlying API directly is equivalent and warning-free.
+        betti_0 = self.connected_components_1d(data)
         features = np.zeros(self.dim)
-        features[0] = betti[0]
-        features[1] = betti.get(1, 0)
+        features[0] = betti_0
+        features[1] = 0  # 1D point clouds have no 1-loops
         d = data.flatten()[: self.dim]
         features[2] = np.mean(d)
         features[3] = np.std(d)
@@ -383,8 +392,20 @@ class MathematicalUniverse(CognitiveModule):
     def update(self, prediction_error: float) -> None:
         if not np.isfinite(prediction_error):
             return
-        prediction_error = float(np.clip(prediction_error, -1e6, 1e6))
+        # Round-10 audit R10-C-001: clip to ``[0, 1e6]`` and clamp the
+        # step size to 0.1, matching ``active_inference`` /
+        # ``category_engine`` / ``biological`` / ``quantum_hybrid`` /
+        # ``consciousness_core`` (Round-8 THEORY8-clip contract). The
+        # previous ``[-1e6, 1e6]`` clip allowed negative values to flip
+        # the noise sign (gradient ascent, not descent), and the absence
+        # of a step clamp let a runaway ``prediction_error`` near the
+        # 1e6 ceiling inject 1000 std-dev noise in a single step
+        # (1e6 * 0.001 = 1000), destroying the learned fractal transforms.
+        prediction_error = float(np.clip(prediction_error, 0.0, 1e6))
+        step = float(np.clip(prediction_error * 0.001, 0.0, 0.1))
+        if step == 0.0:
+            return
         for i, (scale, offset) in enumerate(self.fractal.transforms):
             # Round-3 audit CRIT-1: per-module Generator
-            noise = self._rng.standard_normal(scale.shape) * prediction_error * 0.001
+            noise = self._rng.standard_normal(scale.shape) * step
             self.fractal.transforms[i] = (scale + noise, offset)

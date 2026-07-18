@@ -201,11 +201,19 @@ class ConsciousnessCore(CognitiveModule):
     def update(self, prediction_error: float) -> None:
         if not np.isfinite(prediction_error):
             return
-        prediction_error = float(np.clip(prediction_error, -1e6, 1e6))
+        # Round-10 audit R10-C-004: clip to ``[0, 1e6]`` to match the
+        # Round-8 THEORY8-clip contract enforced in ``active_inference``,
+        # ``category_engine``, ``biological``, ``quantum_hybrid`` and
+        # ``math_universe`` (R10-C-001). The previous ``[-1e6, 1e6]``
+        # clip was dead code (``prediction_error`` is an MSE by
+        # construction and is non-negative) but signalled an inconsistent
+        # contract that future edits could have flipped into a gradient-
+        # ascent hazard by removing the ``abs()`` below.
+        prediction_error = float(np.clip(prediction_error, 0.0, 1e6))
         # Round-3 audit: clamp the effective noise scale so a runaway
         # prediction_error near the 1e6 ceiling does not destroy learned
         # weights in a single step (1e6 * 0.001 = 1000 std-dev noise).
-        step = float(np.clip(abs(prediction_error) * 0.001, 0.0, 0.1))
+        step = float(np.clip(prediction_error * 0.001, 0.0, 0.1))
         if step == 0.0:
             return
         for layer in self.layers:

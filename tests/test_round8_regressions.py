@@ -1137,36 +1137,17 @@ def test_perf8_7_recent_actions_stays_in_lockstep_with_action_history():
         )
 
 
-def test_perf8_7_compute_sigma_q2_uses_recent_actions_not_full_history():
-    """``_compute_sigma_q2`` must read from ``_recent_actions`` (maxlen=32),
-    not from ``action_history`` (maxlen=1000). We verify by making the
-    two deques hold DIFFERENT data and checking that sigma_q2 reflects
-    ``_recent_actions``."""
-    engine = ActiveInferenceEngine(
-        state_dim=8, obs_dim=4, action_dim=2, rng=np.random.default_rng(97)
-    )
-    # Manually populate both deques with different distributions:
-    # action_history -> all zeros, _recent_actions -> all ones.
-    # If sigma_q2 reads _recent_actions, the variance will be ~0 (all ones);
-    # if it reads action_history, the variance will also be ~0 (all zeros).
-    # Use a clear contrast: history = constant; recent = varied.
-    engine.action_history.clear()
-    engine._recent_actions.clear()
-    for _ in range(40):
-        engine.action_history.append(np.zeros(2))
-    # _recent_actions only takes the last 32 of these (all zeros).
-    for _ in range(32):
-        engine._recent_actions.append(np.array([1.0, -1.0]))
-    # Invalidate the cache.
-    engine._sigma_q2_dirty = True
-    sigma_q2 = engine._compute_sigma_q2()
-    # var of [1, -1] per dim = 1.0, mean = 1.0. sigma_q2 ~ 1.0 + 1e-6.
-    # If sigma_q2 read action_history (all zeros), var would be 0, and
-    # sigma_q2 would be 1e-6 -> fall through to the ``<= 0`` fallback of 1.0.
-    # Both paths give ~1.0 here; the test mainly ensures the function does
-    # not crash and returns a finite value when the deques are out of sync.
-    assert np.isfinite(sigma_q2)
-    assert sigma_q2 > 0
+# R10-C-007 (Round-10 audit): the previous
+# ``test_perf8_7_compute_sigma_q2_uses_recent_actions_not_full_history``
+# test was brittle -- its own comment admitted "both paths give ~1.0 here;
+# the test mainly ensures the function does not crash". Rolling back the
+# R9-015 fix would not fail it. The replacement
+# ``test_r9_015_compute_sigma_q2_reads_recent_actions_not_full_history``
+# in tests/test_round9_regressions.py uses data that actually distinguishes
+# the two code paths (action_history=[1,-1] -> var ~1.0 vs
+# _recent_actions=[0,0] -> var ~0), so the brittle test was removed. The
+# capacity test below is kept because it exercises a different invariant
+# (deque size).
 
 
 def test_perf8_7_recent_actions_evicts_old_entries_at_32():
@@ -1482,24 +1463,13 @@ def test_concur8_7_map_does_not_deadlock_when_concurrent_with_shutdown():
 # --------------------------------------------------------------------------- #
 
 
-def test_concur8_8_think_endpoint_reads_under_model_lock(api_client):
-    """The ``/think`` endpoint must read ``cycle_count`` and
-    ``free_energy_history[-1]`` under ``model._lock`` so the two prometheus
-    gauges are consistent with each other (and with the response body's
-    ``cycle`` field). We verify by re-entering ``_lock`` (RLock) from the
-    test thread: if the endpoint already released the lock, our re-acquire
-    succeeds; the consistency check is structural (we just verify the
-    response body's cycle == model.cycle_count after the call)."""
-    r = api_client.post("/think", json={"input": [0.1, 0.2, 0.3, 0.4]})
-    assert r.status_code == 200
-    body = r.json()
-    # After the think call, cycle_count in the model must equal the cycle
-    # field in the response (no concurrent think between think() return and
-    # the prometheus reads -- the lock guarantees consistency).
-    # We cannot easily get the model from the client, so we just verify
-    # the response shape and that cycle is a positive int.
-    assert isinstance(body["cycle"], int)
-    assert body["cycle"] >= 1
+# R10-C-008 (Round-10 audit): the previous ``test_concur8_8_think_endpoint_reads_under_model_lock``
+# was a weak test -- its own comment admitted "we cannot easily get the model from the client, so we
+# just verify the response shape". It only asserted ``isinstance(body["cycle"], int)`` and
+# ``body["cycle"] >= 1``, which hold even after rolling back the CONCUR8-8 fix. The replacement
+# ``test_concur8_8_think_response_cycle_matches_model_cycle_count`` below acquires the model via
+# ``get_model()`` and asserts ``body["cycle"] == model.cycle_count`` -- a real consistency check
+# that would fail if the lock were dropped.
 
 
 def test_concur8_8_think_response_cycle_matches_model_cycle_count(api_client):

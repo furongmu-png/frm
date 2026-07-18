@@ -192,7 +192,18 @@ class ZeroDataModel:
     # --- Advanced NLP capabilities ---
 
     def detect_script(self, text: str) -> str:
-        """Detect the dominant script of ``text`` (latin/cyrillic/cjk/arabic/mixed)."""
+        """Detect the dominant script of ``text``.
+
+        Returns one of 11 recognized script names (latin, cyrillic, greek,
+        hebrew, arabic, devanagari, thai, hiragana, katakana, cjk, hangul),
+        ``'mixed'`` (when no single script dominates the recognized chars),
+        or ``'unknown'`` (when no recognized-script character is present).
+
+        Round-10 audit R10-C-006: the previous docstring listed only 5
+        scripts (latin/cyrillic/cjk/arabic/mixed); the implementation has
+        supported 11 scripts since Fix 18, but the docstring was never
+        updated.
+        """
         ...
 
     def encode_multilingual(self, text: str) -> np.ndarray:

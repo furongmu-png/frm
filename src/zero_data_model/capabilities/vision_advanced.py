@@ -247,7 +247,19 @@ class DepthEstimator:
         self.math_universe = math_universe or MathematicalUniverse(dim=dim)
 
     def _texture_gradient(self, img: np.ndarray) -> np.ndarray:
-        """Per-row local std as a texture gradient prior; high std = near."""
+        """Per-row local std as a texture gradient prior; high std = near.
+
+        Round-10 audit R10-A-005: the previous variance computation used the
+        unstable ``E[X^2] - (E[X])^2`` form (``sums_sq / window - means**2``),
+        which suffers catastrophic cancellation when row values have a
+        large mean relative to their std (e.g. a bright constant background
+        with small texture variation). The variance becomes the difference
+        of two large nearly-equal numbers, losing 8+ digits of precision
+        and sometimes going negative before the ``np.maximum(..., 0.0)``
+        clamp. We now use the two-pass stable formula ``mean((x - mean)^2)``
+        via ``sliding_window_view`` so the result is exact to float64
+        precision across all input magnitudes.
+        """
         h, w = img.shape
         if h < 2 or w < 2:
             return np.zeros_like(img, dtype=float)
@@ -255,19 +267,19 @@ class DepthEstimator:
         # Compute per-row rolling std with a window of 3 (rule-based prior).
         window = 3
         row_stds = np.zeros(h, dtype=float)
-        for i in range(h):
-            row = img[i]
-            if w < window:
-                row_stds[i] = float(np.std(row)) if w > 1 else 0.0
-            else:
-                # Rolling std with a sliding window of `window` pixels.
-                csum = np.cumsum(np.insert(row, 0, 0.0))
-                csum_sq = np.cumsum(np.insert(row ** 2, 0, 0.0))
-                sums = csum[window:] - csum[:-window]
-                sums_sq = csum_sq[window:] - csum_sq[:-window]
-                means = sums / window
-                var = np.maximum(sums_sq / window - means ** 2, 0.0)
-                row_stds[i] = float(np.mean(np.sqrt(var)))
+        if w < window:
+            for i in range(h):
+                row_stds[i] = float(np.std(img[i])) if w > 1 else 0.0
+        else:
+            for i in range(h):
+                row = img[i]
+                # Sliding window view: shape (n_windows, window). The two-pass
+                # form (subtract the window mean, then square and average)
+                # is numerically stable across all input magnitudes.
+                windows = np.lib.stride_tricks.sliding_window_view(row, window)
+                means = windows.mean(axis=1, keepdims=True)
+                var = ((windows - means) ** 2).mean(axis=1)
+                row_stds[i] = float(np.mean(np.sqrt(np.maximum(var, 0.0))))
         # Map row stds into [0, 1]; high std => near (large depth value).
         rs = row_stds - row_stds.min()
         rs_max = rs.max()

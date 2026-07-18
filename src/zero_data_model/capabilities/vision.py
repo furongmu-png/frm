@@ -292,8 +292,15 @@ class ShapeAnalyzer:
         # Use a category-engine-backed topology analyzer when one is available;
         # otherwise fall back to a rule-based connected-components count.
         if self.category_engine is not None and hasattr(self.category_engine, "topology"):
-            betti = self.category_engine.topology.compute_betti_numbers(img.flatten())
-            return float(betti.get(0, 1))
+            # Round-10 audit R10-C-003: call the non-deprecated
+            # ``connected_components_1d`` API. The previous call to
+            # ``compute_betti_numbers`` emitted a ``DeprecationWarning`` on
+            # every ``analyze_shape`` invocation, polluting the warning
+            # stream (and crashing any caller that escalates
+            # DeprecationWarning to an error).
+            return float(
+                self.category_engine.topology.connected_components_1d(img.flatten())
+            )
         binary = (img >= img.mean()).astype(int)
         # scipy.ndimage.label is ~200-800x faster than the previous
         # double for + DFS implementation (P-HIGH-01). The cross structure

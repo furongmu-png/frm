@@ -140,7 +140,13 @@ def test_betti_numbers_matches_python_loop():
         gap = data[i] - data[i - 1]
         if gap > max_radius:
             expected_b0 += 1
-    expected_b1 = max(0, n_points - expected_b0)
+    # Round-10 audit R10-A-008: ``betti_1`` is 0 for 1D point clouds.
+    # A Vietoris-Rips complex built on a 1D point cloud has no 1-cycles
+    # (no closed loops), so the first Betti number vanishes. The old
+    # ``expected_b1 = max(0, n_points - expected_b0)`` formula computed
+    # an unrelated quantity and disagreed with the kernel's corrected
+    # output. See ``kernels._betti_numbers`` for the full justification.
+    expected_b1 = 0
 
     got_b0, got_b1 = kernels._betti_numbers(
         np.ascontiguousarray(data, dtype=float),

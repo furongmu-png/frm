@@ -453,20 +453,33 @@ def test_new7_1_source_has_no_internal_find_isomorphism_callers():
       * the definition + deprecation wrapper in ``category_engine.py``
       * docstring/comment references in ``model.py`` and ``kernels.py``
       * the type stub in ``category_engine.pyi``
+
+    Round-10 audit R10-C-009: the guard now ALSO scans for
+    ``.compute_betti_numbers(`` calls (the other deprecated alias in
+    ``math_universe.py``). The previous guard only scanned
+    ``find_isomorphism``, so the internal ``topological_features`` and
+    ``ShapeAnalyzer._betti0`` call sites leaked through and emitted
+    ``DeprecationWarning`` on every ``model.think()`` / ``analyze_shape``
+    cycle (fixed in R10-C-002 and R10-C-003).
     """
     import re
     from pathlib import Path
 
     src_root = Path(__file__).resolve().parent.parent / "src" / "zero_data_model"
-    # Files that are allowed to mention ``find_isomorphism`` (definition,
-    # docs, stubs). Call sites must use ``structural_similarity``.
+    # Files that are allowed to mention ``find_isomorphism`` or
+    # ``compute_betti_numbers`` (definitions, deprecation wrappers, docs,
+    # stubs). Call sites must use ``structural_similarity`` /
+    # ``connected_components_1d`` / ``vietoris_rips_betti``.
     allowlist = {
-        "category_engine.py",     # defines + deprecates the alias
+        "category_engine.py",     # defines + deprecates find_isomorphism
         "category_engine.pyi",     # type stub mirrors the alias
-        "hardware/kernels.py",     # docstring comment only
+        "hardware/kernels.py",      # docstring comment only
+        "math_universe.py",         # defines + deprecates compute_betti_numbers
+        "math_universe.pyi",        # type stub
     }
-    # Pattern: a real call ``.find_isomorphism(`` (not a def, not a comment).
-    call_re = re.compile(r"\.find_isomorphism\s*\(")
+    # Pattern: a real call ``.find_isomorphism(`` or
+    # ``.compute_betti_numbers(`` (not a def, not a comment).
+    call_re = re.compile(r"\.(find_isomorphism|compute_betti_numbers)\s*\(")
 
     violations: list[str] = []
     for py in src_root.rglob("*.py"):
@@ -485,6 +498,7 @@ def test_new7_1_source_has_no_internal_find_isomorphism_callers():
                 continue
             violations.append(f"{py.name}: {line.strip()}")
     assert violations == [], (
-        "production code still calls deprecated find_isomorphism: "
+        "production code still calls deprecated "
+        "find_isomorphism / compute_betti_numbers: "
         + "; ".join(violations)
     )
