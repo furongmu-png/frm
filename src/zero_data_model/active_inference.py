@@ -283,13 +283,40 @@ class ActiveInferenceEngine(CognitiveModule):
         with ``action_history`` by ``process``, so we only ever materialise
         up to 32 entries — O(32) instead of O(1000) per CFE burst (×9 per
         cycle when the cache is cold).
+
+        Round-10 audit R10-A-002 (sigma_q^2 semantic refactor): the previous
+        code added a tiny ``1e-6`` floor for numerical safety (so ``log``
+        wouldn't divide by zero in the KL term), but this let ``sigma_q^2``
+        collapse to ``~1e-6`` whenever recent actions were uniform — which
+        then blew up the KL term in ``compute_free_energy``
+        (``0.5 * (||b||^2 + sigma^2 * dim - dim - dim * log(sigma^2))``;
+        for ``sigma^2 = 1e-6`` and ``dim = 64`` this is
+        ``0.5 * (||b||^2 + 883) ≈ 441`` even with ``b = 0``). A uniform
+        recent-action stream is a poor proxy for "extreme state certainty":
+        it more likely means the policy is *stuck* (a degenerate attractor)
+        than that the posterior is genuinely tight. The new clamp
+        ``[1e-3, 1.0]`` enforces two semantic invariants:
+
+          * **Lower bound ``1e-3``**: even with zero action variance, retain
+            a small but non-trivial residual uncertainty about the state
+            (1% of the prior variance). This caps the KL contribution of
+            ``-dim * log(sigma^2)`` at ``-dim * log(1e-3) = dim * 6.9``
+            (~442 for ``dim = 64``) instead of ``dim * 13.8`` (~884), and
+            keeps the EFE dominated by genuine prediction error rather
+            than by the proxy's collapse.
+          * **Upper bound ``1.0``**: matches the uninformative ``N(0, I)``
+            prior — Bayesian updating cannot make the posterior *wider*
+            than the prior. Action variance ``> 1`` (e.g. large motor
+            commands) used to inflate ``sigma_q^2`` above 1, incorrectly
+            signalling more posterior uncertainty than the prior carries.
         """
         if not self._sigma_q2_dirty:
             return self._cached_sigma_q2
         if len(self.action_history) >= 2:
             recent = np.asarray(list(self._recent_actions), dtype=float)
             recent = np.nan_to_num(recent, nan=0.0, posinf=0.0, neginf=0.0)
-            sigma_q2 = float(np.mean(np.var(recent, axis=0))) + 1e-6
+            raw_var = float(np.mean(np.var(recent, axis=0)))
+            sigma_q2 = float(np.clip(raw_var, 1e-3, 1.0))
             if not np.isfinite(sigma_q2) or sigma_q2 <= 0:
                 sigma_q2 = 1.0
         else:

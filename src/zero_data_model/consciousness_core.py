@@ -207,8 +207,19 @@ class ConsciousnessCore(CognitiveModule):
         # ``math_universe`` (R10-C-001). The previous ``[-1e6, 1e6]``
         # clip was dead code (``prediction_error`` is an MSE by
         # construction and is non-negative) but signalled an inconsistent
-        # contract that future edits could have flipped into a gradient-
-        # ascent hazard by removing the ``abs()`` below.
+        # contract: the OLD code paired ``[-1e6, 1e6]`` with
+        # ``abs(prediction_error) * 0.001`` further down (the abs() was a
+        # redundant band-aid compensating for the negative half-range of
+        # the clip). Removing the abs() alone — without also tightening
+        # the clip to ``[0, 1e6]`` — would have flipped the noise sign
+        # for negative errors (gradient ascent, not descent). The R10-C-004
+        # fix tightens the clip and removes the redundant ``abs()``
+        # together, so neither can drift back into a state where one is
+        # needed to compensate for the other.
+        # Round-10 audit R10-A-003: confirmed there is no remaining
+        # ``abs()`` in this method — the stale comment reference to
+        # "the ``abs()`` below" was removed when R10-C-004 deleted the
+        # ``abs(prediction_error)`` band-aid.
         prediction_error = float(np.clip(prediction_error, 0.0, 1e6))
         # Round-3 audit: clamp the effective noise scale so a runaway
         # prediction_error near the 1e6 ceiling does not destroy learned

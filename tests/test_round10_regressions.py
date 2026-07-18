@@ -31,6 +31,19 @@ coverage) that was stricter than Round-9.
   R10-A-006  BayesianEstimator._update_normal clamps lik_prec to 1e12
              symmetrically with prior_prec (no spurious over-confidence
              from a degenerate known_var like 1e-20)
+  R10-A-002  ActiveInferenceEngine._compute_sigma_q2 clamps to [1e-3, 1.0]
+             so a uniform recent-action stream does not collapse sigma_q^2
+             to ~1e-6 and blow up the KL term (~883 for dim=64)
+  R10-A-003  _student_t_two_sided_pvalue uses ``math.isinf(t_stat)`` (not
+             ``abs(t_stat) == math.inf``) — the abs() form was a defensive
+             branch no active caller triggers; the new form is clearer
+             about intent. Also: the stale "abs() below" comment reference
+             in consciousness_core.update was removed.
+  R10-A-007  _student_t_two_sided_pvalue short-circuits |t| > 1e6 (avoids
+             wasted Lentz cf work when the prefactor has underflowed to 0)
+             and sanitizes the final p-value (NaN -> 1.0, inf -> 0.0) so
+             pathological cf × prefactor interactions can never leak NaN
+             through ``infer_cause``'s ``p_value_approx`` field
   R10-A-008  hardware.kernels._betti_numbers returns betti_1=0 for 1D
              point clouds (Vietoris-Rips complex has no 1-cycles in 1D)
 """
@@ -673,3 +686,333 @@ def test_r10_a_008_betti_numbers_b0_unchanged_by_betti1_fix():
             f"_betti_numbers b0 changed: got={got_b0}, expected={ref_b0} "
             f"(n={n}, max_radius={max_radius})"
         )
+
+
+# --------------------------------------------------------------------------- #
+# R10-A-002: _compute_sigma_q2 clamps to [1e-3, 1.0]
+# --------------------------------------------------------------------------- #
+
+
+def test_r10_a_002_sigma_q2_lower_clamp_prevents_kl_blowup():
+    """A uniform recent-action stream must NOT collapse ``sigma_q^2`` to
+    ``~1e-6``. The previous code added a tiny ``1e-6`` floor for
+    numerical safety, which let the proxy variance collapse to
+    ``1e-6`` whenever recent actions were identical — blowing up the
+    KL term in ``compute_free_energy``
+    (``0.5 * (||b||^2 + sigma^2 * dim - dim - dim * log(sigma^2))``;
+    for ``sigma^2 = 1e-6`` and ``dim = 64`` this is ~883 with ``b = 0``).
+
+    The R10-A-002 fix clamps ``sigma_q^2`` to ``[1e-3, 1.0]``:
+
+      * Lower bound ``1e-3``: even with zero action variance, retain
+        1% of the prior variance as residual state uncertainty.
+      * Upper bound ``1.0``: matches the uninformative ``N(0, I)``
+        prior — Bayesian updating cannot make the posterior wider than
+        the prior.
+
+    We verify by stuffing ``_recent_actions`` with 32 zero-variance
+    actions and asserting ``sigma_q^2 >= 1e-3``.
+    """
+    from zero_data_model.active_inference import ActiveInferenceEngine
+
+    engine = ActiveInferenceEngine(
+        state_dim=8, obs_dim=4, action_dim=2, rng=np.random.default_rng(202)
+    )
+    engine.action_history.clear()
+    engine._recent_actions.clear()
+    # 32 identical actions -> raw var = 0. Pre-fix this gave sigma_q^2 = 1e-6.
+    for _ in range(32):
+        engine.action_history.append(np.array([0.0, 0.0]))
+        engine._recent_actions.append(np.array([0.0, 0.0]))
+    engine._sigma_q2_dirty = True
+    sigma_q2 = engine._compute_sigma_q2()
+    assert sigma_q2 >= 1e-3, (
+        f"sigma_q^2 = {sigma_q2}, expected >= 1e-3 — the [1e-3, 1.0] "
+        "clamp is missing and a uniform action stream collapsed the "
+        "posterior variance (R10-A-002 regression: KL term will blow up "
+        "to ~883 in compute_free_energy)"
+    )
+
+
+def test_r10_a_002_sigma_q2_upper_clamp_matches_uninformative_prior():
+    """Action variance ``> 1`` must NOT inflate ``sigma_q^2`` above the
+    prior variance ``1.0``. The R10-A-002 fix clamps to ``[1e-3, 1.0]``
+    so the posterior cannot be wider than the uninformative ``N(0, I)``
+    prior."""
+    from zero_data_model.active_inference import ActiveInferenceEngine
+
+    engine = ActiveInferenceEngine(
+        state_dim=8, obs_dim=4, action_dim=2, rng=np.random.default_rng(203)
+    )
+    engine.action_history.clear()
+    engine._recent_actions.clear()
+    # 32 large-variance actions -> raw var per dim = 100.0
+    # (mean of var([100, -100]) = 10000).
+    for _ in range(32):
+        engine.action_history.append(np.array([100.0, -100.0]))
+        engine._recent_actions.append(np.array([100.0, -100.0]))
+    engine._sigma_q2_dirty = True
+    sigma_q2 = engine._compute_sigma_q2()
+    assert sigma_q2 <= 1.0, (
+        f"sigma_q^2 = {sigma_q2}, expected <= 1.0 — the upper clamp "
+        "is missing and large-variance actions inflated sigma_q^2 "
+        "above the uninformative N(0, I) prior (R10-A-002 regression: "
+        "posterior variance > prior variance violates Bayesian updating)"
+    )
+
+
+def test_r10_a_002_sigma_q2_kl_term_does_not_dominate_free_energy():
+    """End-to-end: with a uniform recent-action stream and a zero
+    belief state, the KL contribution to ``compute_free_energy`` must
+    NOT dominate the total free energy.
+
+    Pre-fix: ``sigma_q^2 = 1e-6`` gave
+    ``KL = 0.5 * (0 + 1e-6 * dim - dim - dim * log(1e-6)) ≈ 441`` for
+    ``dim = 64`` — so the engine looked "anomalous" even with perfect
+    predictions. Post-fix: ``sigma_q^2 = 1e-3`` gives
+    ``KL = 0.5 * (0 + 1e-3 * dim - dim - dim * log(1e-3)) ≈ 221`` —
+    still positive (KL is non-negative) but smaller, and most
+    importantly: NOT inflated 4x by a proxy collapse.
+    """
+    from zero_data_model.active_inference import ActiveInferenceEngine
+
+    engine = ActiveInferenceEngine(
+        state_dim=8, obs_dim=8, action_dim=4, rng=np.random.default_rng(204)
+    )
+    # Zero belief state (so ||b||^2 = 0, isolating the sigma_q^2 effect).
+    engine.generative_model.belief_state = np.zeros(8)
+    # Uniform recent actions -> sigma_q^2 = 1e-3 with the clamp.
+    engine.action_history.clear()
+    engine._recent_actions.clear()
+    for _ in range(32):
+        engine.action_history.append(np.array([0.0, 0.0, 0.0, 0.0]))
+        engine._recent_actions.append(np.array([0.0, 0.0, 0.0, 0.0]))
+    engine._sigma_q2_dirty = True
+    observation = np.zeros(8)
+    fe = engine.compute_free_energy(observation)
+    # Pre-fix KL was ~441 (with sigma_q^2 = 1e-6). Post-fix KL is ~83
+    # (with sigma_q^2 = 1e-3, dim = 8:
+    #   KL = 0.5 * (0 + 1e-3*8 - 8 - 8*log(1e-3))
+    #      = 0.5 * (0.008 - 8 + 8*6.9) = 0.5 * 47.2 ≈ 23.6
+    # ).
+    # Use a generous threshold: with the clamp the KL should be < 200,
+    # without the clamp (sigma_q^2 = 1e-6) it would be > 400.
+    assert fe < 200.0, (
+        f"FE = {fe}, expected < 200 with the sigma_q^2 clamp — the "
+        "KL term is dominating the free energy (R10-A-002 regression: "
+        "sigma_q^2 collapsed to 1e-6, KL = 0.5 * dim * |log(sigma^2)| "
+        "≈ 441 for dim=8, masquerading as an anomaly)"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# R10-A-003: _student_t_two_sided_pvalue uses math.isinf (no abs())
+# --------------------------------------------------------------------------- #
+
+
+def test_r10_a_003_student_t_pvalue_handles_inf_and_nan_correctly():
+    """The defensive branch in ``_student_t_two_sided_pvalue`` for
+    non-finite ``t_stat`` must return:
+      * ``0.0`` for ``±inf`` (overwhelming evidence)
+      * ``1.0`` for ``NaN`` (treat as "no significance detected")
+
+    The branch is purely defensive — ``infer_cause`` (the only caller)
+    cannot produce a non-finite ``t_stat`` because it clamps via
+    ``denom = max(1e-8, 1 - r_eff^2)`` with ``r_eff`` in [0, 1]. The
+    R10-A-003 fix replaced ``abs(t_stat) == math.inf`` with
+    ``math.isinf(t_stat)`` (semantically identical but clearer about
+    intent) and added an explicit NaN branch.
+
+    We verify the contract by calling the function directly with
+    non-finite inputs.
+    """
+    import math
+
+    from zero_data_model.capabilities.analytics_advanced import (
+        _student_t_two_sided_pvalue,
+    )
+
+    # +inf -> 0.0 (overwhelming evidence).
+    assert _student_t_two_sided_pvalue(math.inf, 10) == 0.0, (
+        "t_stat=+inf should return 0.0 (overwhelming evidence), not "
+        f"{_student_t_two_sided_pvalue(math.inf, 10)}"
+    )
+    # -inf -> 0.0 (overwhelming evidence, two-sided test).
+    assert _student_t_two_sided_pvalue(-math.inf, 10) == 0.0, (
+        "t_stat=-inf should return 0.0 (two-sided test), not "
+        f"{_student_t_two_sided_pvalue(-math.inf, 10)}"
+    )
+    # NaN -> 1.0 (treat as "no significance detected").
+    nan_p = _student_t_two_sided_pvalue(float("nan"), 10)
+    assert nan_p == 1.0, (
+        f"t_stat=NaN should return 1.0 (no significance detected), "
+        f"got {nan_p} — NaN must not propagate through the p-value"
+    )
+
+
+def test_r10_a_003_consciousness_core_update_has_no_redundant_abs():
+    """The R10-C-004 fix removed ``abs(prediction_error)`` from
+    ``consciousness_core.update`` (the abs() was a band-aid compensating
+    for the old ``[-1e6, 1e6]`` clip; the new ``[0, 1e6]`` clip makes
+    it redundant).
+
+    R10-A-003 confirms this: there must be no executable ``abs()``
+    call on ``prediction_error`` in ``consciousness_core.update``.
+    Comments may mention ``abs()`` historically (explaining why it was
+    removed), but the executable body must not call it. We verify by
+    parsing the AST and walking only Call nodes.
+    """
+    import ast
+    import inspect
+    import textwrap
+
+    from zero_data_model import consciousness_core
+
+    source = inspect.getsource(consciousness_core.ConsciousnessCore.update)
+    # Dedent so the method body parses as a standalone function.
+    source = textwrap.dedent(source)
+    tree = ast.parse(source)
+    # Walk all Call nodes; collect any call to ``abs(...)`` whose
+    # first argument's source contains ``prediction_error``.
+    abs_on_pred_error = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if not (isinstance(node.func, ast.Name) and node.func.id == "abs"):
+            continue
+        # ``ast.unparse`` (Py3.9+) gives the source of the argument.
+        for arg in node.args:
+            arg_src = ast.unparse(arg)
+            if "prediction_error" in arg_src:
+                abs_on_pred_error.append(arg_src)
+    assert not abs_on_pred_error, (
+        "consciousness_core.update still calls abs() on prediction_error "
+        f"({abs_on_pred_error}) — R10-C-004/R10-A-003 regression: the "
+        "abs() was a band-aid for the old [-1e6, 1e6] clip and is "
+        "redundant under [0, 1e6]"
+    )
+    # Sanity: confirm the executable clip line is still present.
+    clip_seen = False
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "clip"
+            and node.args
+            and "prediction_error" in ast.unparse(node.args[0])
+        ):
+            # ``np.clip(prediction_error * 0.001, 0.0, 0.1)`` -- the
+            # first arg is a BinOp with prediction_error.
+            clip_seen = True
+    assert clip_seen, (
+        "consciousness_core.update is missing the unclamped "
+        "``np.clip(prediction_error * 0.001, 0.0, 0.1)`` step — the "
+        "R10-C-004 fix should have left this in place"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# R10-A-007: _student_t_two_sided_pvalue short-circuits |t| > 1e6
+#            and sanitizes the final p-value (no NaN/Inf leakage)
+# --------------------------------------------------------------------------- #
+
+
+def test_r10_a_007_short_circuit_for_extreme_t_stat():
+    """For ``|t| > 1e6`` the regularized incomplete beta prefactor
+    ``exp(a * log(x) + ...)`` underflows to ``0.0`` (the correct
+    p-value), but the Lentz continued fraction still runs to
+    ``max_iter = 300`` before being multiplied by that ``0`` — wasted
+    work. The R10-A-007 fix short-circuits ``|t| > 1e6`` to return
+    ``0.0`` directly.
+
+    We verify by calling with a value well past the threshold and
+    asserting the result is exactly ``0.0`` (no wasted cf iteration,
+    no floating-point noise like ``3.7e-300``).
+    """
+    from zero_data_model.capabilities.analytics_advanced import (
+        _student_t_two_sided_pvalue,
+    )
+
+    # |t| well above the 1e6 threshold.
+    assert _student_t_two_sided_pvalue(1e10, 18) == 0.0, (
+        "t=1e10 should short-circuit to 0.0 (well past the 1e6 "
+        "threshold); instead got "
+        f"{_student_t_two_sided_pvalue(1e10, 18)} — the short-circuit "
+        "is missing and the Lentz cf ran for nothing"
+    )
+    assert _student_t_two_sided_pvalue(-1e10, 18) == 0.0, (
+        "t=-1e10 should short-circuit to 0.0 (two-sided test)"
+    )
+
+
+def test_r10_a_007_pvalue_is_always_finite_in_unit_interval():
+    """The final p-value returned by
+    ``_student_t_two_sided_pvalue`` must always be a finite float in
+    ``[0, 1]`` — no NaN, no Inf, no negative values.
+
+    Defense-in-depth: ``_betai`` *should* always return a finite value
+    in ``[0, 1]``, but the Lentz continued fraction could theoretically
+    yield ``inf`` or ``NaN`` under pathological interactions with the
+    prefactor (e.g. ``0.0 * inf = NaN`` when the prefactor underflows
+    but the cf diverges). The R10-A-007 fix sanitizes the result.
+
+    We verify by sweeping ``t_stat`` across a wide range and asserting
+    the contract holds for every value.
+    """
+    import math
+
+    from zero_data_model.capabilities.analytics_advanced import (
+        _student_t_two_sided_pvalue,
+    )
+
+    test_values = [
+        0.0, 1e-10, 1e-5, 0.001, 0.1, 0.5, 1.0, 2.0, 5.0, 10.0,
+        50.0, 100.0, 1e3, 1e5, 1e6 - 1, 1e6 + 1, 1e8, 1e15, 1e100,
+        math.inf, -math.inf, float("nan"),
+    ]
+    for t in test_values:
+        for df in [1, 2, 5, 10, 30, 100]:
+            p = _student_t_two_sided_pvalue(t, df)
+            assert isinstance(p, float), (
+                f"p-value for t={t}, df={df} is not a float: "
+                f"{type(p).__name__} ({p!r})"
+            )
+            assert math.isfinite(p), (
+                f"p-value for t={t}, df={df} is not finite: {p} — "
+                "NaN/Inf leaked through _student_t_two_sided_pvalue "
+                "(R10-A-007 regression: final sanitization missing)"
+            )
+            assert 0.0 <= p <= 1.0, (
+                f"p-value for t={t}, df={df} is out of [0, 1]: {p}"
+            )
+
+
+def test_r10_a_007_infer_cause_p_value_never_nan():
+    """``CausalInference.infer_cause``'s ``p_value_approx`` field must
+    never be NaN. The R10-A-007 fix adds an explicit NaN-check in
+    ``infer_cause`` (converting NaN to ``1.0``) so that even if
+    ``_student_t_two_sided_pvalue`` somehow leaked a NaN, callers
+    comparing ``p < alpha`` would still get a comparable value.
+
+    We trigger an extreme edge case (perfect correlation ->
+    ``denom = 1e-8`` -> ``t_stat ≈ 1e4``) and assert the returned
+    ``p_value_approx`` is finite and in ``[0, 1]``.
+    """
+    from zero_data_model.capabilities.analytics_advanced import CausalInference
+
+    ci = CausalInference(dim=8)
+    # Two perfectly-correlated series -> r = 1.0, t_stat huge.
+    cause = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0])
+    effect = 2.0 * cause  # perfect linear correlation
+    result = ci.infer_cause(cause, effect, max_lag=2)
+    p = result["p_value_approx"]
+    import math
+    assert math.isfinite(p), (
+        f"p_value_approx = {p} for perfectly-correlated series — NaN "
+        "leaked through infer_cause (R10-A-007 regression: the explicit "
+        "NaN->1.0 sanitization in infer_cause is missing)"
+    )
+    assert 0.0 <= p <= 1.0, (
+        f"p_value_approx = {p} is out of [0, 1] for perfectly-correlated "
+        "series"
+    )

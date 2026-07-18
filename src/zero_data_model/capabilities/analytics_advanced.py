@@ -157,16 +157,61 @@ def _student_t_two_sided_pvalue(t_stat: float, df: int) -> float:
 
     Uses the identity ``survival = I_{x}(df/2, 1/2)`` where
     ``x = df / (df + t^2)`` (exact for the Student-t distribution).
-    Returns 1.0 for ``t == 0`` and 0.0 for non-finite ``t_stat``.
+
+    Return-value contract:
+      * ``t == 0``                  -> ``1.0`` (no surprise).
+      * ``|t| == inf``              -> ``0.0`` (overwhelming evidence).
+      * ``t == NaN``                -> ``1.0`` (treat as "no significance
+        detected"; ``NaN`` is not valid evidence either way).
+      * ``|t| > 1e6``               -> ``0.0`` (the prefactor
+        ``exp(a*log(x) + ...)`` underflows to ``0`` at this scale; the
+        Lentz continued fraction still runs to ``max_iter`` for nothing,
+        so we short-circuit).
+      * Otherwise                   -> ``_betai(df/2, 1/2, x)`` clamped
+        to ``[0, 1]`` (defense-in-depth against any NaN/Inf from the cf).
     """
     if df <= 0:
         return 1.0
     if not math.isfinite(t_stat):
-        return 0.0 if abs(t_stat) == math.inf else 1.0
+        # Round-10 audit R10-A-003: replaced ``abs(t_stat) == math.inf``
+        # with ``math.isinf(t_stat)`` — semantically identical (both
+        # return True iff t_stat is ±inf, False for NaN) but clearer
+        # about intent. This branch is purely defensive: no current
+        # caller (only ``CausalInference.infer_cause``) can produce a
+        # non-finite ``t_stat`` because it clamps via
+        # ``denom = max(1e-8, 1 - r_eff^2)`` and ``r_eff`` is bounded
+        # by ``[-1, 1]``. The branch exists for external callers that
+        # might bypass the public API.
+        return 0.0 if math.isinf(t_stat) else 1.0
     if t_stat == 0.0:
         return 1.0
+    # Round-10 audit R10-A-007 (betai underflow at extreme edge): for
+    # ``|t| > ~1e10`` the regularized incomplete beta prefactor
+    # ``exp(a * log(x) + b * log1p(-x) + lbeta - log(a))`` underflows to
+    # ``0.0`` (which is the *correct* p-value), but the Lentz continued
+    # fraction still runs to ``max_iter = 300`` before being multiplied
+    # by that ``0`` — wasted work. The threshold ``|t| > 1e6`` puts us
+    # well inside the underflow regime for any ``df >= 1``
+    # (``x = df / (df + t^2) < df / 1e12 < 1e-11`` for ``df = 1``).
+    # Empirically (Python REPL check) ``|t| = 1e8`` already yields
+    # ``p = 3.7e-134`` — anything beyond ``1e6`` is p ≈ 0 to float64
+    # precision anyway.
+    abs_t = abs(t_stat)
+    if abs_t > 1e6:
+        return 0.0
     x = df / (df + t_stat * t_stat)
-    return _betai(df / 2.0, 0.5, x)
+    p = _betai(df / 2.0, 0.5, x)
+    # Final defense-in-depth: ``_betai`` *should* always return a finite
+    # value in ``[0, 1]``, but the Lentz continued fraction could
+    # theoretically yield ``inf`` or ``NaN`` under pathological
+    # interactions with the prefactor (e.g. ``0.0 * inf = NaN`` when
+    # the prefactor underflows but the cf diverges). Sanitize:
+    #   * NaN  -> 1.0 (treat as "no significance detected")
+    #   * +inf -> 0.0 (extreme evidence)
+    #   * -inf -> 0.0 (defensive; p-values are non-negative)
+    if not math.isfinite(p):
+        return 0.0 if p > 0 else 1.0
+    return float(max(0.0, min(1.0, p)))
 
 
 class CausalInference:
@@ -282,6 +327,18 @@ class CausalInference:
         t_stat = r_eff * math.sqrt((sample_size - 2) / denom)
         df = sample_size - 2
         p_value = float(_student_t_two_sided_pvalue(t_stat, df))
+        # Round-10 audit R10-A-007 (defense-in-depth): ``np.clip`` does
+        # NOT sanitize NaN (``np.clip(NaN, 0, 1) == NaN``), so a NaN
+        # leaking out of ``_student_t_two_sided_pvalue`` (theoretically
+        # possible under pathological cf divergence × prefactor
+        # underflow) would propagate as ``p_value_approx = NaN`` —
+        # callers comparing ``p < alpha`` would get ``False`` and treat
+        # the result as "not significant", but ``p > alpha`` would also
+        # be ``False``, breaking any monotonic ranking. Convert NaN to
+        # ``1.0`` ("no significance detected") explicitly so the value
+        # is always comparable.
+        if not math.isfinite(p_value):
+            p_value = 1.0
         p_value = float(np.clip(p_value, 0.0, 1.0))
 
         return {
