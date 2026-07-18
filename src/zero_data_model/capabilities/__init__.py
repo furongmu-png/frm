@@ -97,6 +97,23 @@ with contextlib.suppress(ImportError):  # pragma: no cover - optional sibling mo
         SpanningTreeExtractor,
     )
 
+# Robotics capability modules (motion planning, kinematics, sensor fusion,
+# gait generation, trajectory optimization, collision checking, MPC).
+with contextlib.suppress(ImportError):  # pragma: no cover - optional sibling module
+    from .robotics import (
+        GaitGenerator,
+        KinematicsSolver,
+        MotionPlanner,
+        SensorFuser,
+    )
+
+with contextlib.suppress(ImportError):  # pragma: no cover - optional sibling module
+    from .robotics_advanced import (
+        CollisionChecker,
+        MPCController,
+        TrajectoryOptimizer,
+    )
+
 __all__ = [
     "DomainRules",
     "NLPRules",
@@ -145,4 +162,12 @@ __all__ = [
     "GraphIsomorphismDetector",
     "DynamicGraphTracker",
     "SpanningTreeExtractor",
+    # Robotics capabilities.
+    "MotionPlanner",
+    "KinematicsSolver",
+    "SensorFuser",
+    "GaitGenerator",
+    "TrajectoryOptimizer",
+    "CollisionChecker",
+    "MPCController",
 ]

@@ -51,7 +51,25 @@ from .capabilities.nlp_advanced import (
     SentenceEncoder,
     SyntacticAnalyzer,
 )
-from .capabilities.rules import AnalyticsRules, AudioRules, GraphRules, NLPRules, VisionRules
+from .capabilities.robotics import (
+    GaitGenerator,
+    KinematicsSolver,
+    MotionPlanner,
+    SensorFuser,
+)
+from .capabilities.robotics_advanced import (
+    CollisionChecker,
+    MPCController,
+    TrajectoryOptimizer,
+)
+from .capabilities.rules import (
+    AnalyticsRules,
+    AudioRules,
+    GraphRules,
+    NLPRules,
+    RoboticsRules,
+    VisionRules,
+)
 from .capabilities.vision import FeatureExtractor, ImageEncoder, PatternRecognizer, ShapeAnalyzer
 from .capabilities.vision_advanced import (
     DepthEstimator,
@@ -262,6 +280,25 @@ class ZeroDataModel:
         self.graph_isomorphism = GraphIsomorphismDetector(dim=dim, rules=self.graph_rules)
         self.graph_dynamic = DynamicGraphTracker(dim=dim, rules=self.graph_rules)
         self.graph_spanning = SpanningTreeExtractor(dim=dim, rules=self.graph_rules)
+        # Robotics domain capabilities (reuse existing core module instances).
+        self.robotics_rules = RoboticsRules()
+        self.robotics_motion = MotionPlanner(
+            dim=dim, math_universe=self.math_universe, rules=self.robotics_rules
+        )
+        self.robotics_kinematics = KinematicsSolver(dim=dim, rules=self.robotics_rules)
+        self.robotics_sensor = SensorFuser(dim=dim, rules=self.robotics_rules)
+        self.robotics_gait = GaitGenerator(
+            dim=dim, biological=self.biological, rules=self.robotics_rules
+        )
+        self.robotics_trajectory = TrajectoryOptimizer(
+            dim=dim, math_universe=self.math_universe, rules=self.robotics_rules
+        )
+        self.robotics_collision = CollisionChecker(dim=dim, rules=self.robotics_rules)
+        self.robotics_mpc = MPCController(
+            dim=dim,
+            active_inference=self.active_inference,
+            rules=self.robotics_rules,
+        )
         # Hardware acceleration: parallel module execution + GPU-aware arrays.
         # When a seed is set, force sequential execution so the per-module
         # child Generators (spawned in ``__init__``) are consumed in a fixed
@@ -775,3 +812,88 @@ class ZeroDataModel:
         """Extract the minimum spanning tree via Kruskal."""
         with self._lock:
             return self.graph_spanning.extract(adjacency)
+
+    # ------------------------------------------------------------------ #
+    # Robotics domain facades
+    # ------------------------------------------------------------------ #
+
+    def plan_motion(self, waypoints: np.ndarray, n_steps: int = 100) -> dict:
+        """Plan a smooth trajectory through ``waypoints`` (cubic spline)."""
+        with self._lock:
+            return self.robotics_motion.plan(waypoints, n_steps=n_steps)
+
+    def forward_kinematics(self, joint_angles: np.ndarray) -> np.ndarray:
+        """Compute the end-effector position of a planar N-DOF arm."""
+        with self._lock:
+            return self.robotics_kinematics.forward(joint_angles)
+
+    def inverse_kinematics(
+        self, target: np.ndarray, seed: np.ndarray | None = None
+    ) -> dict:
+        """Solve inverse kinematics via damped least squares."""
+        with self._lock:
+            return self.robotics_kinematics.inverse(target, seed=seed)
+
+    def fuse_sensors(
+        self,
+        measurements: list[np.ndarray],
+        variances: list[float],
+    ) -> np.ndarray:
+        """Fuse multiple sensor readings by inverse-variance weighting."""
+        with self._lock:
+            return self.robotics_sensor.fuse(measurements, variances)
+
+    def update_kalman(
+        self,
+        prior: np.ndarray,
+        prior_var: float,
+        measurement: np.ndarray,
+        meas_var: float,
+    ) -> dict:
+        """Sequential Kalman-style Bayesian update."""
+        with self._lock:
+            return self.robotics_sensor.update(
+                prior, prior_var, measurement, meas_var
+            )
+
+    def generate_gait(self, n_steps: int = 100, gait_type: str = "walk") -> dict:
+        """Generate a periodic gait pattern (walk/trot/bound)."""
+        with self._lock:
+            return self.robotics_gait.generate(n_steps=n_steps, gait_type=gait_type)
+
+    def optimize_trajectory(self, trajectory: np.ndarray, n_iter: int = 10) -> dict:
+        """Smooth a trajectory by minimizing jerk (gradient descent)."""
+        with self._lock:
+            return self.robotics_trajectory.optimize(trajectory, n_iter=n_iter)
+
+    def check_collision(
+        self,
+        obstacles: list,
+        position: np.ndarray,
+        radius: float = 0.1,
+    ) -> dict:
+        """Check collision between a body and circular obstacles."""
+        with self._lock:
+            return self.robotics_collision.check(obstacles, position, radius=radius)
+
+    def check_path_collision(
+        self,
+        obstacles: list,
+        path: np.ndarray,
+        radius: float = 0.1,
+    ) -> dict:
+        """Check collisions along a path of body positions."""
+        with self._lock:
+            return self.robotics_collision.check_path(obstacles, path, radius=radius)
+
+    def control_mpc(
+        self,
+        current_state: np.ndarray,
+        target_state: np.ndarray,
+        obstacles: list | None = None,
+    ) -> dict:
+        """Pick the next control action via model predictive control."""
+        with self._lock:
+            return self.robotics_mpc.control(
+                current_state, target_state, obstacles=obstacles
+            )
