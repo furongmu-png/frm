@@ -34,6 +34,17 @@ from .capabilities.audio_advanced import (
     SpeakerRecognizer,
     SpeechSegmenter,
 )
+from .capabilities.code import (
+    ASTAnalyzer,
+    CodeEncoder,
+    CodeSimilarityChecker,
+    DefectPatternDetector,
+)
+from .capabilities.code_advanced import (
+    CodeStyleAnalyzer,
+    ControlFlowAnalyzer,
+    DependencyGraphBuilder,
+)
 from .capabilities.graph import (
     CentralityAnalyzer,
     CommunityDetector,
@@ -65,6 +76,7 @@ from .capabilities.robotics_advanced import (
 from .capabilities.rules import (
     AnalyticsRules,
     AudioRules,
+    CodeRules,
     GraphRules,
     NLPRules,
     RoboticsRules,
@@ -330,6 +342,17 @@ class ZeroDataModel:
         self.time_forecastability = ForecastabilityScorer(
             dim=dim, math_universe=self.math_universe, rules=self.time_rules
         )
+        # Code-analysis domain capabilities (reuse existing core module instances).
+        self.code_rules = CodeRules()
+        self.code_encoder = CodeEncoder(
+            dim=dim, math_universe=self.math_universe, rules=self.code_rules
+        )
+        self.code_ast = ASTAnalyzer(dim=dim, rules=self.code_rules)
+        self.code_similarity = CodeSimilarityChecker(dim=dim, rules=self.code_rules)
+        self.code_defects = DefectPatternDetector(dim=dim, rules=self.code_rules)
+        self.code_control_flow = ControlFlowAnalyzer(dim=dim, rules=self.code_rules)
+        self.code_style = CodeStyleAnalyzer(dim=dim, rules=self.code_rules)
+        self.code_dependency = DependencyGraphBuilder(dim=dim, rules=self.code_rules)
         # Hardware acceleration: parallel module execution + GPU-aware arrays.
         # When a seed is set, force sequential execution so the per-module
         # child Generators (spawned in ``__init__``) are consumed in a fixed
@@ -969,3 +992,42 @@ class ZeroDataModel:
         """Score how forecastable a series is (entropy + stationarity + autocorr)."""
         with self._lock:
             return self.time_forecastability.score(series)
+
+    # ------------------------------------------------------------------ #
+    # Code-analysis domain facades
+    # ------------------------------------------------------------------ #
+
+    def encode_code(self, source: str) -> np.ndarray:
+        """Encode Python source code into a ``dim``-length L2-normalized vector."""
+        with self._lock:
+            return self.code_encoder.encode(source)
+
+    def analyze_ast(self, source: str) -> dict:
+        """Analyze AST structure (functions, classes, imports, complexity)."""
+        with self._lock:
+            return self.code_ast.analyze(source)
+
+    def compare_code(self, source_a: str, source_b: str) -> dict:
+        """Compare two code snippets via token + structure similarity."""
+        with self._lock:
+            return self.code_similarity.compare(source_a, source_b)
+
+    def detect_code_defects(self, source: str) -> dict:
+        """Detect rule-based defect patterns (mutable_default, bare_except, equals_none)."""
+        with self._lock:
+            return self.code_defects.detect(source)
+
+    def analyze_control_flow(self, source: str) -> dict:
+        """Analyze control flow (per-function cyclomatic complexity, basic blocks)."""
+        with self._lock:
+            return self.code_control_flow.analyze(source)
+
+    def analyze_code_style(self, source: str) -> dict:
+        """Analyze code style (line length, naming, whitespace)."""
+        with self._lock:
+            return self.code_style.analyze(source)
+
+    def build_dependency_graph(self, source: str) -> dict:
+        """Build a module-level import dependency graph."""
+        with self._lock:
+            return self.code_dependency.build(source)

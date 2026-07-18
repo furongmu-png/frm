@@ -135,6 +135,23 @@ with contextlib.suppress(ImportError):  # pragma: no cover - optional sibling mo
         ForecastabilityScorer,
     )
 
+# Code-analysis capability modules (encoding, AST, similarity, defects,
+# control flow, style, dependency graph).
+with contextlib.suppress(ImportError):  # pragma: no cover - optional sibling module
+    from .code import (
+        ASTAnalyzer,
+        CodeEncoder,
+        CodeSimilarityChecker,
+        DefectPatternDetector,
+    )
+
+with contextlib.suppress(ImportError):  # pragma: no cover - optional sibling module
+    from .code_advanced import (
+        CodeStyleAnalyzer,
+        ControlFlowAnalyzer,
+        DependencyGraphBuilder,
+    )
+
 __all__ = [
     "DomainRules",
     "NLPRules",
@@ -203,4 +220,12 @@ __all__ = [
     "AnomalyTimingDetector",
     "CyclePhaseTracker",
     "ForecastabilityScorer",
+    # Code capabilities.
+    "CodeEncoder",
+    "ASTAnalyzer",
+    "CodeSimilarityChecker",
+    "DefectPatternDetector",
+    "ControlFlowAnalyzer",
+    "CodeStyleAnalyzer",
+    "DependencyGraphBuilder",
 ]
