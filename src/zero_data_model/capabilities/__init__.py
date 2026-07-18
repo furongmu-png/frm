@@ -80,6 +80,23 @@ with contextlib.suppress(ImportError):  # pragma: no cover - optional sibling mo
         SpeechSegmenter,
     )
 
+# Graph capability modules (encoding, community detection, path finding,
+# centrality, isomorphism, dynamic tracking, spanning tree).
+with contextlib.suppress(ImportError):  # pragma: no cover - optional sibling module
+    from .graph import (
+        CentralityAnalyzer,
+        CommunityDetector,
+        GraphEncoder,
+        PathFinder,
+    )
+
+with contextlib.suppress(ImportError):  # pragma: no cover - optional sibling module
+    from .graph_advanced import (
+        DynamicGraphTracker,
+        GraphIsomorphismDetector,
+        SpanningTreeExtractor,
+    )
+
 __all__ = [
     "DomainRules",
     "NLPRules",
@@ -120,4 +137,12 @@ __all__ = [
     "MusicAnalyzer",
     "SpeechSegmenter",
     "SpeakerRecognizer",
+    # Graph capabilities.
+    "GraphEncoder",
+    "CommunityDetector",
+    "PathFinder",
+    "CentralityAnalyzer",
+    "GraphIsomorphismDetector",
+    "DynamicGraphTracker",
+    "SpanningTreeExtractor",
 ]

@@ -34,13 +34,24 @@ from .capabilities.audio_advanced import (
     SpeakerRecognizer,
     SpeechSegmenter,
 )
+from .capabilities.graph import (
+    CentralityAnalyzer,
+    CommunityDetector,
+    GraphEncoder,
+    PathFinder,
+)
+from .capabilities.graph_advanced import (
+    DynamicGraphTracker,
+    GraphIsomorphismDetector,
+    SpanningTreeExtractor,
+)
 from .capabilities.nlp import SemanticComparator, TextEncoder, TextGenerator, ZeroShotClassifier
 from .capabilities.nlp_advanced import (
     MultiLingualEncoder,
     SentenceEncoder,
     SyntacticAnalyzer,
 )
-from .capabilities.rules import AnalyticsRules, AudioRules, NLPRules, VisionRules
+from .capabilities.rules import AnalyticsRules, AudioRules, GraphRules, NLPRules, VisionRules
 from .capabilities.vision import FeatureExtractor, ImageEncoder, PatternRecognizer, ShapeAnalyzer
 from .capabilities.vision_advanced import (
     DepthEstimator,
@@ -240,6 +251,17 @@ class ZeroDataModel:
         self.audio_speaker = SpeakerRecognizer(
             dim=dim, math_universe=self.math_universe, rules=self.audio_rules
         )
+        # Graph domain capabilities (reuse existing core module instances).
+        self.graph_rules = GraphRules()
+        self.graph_encoder = GraphEncoder(
+            dim=dim, math_universe=self.math_universe, rules=self.graph_rules
+        )
+        self.graph_community = CommunityDetector(dim=dim, rules=self.graph_rules)
+        self.graph_path = PathFinder(dim=dim, rules=self.graph_rules)
+        self.graph_centrality = CentralityAnalyzer(dim=dim, rules=self.graph_rules)
+        self.graph_isomorphism = GraphIsomorphismDetector(dim=dim, rules=self.graph_rules)
+        self.graph_dynamic = DynamicGraphTracker(dim=dim, rules=self.graph_rules)
+        self.graph_spanning = SpanningTreeExtractor(dim=dim, rules=self.graph_rules)
         # Hardware acceleration: parallel module execution + GPU-aware arrays.
         # When a seed is set, force sequential execution so the per-module
         # child Generators (spawned in ``__init__``) are consumed in a fixed
@@ -710,3 +732,46 @@ class ZeroDataModel:
         """Extract speaker-discriminative LPC + formant features."""
         with self._lock:
             return self.audio_speaker.extract_features(signal, sample_rate=sample_rate)
+
+    # ------------------------------------------------------------------ #
+    # Graph domain facades
+    # ------------------------------------------------------------------ #
+
+    def encode_graph(
+        self,
+        adjacency: np.ndarray,
+        node_features: np.ndarray | None = None,
+    ) -> np.ndarray:
+        """Encode a graph into a ``dim``-length L2-normalized vector."""
+        with self._lock:
+            return self.graph_encoder.encode(adjacency, node_features=node_features)
+
+    def detect_communities(self, adjacency: np.ndarray) -> dict:
+        """Detect communities via modularity optimization."""
+        with self._lock:
+            return self.graph_community.detect(adjacency)
+
+    def find_path(self, adjacency: np.ndarray, source: int, target: int) -> dict:
+        """Find the shortest path via Dijkstra."""
+        with self._lock:
+            return self.graph_path.find(adjacency, source, target)
+
+    def analyze_centrality(self, adjacency: np.ndarray) -> dict:
+        """Analyze degree, betweenness, and closeness centrality."""
+        with self._lock:
+            return self.graph_centrality.analyze(adjacency)
+
+    def check_isomorphism(self, adj_a: np.ndarray, adj_b: np.ndarray) -> dict:
+        """Check if two graphs are likely isomorphic (Weisfeiler-Lehman)."""
+        with self._lock:
+            return self.graph_isomorphism.check(adj_a, adj_b)
+
+    def track_dynamic_graph(self, snapshots: list) -> dict:
+        """Track community drift across graph snapshots."""
+        with self._lock:
+            return self.graph_dynamic.track(snapshots)
+
+    def extract_spanning_tree(self, adjacency: np.ndarray) -> dict:
+        """Extract the minimum spanning tree via Kruskal."""
+        with self._lock:
+            return self.graph_spanning.extract(adjacency)
