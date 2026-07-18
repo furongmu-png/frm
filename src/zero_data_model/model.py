@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import copy
 import os
 import threading
 
@@ -253,16 +254,28 @@ class ZeroDataModel:
     # ``ModelSerializer.save/load`` (npz + json), which has its own
     # validation. These hooks only enable pickle / deepcopy.
     def __getstate__(self) -> dict:
-        # Take the lock so in-place numpy mutations (emission += ...,
-        # weights += ...) cannot race with pickle's array walk. The
-        # ``_lock`` reference itself is dropped from the state below.
+        # Round-9 audit R9-005: the previous SIDE-1 fix took the lock only
+        # while copying ``__dict__`` (a shallow dict copy), then released
+        # the lock BEFORE returning. Pickle walks the returned dict (and
+        # the numpy arrays it references) AFTER the lock release, so a
+        # concurrent ``think()`` (which acquires ``_lock`` and performs
+        # in-place ``emission[:, :] += ...``, ``layer.weights += ...``)
+        # could mutate the very arrays pickle was serializing, producing
+        # a torn snapshot. The fix is to ``deepcopy`` the dict INSIDE the
+        # lock so pickle walks private array copies; the lock can then be
+        # released without re-exposing the snapshot to mutation. We drop
+        # the unpicklable concurrency primitives (``_lock`` is an
+        # ``RLock``; ``parallel_executor`` wraps a ``ThreadPoolExecutor``)
+        # BEFORE the deepcopy so ``copy.deepcopy`` does not try to clone
+        # them (which raises ``TypeError``).
         with self._lock:
-            state = self.__dict__.copy()
-        # Drop the unpicklable concurrency primitives. ``_seed`` survives
-        # in the state so ``__setstate__`` can rebuild ``parallel_executor``
-        # with the same n_workers policy (1 for seeded, auto for unseeded).
-        state["_lock"] = None
-        state["parallel_executor"] = None
+            shallow = self.__dict__.copy()
+            shallow["_lock"] = None
+            shallow["parallel_executor"] = None
+            state = copy.deepcopy(shallow)
+        # ``_seed`` survives in the state so ``__setstate__`` can rebuild
+        # ``parallel_executor`` with the same n_workers policy (1 for
+        # seeded, auto for unseeded).
         return state
 
     def __setstate__(self, state: dict) -> None:

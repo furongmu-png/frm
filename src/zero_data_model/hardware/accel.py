@@ -25,7 +25,14 @@ try:  # pragma: no cover - environment dependent
         _backend_name = "cupy"
     else:
         xp = np
-except ImportError:
+except Exception:
+    # Round-9 audit R9-004: ``cupy`` may import cleanly but raise
+    # ``RuntimeError`` from ``cuda.runtime.getDeviceCount()`` on hosts
+    # where CuPy is installed but the CUDA driver is missing or
+    # mismatched (common on dev laptops and CI). The previous
+    # ``except ImportError`` let that propagate, leaving ``xp`` unbound
+    # and crashing every downstream numerics import with ``NameError``.
+    # Catch any probe-time failure and fall back to NumPy.
     xp = np
 
 

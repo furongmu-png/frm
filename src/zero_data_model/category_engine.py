@@ -225,10 +225,22 @@ class CategoryTheoryEngine(CognitiveModule):
         """Find an invertible linear map ``T`` with ``T @ source = target``.
 
         Returns ``None`` when no well-conditioned map exists (degenerate
-        inputs). Uses a Householder-style construction: ``T = I - 2 vv^T``
-        where ``v`` is the bisector of ``source`` and ``target``, which is
-        always orthogonal (hence invertible) and maps ``source/|source|`` to
-        ``target/|target|`` exactly.
+        inputs). Uses a Householder-style construction: ``T = (nb/na) *
+        (I - 2 vv^T)`` where ``v`` is the bisector of ``source`` and
+        ``target``. The reflection ``(I - 2 vv^T)`` is orthogonal (hence
+        invertible) and maps ``source/|source|`` to ``target/|target|``
+        exactly; the ``nb/na`` scalar then rescales the magnitude so
+        ``T @ source = target`` holds exactly (not just up to a norm ratio).
+
+        Round-9 audit R9-003: the previous implementation returned the
+        unscaled reflection, so ``T @ source = (|source|/|target|) * target``
+        -- only the unit vectors matched, not the magnitudes. The docstring
+        promised ``T @ source = target`` (the contract every caller relies
+        on for solution transfer between domains), so the bug silently
+        rescaled transferred solutions by the source/target norm ratio.
+        Scaling by ``nb/na`` keeps the map invertible (non-zero scalar
+        times an orthogonal matrix is non-singular) while honoring the
+        documented contract.
         """
         a = np.asarray(source, dtype=float).flatten()
         b = np.asarray(target, dtype=float).flatten()
@@ -246,11 +258,15 @@ class CategoryTheoryEngine(CognitiveModule):
         v = a_hat - b_hat
         v_norm = float(np.linalg.norm(v))
         if v_norm < 1e-12:
-            # source and target are already aligned -> identity maps them.
-            return np.eye(n)
+            # source and target are already aligned up to magnitude:
+            # T = (nb/na) * I maps source -> target exactly.
+            return (nb / na) * np.eye(n)
         v = v / v_norm
-        # Householder reflection: T = I - 2 v v^T (orthogonal, hence invertible).
-        return np.eye(n) - 2.0 * np.outer(v, v)
+        # Scaled Householder reflection: orthogonal reflection (I - 2 v v^T)
+        # maps a_hat -> b_hat, then the (nb/na) scalar rescales the magnitude
+        # so T @ source = (nb/na) * (|source| * b_hat) = nb * b_hat = target.
+        scale = nb / na
+        return scale * (np.eye(n) - 2.0 * np.outer(v, v))
 
     def transfer_solution(
         self, source_cat: str, target_cat: str, solution: np.ndarray

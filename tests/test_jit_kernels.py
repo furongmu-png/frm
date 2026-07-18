@@ -132,11 +132,13 @@ def test_betti_numbers_matches_python_loop():
     max_radius = 1.0
     n_points = len(data)
 
-    # Reference: the original Python gap-detection loop.
+    # Round-9 audit R9-001: reference uses the documented contract —
+    # two sorted points are in the same component iff the gap between
+    # them is ``<= max_radius`` (NOT ``max_radius / n_points``).
     expected_b0 = 1
     for i in range(1, n_points):
         gap = data[i] - data[i - 1]
-        if gap > max_radius / n_points:
+        if gap > max_radius:
             expected_b0 += 1
     expected_b1 = max(0, n_points - expected_b0)
 

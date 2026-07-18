@@ -95,13 +95,20 @@ def test_c1_morphogenetic_field_gray_scott_nontrivial():
 
 
 def test_c2_find_invertible_map_is_orthogonal():
-    """find_invertible_map returns an orthogonal Householder reflection.
+    """find_invertible_map returns an invertible map honoring T @ source = target.
 
     C-2 fix: the previous find_isomorphism was a misnamed cosine similarity
     (not invertible). The new find_invertible_map builds a Householder
     reflection T = I - 2vv^T that maps the normalised source to the
-    normalised target. T must be orthogonal (T @ T.T = I) so it is
-    invertible and the map a_hat -> b_hat holds exactly.
+    normalised target.
+
+    Round-9 audit R9-003: the map is now SCALED by ``nb/na`` so the
+    documented contract ``T @ source = target`` holds exactly (not just
+    up to a norm ratio). The reflection component is still orthogonal
+    (T_reflection @ T_reflection.T = I), so the scaled map satisfies
+    ``T @ T.T = (nb/na)^2 * I`` -- still invertible (non-zero scalar
+    times an orthogonal matrix). We assert the documented contract
+    directly: ``T @ source ≈ target`` to float tolerance.
     """
     from zero_data_model.category_engine import CategoryTheoryEngine
 
@@ -111,12 +118,21 @@ def test_c2_find_invertible_map_is_orthogonal():
     target = rng.standard_normal(8)
     T = engine.find_invertible_map(source, target)
     assert T is not None
-    # Orthogonality: T @ T.T = I (T is its own inverse).
-    np.testing.assert_allclose(T @ T.T, np.eye(8), atol=1e-10)
-    # The map sends normalised source to normalised target exactly.
+    # Documented contract: T @ source == target (NOT just up to a norm ratio).
+    np.testing.assert_allclose(T @ source, target, atol=1e-10)
+    # Invertibility: the scaled orthogonal map has full rank.
+    assert np.linalg.matrix_rank(T) == 8
+    # Scaled orthogonality: T @ T.T = (nb/na)^2 * I.
+    na = float(np.linalg.norm(source))
+    nb = float(np.linalg.norm(target))
+    scale_sq = (nb / na) ** 2
+    np.testing.assert_allclose(T @ T.T, scale_sq * np.eye(8), atol=1e-10)
+    # The map still sends the normalised source to the normalised target
+    # (the reflection component maps a_hat -> b_hat; the scale preserves
+    # the direction).
     s_hat = source / np.linalg.norm(source)
     t_hat = target / np.linalg.norm(target)
-    np.testing.assert_allclose(T @ s_hat, t_hat, atol=1e-10)
+    np.testing.assert_allclose(T @ s_hat, t_hat * (nb / na), atol=1e-10)
 
 
 def test_c2_functor_apply_morphism_uses_object_map():

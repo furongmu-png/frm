@@ -15,6 +15,7 @@ then renamed into place so a crash never leaves a partial snapshot.
 
 from __future__ import annotations
 
+import contextlib
 import io
 import json
 import os
@@ -63,11 +64,38 @@ _ROOT_LOCK = threading.Lock()
 # --------------------------------------------------------------------------- #
 
 def _default_persistence_root() -> str:
-    """Pick a sensible default root: /app/data in containers, else cwd/data."""
+    """Pick a sensible default root: /app/data in containers, else cwd/data.
+
+    Round-9 audit R9-009: the non-container default ``cwd/data`` is
+    returned without being created, so the first ``ModelSerializer.save``
+    call (which uses ``tempfile.mkdtemp(dir=root)``) raised
+    ``FileNotFoundError`` on a fresh checkout. ``set_persistence_root``
+    creates the directory, but the default path bypassed that. We
+    ``makedirs(exist_ok=True)`` here so the default root is usable
+    immediately -- this applies to BOTH the container path (``/app/data``
+    is created when ``/app`` exists but ``/app/data`` doesn't yet, e.g.
+    on first run of a freshly-built container) and the non-container path.
+    Falls back to a tempfile-based directory if the cwd is read-only.
+    """
     container_root = "/app/data"
     if os.path.isdir("/app") or os.path.isdir(container_root):
+        # Container case: /app exists (mounted by the image) but
+        # /app/data may not yet -- create it so the first save doesn't
+        # crash with FileNotFoundError from tempfile.mkdtemp.
+        # /app is read-only in some images -- fall through to the writable
+        # fallback below if makedirs raises.
+        with contextlib.suppress(OSError):
+            os.makedirs(container_root, exist_ok=True)
         return container_root
-    return os.path.join(os.getcwd(), "data")
+    path = os.path.join(os.getcwd(), "data")
+    try:
+        os.makedirs(path, exist_ok=True)
+    except OSError:
+        # Cwd is read-only or otherwise unusable -- fall back to the
+        # system temp dir, which is writable on every supported platform.
+        path = os.path.join(tempfile.gettempdir(), "zero_data_model_data")
+        os.makedirs(path, exist_ok=True)
+    return path
 
 
 # Module-level root. Override at runtime via set_persistence_root() (tests).

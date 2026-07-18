@@ -565,7 +565,30 @@ async def _limit_body_size(request: Request, call_next):  # type: ignore[no-unty
     line. Previously the body was ``{"detail": "payload too large"}`` with
     no request_id, so a client reporting a 413 could not be matched to a
     server-side log entry.
+
+    Round-9 audit R9-006: the previous implementation only enforced the
+    4 MiB cap when a ``Content-Length`` header was present. A client using
+    ``Transfer-Encoding: chunked`` (no Content-Length) bypassed the cap
+    entirely, allowing an unbounded body to be buffered in memory by the
+    ASGI server until the process was OOM-killed. We reject chunked
+    requests explicitly: the API contract requires ``Content-Length`` so
+    the cap is enforceable pre-body, and no current client of the API
+    uses streaming uploads.
     """
+    te = request.headers.get("transfer-encoding", "").lower()
+    if "chunked" in te:
+        request_id = getattr(request.state, "request_id", "-")
+        return JSONResponse(
+            status_code=411,
+            content={
+                "detail": "chunked transfer-encoding not supported; use Content-Length",
+                "request_id": request_id,
+            },
+            headers={
+                "X-Request-ID": request_id,
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
     cl = request.headers.get("content-length")
     if cl:
         try:

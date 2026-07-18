@@ -106,13 +106,34 @@ class FeatureExtractor:
         state = np.zeros(ca.size, dtype=int)
         n = min(len(row), ca.size)
         state[:n] = row[:n]
-        ca.state = state
-        history = ca.evolve(n_steps=5)
-        texture = history.flatten().astype(float)
+        # Round-9 audit R9-002: ``ca.state`` and ``ca.rule`` are shared
+        # mutable substrate state. Without save/restore, every ``extract``
+        # call permanently corrupts the substrate (CA left at the 5th
+        # evolved state of an image-derived seed; morphogenetic grid
+        # advanced 10 steps from the image, not the model's belief).
+        # Subsequent ``think()`` cycles then operate on corrupted state.
+        # Mirror ``BiologicalSubstrate.predict``'s save/restore pattern
+        # (biological.py:344-355) and ``PatternMiner._best_automaton_rule``
+        # (analytics.py:196-216).
+        saved_ca_state = ca.state.copy()
+        saved_ca_rule = ca.rule
+        saved_morph_grid = self.biological.morphogenetic.grid.copy()
+        saved_morphogens = [m.copy() for m in self.biological.morphogenetic.morphogens]
+        saved_diffusion_rate = self.biological.morphogenetic.diffusion_rate
+        try:
+            ca.state = state
+            history = ca.evolve(n_steps=5)
+            texture = history.flatten().astype(float)
 
-        # Morphology: self-organizing morphogenetic pattern.
-        morph = self.biological.morphogenetic.develop(n_steps=10)
-        morphology = morph.flatten().astype(float)
+            # Morphology: self-organizing morphogenetic pattern.
+            morph = self.biological.morphogenetic.develop(n_steps=10)
+            morphology = morph.flatten().astype(float)
+        finally:
+            ca.state = saved_ca_state
+            ca.rule = saved_ca_rule
+            self.biological.morphogenetic.grid = saved_morph_grid
+            self.biological.morphogenetic.morphogens = saved_morphogens
+            self.biological.morphogenetic.diffusion_rate = saved_diffusion_rate
 
         # Stats: basic intensity summary.
         stats = np.array(

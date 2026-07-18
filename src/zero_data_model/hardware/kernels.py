@@ -177,13 +177,19 @@ def _kl_divergence(p_abs, q_abs):
 
 @njit(cache=True, nogil=True)
 def _betti_numbers(sorted_vals, max_radius):
-    """Compute (betti_0, betti_1) from sorted values + gap threshold."""
+    """Compute (betti_0, betti_1) from sorted values + gap threshold.
+
+    Round-9 audit R9-001: the threshold is now the raw ``max_radius``
+    (matching ``connected_components_1d``'s documented contract: two
+    sorted points are in the same component iff the gap between them is
+    ``<= max_radius``). The previous ``max_radius / n_points`` shrank as
+    the point count grew, making the count meaningless for large inputs.
+    """
     n_points = len(sorted_vals)
     betti_0 = 1
-    threshold = max_radius / n_points
     for i in range(1, n_points):
         gap = sorted_vals[i] - sorted_vals[i - 1]
-        if gap > threshold:
+        if gap > max_radius:
             betti_0 += 1
     betti_1 = n_points - betti_0
     if betti_1 < 0:

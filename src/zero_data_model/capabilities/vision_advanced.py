@@ -179,11 +179,26 @@ class VideoFrameAnalyzer:
         initial = np.zeros(size, dtype=int)
         m = min(len(binary), size)
         initial[:m] = binary[:m]
-        ca.state = initial.copy()
-        ca.rule = 30
-        n_steps = max(1, min(len(motion), 20))
-        history = ca.evolve(n_steps=n_steps)
-        flat = history.astype(float).flatten()
+        # Round-9 audit R9-010: ``ca.state`` AND ``ca.rule`` are shared
+        # mutable substrate state. Without save/restore, every
+        # ``_temporal_encoding`` call permanently replaces the substrate's
+        # CA rule with 30 and its state with a motion-derived seed advanced
+        # ``n_steps`` -- subsequent ``think()`` cycles then operate on the
+        # corrupted rule+state. ``ca.rule`` is especially insidious because
+        # callers that save/restore only ``state`` elsewhere would still
+        # see the rule change. Mirror ``PatternMiner._best_automaton_rule``
+        # (analytics.py:196-216) which saves/restores both fields.
+        saved_ca_state = ca.state.copy()
+        saved_ca_rule = ca.rule
+        try:
+            ca.state = initial.copy()
+            ca.rule = 30
+            n_steps = max(1, min(len(motion), 20))
+            history = ca.evolve(n_steps=n_steps)
+            flat = history.astype(float).flatten()
+        finally:
+            ca.state = saved_ca_state
+            ca.rule = saved_ca_rule
 
         # Reduce the evolution history into a dim-length vector by hashing
         # consecutive chunks of the flattened history into dim bins.
@@ -290,9 +305,13 @@ class DepthEstimator:
         gx = self.rules.convolve(img, self.rules.sobel_x)
         gy = self.rules.convolve(img, self.rules.sobel_y)
         mag = np.sqrt(gx ** 2 + gy ** 2)
-        # Avoid divide-by-zero in arctan2.
-        eps = 1e-8
-        orient = np.arctan2(gy, gx + eps)
+        # Round-9 audit R9-007: ``np.arctan2(0, 0)`` is well-defined (returns
+        # 0.0) by NumPy's contract, so no eps guard is needed. The previous
+        # ``gx + eps`` biased every angle by a small sign-dependent amount
+        # toward +x (e.g. arctan2(gy, eps) returns ~+pi/2 instead of the
+        # exact pi/2 that arctan2(gy, 0) returns), systematically skewing
+        # the orientation histogram used for depth cues.
+        orient = np.arctan2(gy, gx)
         # Quantize orientation into 18 bins of 20 degrees over [-pi, pi).
         n_bins = 18
         bin_idx = ((orient + np.pi) / (2 * np.pi) * n_bins).astype(int) % n_bins

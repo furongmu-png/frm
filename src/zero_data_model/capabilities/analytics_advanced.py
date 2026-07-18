@@ -211,13 +211,25 @@ class BayesianEstimator:
         self._beta_n = 0
 
     def _update_normal(self, observation: float) -> None:
-        """Closed-form Normal-Normal conjugate update with known variance."""
+        """Closed-form Normal-Normal conjugate update with known variance.
+
+        Round-9 audit R9-012: guard against non-finite ``observation``.
+        Without this guard, a single NaN/Inf observation irreversibly
+        poisons the posterior: ``new_mean`` becomes NaN, ``new_var``
+        follows, and every subsequent update re-combines NaN and stays
+        NaN forever. Mirrors the pattern in ``category_engine.update``,
+        ``biological.update``, ``quantum_hybrid.update``, and
+        ``consciousness_core.update`` (all of which guard ``np.isfinite``).
+        """
+        obs = float(observation)
+        if not math.isfinite(obs):
+            return
         prior_prec = 1.0 / max(self.normal_var, 1e-12)
         prior_prec = min(prior_prec, 1e12)
         lik_prec = 1.0 / self.known_var
         # Online update: treat each scalar as a single observation.
         new_prec = prior_prec + lik_prec
-        new_mean = (self.normal_mean * prior_prec + float(observation) * lik_prec) / new_prec
+        new_mean = (self.normal_mean * prior_prec + obs * lik_prec) / new_prec
         self.normal_mean = float(new_mean)
         self.normal_var = float(1.0 / new_prec)
         self._normal_n += 1

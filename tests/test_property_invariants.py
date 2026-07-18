@@ -64,11 +64,14 @@ def _finite_array(shape: int | tuple[int, ...]) -> st.SearchStrategy[np.ndarray]
 )
 @settings(max_examples=50, deadline=None)
 def test_p1_householder_reflection_is_orthogonal(source, target):
-    """P1: ``T = find_invertible_map(s, t)`` is orthogonal: ``T @ T.T == I``.
+    """P1: ``T = find_invertible_map(s, t)`` is a SCALED orthogonal map.
 
-    Orthogonality is what makes the Householder construction invertible
-    (its inverse is its transpose), which is the whole point of the
-    C-batch rewrite that replaced the old ``pinv``-based map.
+    Round-9 audit R9-003: the map is now ``T = (nb/na) * (I - 2vv^T)``
+    so the documented contract ``T @ source = target`` holds exactly
+    (not just up to a norm ratio). The reflection component
+    ``(I - 2vv^T)`` is orthogonal, so the scaled map satisfies
+    ``T @ T.T = (nb/na)^2 * I`` -- still invertible (non-zero scalar
+    times an orthogonal matrix is non-singular).
     """
     engine = CategoryTheoryEngine(dim=8, rng=np.random.default_rng(0))
     T = engine.find_invertible_map(source, target)
@@ -77,8 +80,11 @@ def test_p1_householder_reflection_is_orthogonal(source, target):
         return
     n = T.shape[0]
     assert T.shape == (n, n)
-    # Orthogonality: T @ T.T == I (within float tolerance).
-    np.testing.assert_allclose(T @ T.T, np.eye(n), atol=1e-10, rtol=1e-10)
+    na = float(np.linalg.norm(source))
+    nb = float(np.linalg.norm(target))
+    # Scaled orthogonality: T @ T.T == (nb/na)^2 * I.
+    scale_sq = (nb / na) ** 2
+    np.testing.assert_allclose(T @ T.T, scale_sq * np.eye(n), atol=1e-10, rtol=1e-10)
 
 
 @given(
@@ -87,18 +93,23 @@ def test_p1_householder_reflection_is_orthogonal(source, target):
 )
 @settings(max_examples=50, deadline=None)
 def test_p2_householder_reflection_is_involution(source, target):
-    """P2: Householder reflections are involutions: ``T @ T == I``.
+    """P2: the SCALED Householder map is invertible (full rank).
 
-    A Householder reflection through the hyperplane orthogonal to ``v``
-    is its own inverse: applying it twice returns the original vector.
-    This is a stronger property than mere invertibility.
+    Round-9 audit R9-003: previously the map was a pure reflection
+    (an involution: ``T @ T == I``). After scaling by ``nb/na``, the
+    map is no longer an involution but is still invertible (a non-zero
+    scalar times an orthogonal matrix is non-singular). We assert
+    full rank, which is the property ``transfer_solution`` relies on.
     """
     engine = CategoryTheoryEngine(dim=8, rng=np.random.default_rng(0))
     T = engine.find_invertible_map(source, target)
     if T is None:
         return
     n = T.shape[0]
-    np.testing.assert_allclose(T @ T, np.eye(n), atol=1e-10, rtol=1e-10)
+    assert np.linalg.matrix_rank(T) == n, (
+        f"scaled Householder map is rank-deficient (rank={np.linalg.matrix_rank(T)}, "
+        f"n={n}) -- the map is no longer invertible."
+    )
 
 
 @given(
@@ -107,11 +118,13 @@ def test_p2_householder_reflection_is_involution(source, target):
 )
 @settings(max_examples=50, deadline=None)
 def test_p3_householder_maps_source_to_target_direction(source, target):
-    """P3: ``T @ (source/|source|) == target/|target|`` (the map's purpose).
+    """P3: ``T @ source == target`` (the documented contract).
 
-    The Householder map is constructed so that it sends the source unit
-    vector exactly onto the target unit vector. If this invariant breaks,
-    ``transfer_solution`` silently produces wrong-domain answers.
+    Round-9 audit R9-003: previously the map only matched unit vectors
+    (``T @ s_hat == t_hat``). The map is now scaled by ``nb/na`` so
+    ``T @ source = (nb/na) * (|source| * t_hat) = |target| * t_hat = target``
+    exactly. If this invariant breaks, ``transfer_solution`` silently
+    produces wrong-domain answers.
     """
     engine = CategoryTheoryEngine(dim=8, rng=np.random.default_rng(0))
     T = engine.find_invertible_map(source, target)
@@ -121,8 +134,9 @@ def test_p3_householder_maps_source_to_target_direction(source, target):
     nb = float(np.linalg.norm(target))
     if na < 1e-12 or nb < 1e-12:
         return
-    mapped = T @ (source / na)
-    np.testing.assert_allclose(mapped, target / nb, atol=1e-10, rtol=1e-10)
+    # Documented contract: T @ source == target (with magnitude).
+    mapped = T @ source
+    np.testing.assert_allclose(mapped, target, atol=1e-10, rtol=1e-10)
 
 
 # --------------------------------------------------------------------------- #

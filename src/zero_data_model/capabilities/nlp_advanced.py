@@ -80,6 +80,18 @@ class MultiLingualEncoder:
     """
 
     def __init__(self, dim: int = 64, rules: NLPRules | None = None):
+        # Round-9 audit R9-013: when ``dim < len(_RECOGNIZED_SCRIPTS)`` the
+        # encoding's ``base_idx = (self.dim - n_stats) % self.dim`` and the
+        # ``vec[(base_idx + i) % self.dim] += float(s) * 2.0`` writes wrap
+        # modulo ``dim``, double-counting script proportions and overwriting
+        # the base encoder's output in the leading bins. Rather than reject
+        # (which would break small-dim model configurations used in tests
+        # and compact deployments), we record the cap and truncate the stats
+        # vector in ``encode`` to ``min(n_stats, dim)`` entries so no wrap
+        # occurs -- the encoding degrades gracefully to "fewer script bins
+        # available" instead of "silently corrupted encoding."
+        self._n_stats = len(_RECOGNIZED_SCRIPTS)
+        self._stats_cap = min(self._n_stats, dim)
         self.dim = dim
         self.rules = rules if rules is not None else NLPRules()
         self.encoder = TextEncoder(dim, self.rules)
@@ -128,10 +140,14 @@ class MultiLingualEncoder:
         vec = base.copy()
         # Place the per-script proportions into dedicated trailing bins. The
         # stats vector length tracks ``_RECOGNIZED_SCRIPTS`` (Fix 18).
-        n_stats = stats.shape[0]
-        base_idx = (self.dim - n_stats) % self.dim
-        for i, s in enumerate(stats):
-            vec[(base_idx + i) % self.dim] += float(s) * 2.0
+        # Round-9 audit R9-013: cap at ``self._stats_cap`` (= min(n_stats,
+        # dim)) so the writes never wrap modulo ``dim``. When ``dim <
+        # n_stats`` we drop the trailing scripts that don't fit rather than
+        # double-counting the leading ones via modulo wrap.
+        n_stats = min(stats.shape[0], self._stats_cap)
+        base_idx = self.dim - n_stats
+        for i in range(n_stats):
+            vec[base_idx + i] += float(stats[i]) * 2.0
         norm = float(np.linalg.norm(vec))
         if norm > 1e-8:
             vec = vec / norm

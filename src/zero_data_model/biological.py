@@ -194,6 +194,20 @@ class MorphogeneticField:
         self.morphogens[1] = v_new
         # 2) Legacy linear diffusion on grid + any extra morphogens (n_signals>2).
         self.grid += dt * self._laplacian(self.grid)
+        # Round-9 audit R9-008: clip ``grid`` to [0, 1] after the diffusion
+        # update, matching the Gray-Scott (u, v) pair above and the extra
+        # morphogens below. ``grid`` is initialised from N(0, 0.1²) (can be
+        # negative) and evolved under the same plain Laplacian diffusion as
+        # the extra morphogens, but was the ONLY diffusion-evolved field
+        # lacking the [0, 1] safety net. ``develop`` returns
+        # ``pattern = grid * (1 + 0.1 * morphogen_sum)``, so a signed grid
+        # mixed a [-0.3, 0.3]-ish quantity with [0, 1]-clipped morphogens --
+        # the exact semantic inconsistency Round-6 THEORY6-18 sought to
+        # eliminate. The default ``diffusion_rate=0.05`` (clamped to
+        # [0.001, 0.2] by update()) keeps the update stable (CFL bound 0.25),
+        # but ``grid`` was the sole field that would diverge unchecked if
+        # the clamp were ever raised above 0.25.
+        np.clip(self.grid, 0.0, 1.0, out=self.grid)
         # Round-6 audit THEORY6-18 / NEW5-6: clip extra morphogens (n_signals>2)
         # to [0, 1] after the diffusion update. The Gray-Scott (u, v) pair is
         # clipped above, but the extra morphogens were left unbounded — they

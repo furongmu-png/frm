@@ -110,7 +110,17 @@ class TopologicalAnalyzer:
         betti_0 = 1
         for i in range(1, n_points):
             gap = sorted_vals[i] - sorted_vals[i - 1]
-            if gap > max_radius / n_points:
+            # Round-9 audit R9-001: the documented contract is "two sorted
+            # points are in the same component iff the cumulative gap
+            # between them is ``<= max_radius``" (see docstring above).
+            # The previous ``max_radius / n_points`` threshold shrank as the
+            # point count grew, so for a normalised dim-64 vector (typical
+            # gaps ~ 1/64) the threshold was also ~1/64 and roughly half of
+            # all adjacent gaps exceeded it -- the returned count had no
+            # relation to "components at radius max_radius". Use the raw
+            # ``max_radius`` so the count matches the documented semantics
+            # (and matches ``vietoris_rips_betti``'s 1-skeleton rule).
+            if gap > max_radius:
                 betti_0 += 1
         return int(betti_0)
 
