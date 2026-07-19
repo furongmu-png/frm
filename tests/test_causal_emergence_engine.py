@@ -1,8 +1,9 @@
 # tests/test_causal_emergence_engine.py
-"""Tests for the CausalEmergenceEngine orchestrator (phase 1: foundation).
+"""Tests for the CausalEmergenceEngine orchestrator (phases 1-2 implemented).
 
 Phase 1 covers module A (topology) and module B (causal_discovery) facades.
-Phases 2-4 (modules C-E and emergence_cycle) will be tested in later files.
+Phase 2 covers module C (differential) — the generate_trajectory facade.
+Phases 3-4 (modules D-E and emergence_cycle) will be tested in later files.
 """
 
 from __future__ import annotations
@@ -26,7 +27,7 @@ def test_engine_constructs_with_defaults():
     engine = CausalEmergenceEngine()
     assert engine.topology is not None
     assert engine.causal is not None
-    assert engine.differential is None  # phase 2
+    assert engine.differential is not None  # phase 2
     assert engine.hmc is None  # phase 3
     assert engine.memory is None  # phase 3
 
@@ -86,17 +87,43 @@ def test_engine_counterfactual_facade():
     assert "shift" in result
 
 
-def test_engine_phase2_facade_raises():
-    """Phase 2-4 facades raise NotImplementedError in phase 1."""
+def test_engine_phase3_4_facades_raise():
+    """Phase 3-4 facades raise NotImplementedError in phase 2."""
     engine = CausalEmergenceEngine()
-    with pytest.raises(NotImplementedError):
-        engine.generate_trajectory({})
     with pytest.raises(NotImplementedError):
         engine.sample_posterior(lambda x: 0.0, np.zeros(4))
     with pytest.raises(NotImplementedError):
         engine.recall_memory(np.zeros(4))
     with pytest.raises(NotImplementedError):
         engine.emergence_cycle(np.zeros((10, 4)))
+
+
+def test_engine_generate_trajectory_facade():
+    """generate_trajectory facade delegates to module C (phase 2)."""
+    rng = np.random.default_rng(7)
+    engine = CausalEmergenceEngine(rules=EmergenceRules(), rng=rng)
+    start = np.zeros(3)
+    end = np.array([1.0, 2.0, 3.0])
+    result = engine.generate_trajectory(start, end, n_steps=16)
+    assert "trajectory" in result
+    assert "action" in result
+    assert result["trajectory"].shape == (17, 3)
+    np.testing.assert_allclose(result["trajectory"][0], start, atol=1e-9)
+    np.testing.assert_allclose(result["trajectory"][-1], end, atol=1e-6)
+
+
+def test_engine_differential_uses_shared_rng():
+    """Engine passes its rng to module C."""
+    rng = np.random.default_rng(42)
+    engine = CausalEmergenceEngine(rules=EmergenceRules(), rng=rng)
+    assert engine.differential.rng is rng
+
+
+def test_engine_differential_rules_propagated():
+    """Engine's rules propagate to module C."""
+    rules = EmergenceRules(differential_lambda=2.0)
+    engine = CausalEmergenceEngine(rules=rules)
+    assert engine.differential.rules is rules
 
 
 def test_engine_accepts_core_modules():

@@ -1,9 +1,11 @@
 # src/zero_data_model/causal_emergence/engine.py
-"""Causal emergence engine — orchestrator (phase 1: foundation only).
+"""Causal emergence engine — orchestrator (phases 1-2 implemented).
 
 Phase 1 (foundation): wires up modules A (topology) and B
-(causal_discovery) and exposes their facade methods. The full recursive
-emergence cycle (modules C-E) will be added in phases 2-4.
+(causal_discovery) and exposes their facade methods.
+Phase 2 (action): adds module C (differential) — damped least-action
+trajectory generator with the ``generate_trajectory`` facade.
+Phases 3-4 will add modules D-E and the full ``emergence_cycle``.
 
 See ``docs/superpowers/specs/2026-07-19-causal-emergence-engine-design.md``
 for the full design specification.
@@ -16,6 +18,7 @@ from typing import Any
 import numpy as np
 
 from .causal_discovery import CausalInferenceEngine
+from .differential import DifferentialGenerator
 from .rules import EmergenceRules
 from .topology import PersistentHomologyPerceiver
 
@@ -24,8 +27,9 @@ class CausalEmergenceEngine:
     """Causal emergence engine orchestrator.
 
     Composes five modules into a recursive perception-causal-counterfactual
-    -posterior-memory loop. Phase 1 wires up modules A and B; phases 2-4
-    add modules C-E and the full ``emergence_cycle``.
+    -posterior-memory loop. Phase 1 wires up modules A and B; phase 2 adds
+    module C (differential); phases 3-4 add modules D-E and the full
+    ``emergence_cycle``.
     """
 
     def __init__(
@@ -56,8 +60,13 @@ class CausalEmergenceEngine:
             rules=self.rules,
             rng=self.rng,
         )
-        # Modules C, D, E will be added in phases 2-3.
-        self.differential = None
+        # Module C: differential generator (phase 2)
+        self.differential = DifferentialGenerator(
+            dim=dim,
+            rules=self.rules,
+            rng=self.rng,
+        )
+        # Modules D, E will be added in phase 3.
         self.hmc = None
         self.memory = None
 
@@ -102,12 +111,33 @@ class CausalEmergenceEngine:
         )
 
     # ------------------------------------------------------------------
-    # Phase 2-4 placeholders (will be implemented in later phases)
+    # Facade methods (phase 2)
     # ------------------------------------------------------------------
-    def generate_trajectory(self, boundary: dict) -> dict:
-        """Module C facade (phase 2). Not yet implemented."""
-        raise NotImplementedError("DifferentialGenerator (phase 2) not yet implemented")
+    def generate_trajectory(
+        self,
+        start_state: np.ndarray,
+        end_state: np.ndarray,
+        n_steps: int = 32,
+        constraints: dict | None = None,
+    ) -> dict:
+        """Module C facade: damped least-action trajectory generator.
 
+        Solves a discretized Euler-Lagrange boundary value problem with
+        damping (spec §5). Returns ``trajectory`` of shape
+        ``(n_steps + 1, dim)`` connecting ``start_state`` to ``end_state``,
+        plus per-step ``lagrangian``, total ``action``, ``converged`` flag
+        and iteration count.
+        """
+        return self.differential.generate(
+            start_state=start_state,
+            end_state=end_state,
+            n_steps=n_steps,
+            constraints=constraints,
+        )
+
+    # ------------------------------------------------------------------
+    # Phase 3-4 placeholders (will be implemented in later phases)
+    # ------------------------------------------------------------------
     def sample_posterior(self, log_prob_fn, initial_position, **kwargs) -> dict:
         """Module D facade (phase 3). Not yet implemented."""
         raise NotImplementedError("HamiltonianSampler (phase 3) not yet implemented")
