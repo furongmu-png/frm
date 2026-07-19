@@ -474,9 +474,12 @@ class ChaoticAssociativeMemory:
                 'label': int | str | None,
                 'similarity': float,
                 'emerged': bool,
-                'trajectory': np.ndarray,    # (n_steps, 3) Lorenz 状态
+                'trajectory': np.ndarray,    # (n_steps + 1, 3) Lorenz 状态（fix NEW-M5：与模块 C 一致，含初始 + 终止边界）
                 'converged': bool,
                 'divergence': float,
+                # fix NEW-L1: nearest_pattern 暴露原始存储向量（调试 /
+                # 可视化用）；不参与涌现度计算。空记忆时为 None。
+                'nearest_pattern': np.ndarray | None,
             }
         """
 

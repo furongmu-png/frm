@@ -103,9 +103,12 @@ class ChaoticAssociativeMemory:
                 "label": None,
                 "similarity": 0.0,
                 "emerged": True,
-                "trajectory": np.zeros((n_steps, 3)),
+                # fix NEW-M5: shape is now (n_steps + 1, 3).
+                "trajectory": np.zeros((n_steps + 1, 3)),
                 "converged": False,
                 "divergence": 0.0,
+                # fix NEW-L1: spec §7.3 — empty memory returns None.
+                "nearest_pattern": None,
             }
 
         # NaN guard on raw query (before _sanitize replaces NaN with 0).
@@ -115,9 +118,12 @@ class ChaoticAssociativeMemory:
                 "label": None,
                 "similarity": 0.0,
                 "emerged": False,
-                "trajectory": np.zeros((n_steps, 3)),
+                # fix NEW-M5: shape is now (n_steps + 1, 3).
+                "trajectory": np.zeros((n_steps + 1, 3)),
                 "converged": False,
                 "divergence": 0.0,
+                # fix NEW-L1: spec §7.3 — NaN/inf query returns None.
+                "nearest_pattern": None,
             }
 
         q = self._sanitize(query)
@@ -127,11 +133,11 @@ class ChaoticAssociativeMemory:
         state0 = np.array([0.0, qy, qz])
 
         # Integrate Lorenz trajectory.
-        # fix NEW-M4 (documented): dt=0.01 is hardcoded — not configurable via
-        # EmergenceRules (no chaotic_dt field). The settled-tolerance 5.0
-        # below is calibrated to this dt. To tune, refactor to add
-        # chaotic_dt to EmergenceRules and scale the tolerance accordingly.
-        dt = 0.01
+        # fix NEW-M4: dt is now configurable via EmergenceRules.chaotic_dt.
+        # The settled-tolerance 5.0 below is calibrated to the default dt=0.01;
+        # if you change chaotic_dt significantly, consider scaling the
+        # tolerance proportionally to keep convergence semantics stable.
+        dt = self.rules.chaotic_dt
         trajectory = self._integrate_lorenz(state0, q, n_steps, dt)
 
         # Find nearest stored pattern (by L2 distance to original query)
@@ -282,11 +288,16 @@ class ChaoticAssociativeMemory:
             dz = x * y - beta * z - alpha * attract_z
             return np.array([dx, dy, dz])
 
-        traj = np.zeros((n_steps, 3))
+        # fix NEW-M5: trajectory shape is now (n_steps + 1, 3) — includes
+        # both the initial state (traj[0] = state0, before any integration)
+        # and the final state (traj[n_steps], after n_steps RK4 steps).
+        # This matches the convention used by DifferentialGenerator.generate
+        # which returns (n_steps + 1, dim).
+        traj = np.zeros((n_steps + 1, 3))
         state = state0.copy()
-        for k in range(n_steps):
-            traj[k] = state
-            # RK4
+        traj[0] = state
+        for k in range(1, n_steps + 1):
+            # RK4 step from traj[k-1] to traj[k]
             k1 = f(state)
             k2 = f(state + 0.5 * dt * k1)
             k3 = f(state + 0.5 * dt * k2)
@@ -295,5 +306,6 @@ class ChaoticAssociativeMemory:
             # Guard against divergence (state can blow up)
             if not np.all(np.isfinite(state)):
                 state = np.nan_to_num(state, nan=0.0, posinf=0.0, neginf=0.0)
+            traj[k] = state
 
         return traj

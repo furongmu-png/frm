@@ -57,6 +57,7 @@ class EmergenceRules(DomainRules):
     chaotic_sigma_q: float = 1.0            # Gaussian kernel bandwidth (new)
     chaotic_perturbation: float = 0.01      # emergence detection perturbation
     chaotic_divergence_threshold: float = 10.0  # emergence threshold (fix M6)
+    chaotic_dt: float = 0.01                # Lorenz RK4 timestep (fix NEW-M4)
 
     # Engine
     emergence_cycle_perturbation: float = 0.1  # counterfactual delta scale
@@ -90,5 +91,6 @@ class EmergenceRules(DomainRules):
             "chaotic_sigma_q": self.chaotic_sigma_q,
             "chaotic_perturbation": self.chaotic_perturbation,
             "chaotic_divergence_threshold": self.chaotic_divergence_threshold,
+            "chaotic_dt": self.chaotic_dt,
             "emergence_cycle_perturbation": self.emergence_cycle_perturbation,
         }

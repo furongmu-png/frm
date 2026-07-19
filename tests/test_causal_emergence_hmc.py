@@ -314,13 +314,39 @@ def test_ess_does_not_exceed_n_samples():
     assert result["ess"] <= 100
 
 
-def test_ess_constant_series_returns_n():
-    """A constant sample series (zero variance) gives ESS = n."""
+def test_ess_constant_series_returns_one():
+    """A constant sample series (zero variance) gives ESS = 1.0.
+
+    fix NEW-L3: the previous behavior returned ESS = n, which inflated the
+    mean ESS for posteriors constant in some dimensions and masked
+    under-sampling in others. The conservative choice is ESS = 1.0 — one
+    effective sample suffices to represent a constant series.
+    """
     sampler = HamiltonianSampler(rules=EmergenceRules())
     # Build samples manually to feed _ess_geyer
     samples = np.tile(np.array([1.0, 2.0]), (50, 1))
     ess = sampler._ess_geyer(samples)
-    assert ess == 50.0
+    assert ess == 1.0
+
+
+def test_ess_mixed_constant_and_variable():
+    """A posterior with one constant dim and one varying dim averages correctly.
+
+    With dim 2: dim 0 is constant (ESS = 1.0), dim 1 is well-sampled
+    independent draws (ESS ≈ n). Mean ESS should be (1.0 + ess_var) / 2,
+    which is much less than the previous behavior of (n + ess_var) / 2.
+    """
+    sampler = HamiltonianSampler(rules=EmergenceRules())
+    rng = np.random.default_rng(0)
+    # Dim 0 constant, dim 1 i.i.d. standard normal
+    samples = np.column_stack([
+        np.full(100, 0.5),
+        rng.standard_normal(100),
+    ])
+    ess = sampler._ess_geyer(samples)
+    # ess is the mean of [1.0, ess_dim1]. ess_dim1 should be close to 100
+    # for i.i.d. samples, so ess should be close to 50.5 but bounded.
+    assert 1.0 < ess < 100.0  # clearly between 1 and n
 
 
 # ----------------------------------------------------------------------

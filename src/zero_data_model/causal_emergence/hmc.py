@@ -294,8 +294,14 @@ class HamiltonianSampler:
             x = samples[:, d] - samples[:, d].mean()
             var = float(np.sum(x * x)) / n
             if var < 1e-12:
-                # Constant series — perfectly informative, ESS = n
-                ess_values.append(float(n))
+                # fix NEW-L3: constant series carries zero posterior
+                # information — a single sample suffices to represent it.
+                # Returning ``n`` (the previous behavior) inflated the mean
+                # ESS for posteriors that are constant in some dimensions,
+                # masking under-sampling in the others. ``1.0`` is the
+                # conservative choice: count one effective sample per
+                # constant dim.
+                ess_values.append(1.0)
                 continue
 
             # Autocorrelation via FFT for speed

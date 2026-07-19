@@ -327,9 +327,12 @@ class CausalEmergenceEngine:
                 "label": None,
                 "similarity": 0.0,
                 "emerged": False,
-                "trajectory": np.zeros((50, 3)),
+                # fix NEW-M5: shape is now (n_steps + 1, 3) = (51, 3).
+                "trajectory": np.zeros((51, 3)),
                 "converged": False,
                 "divergence": 0.0,
+                # fix NEW-L1: spec §7.3 — failure placeholder mirrors real output.
+                "nearest_pattern": None,
             }
 
         # Step 6: emergence score (fix H4, H5)

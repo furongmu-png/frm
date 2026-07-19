@@ -118,10 +118,14 @@ def test_recall_empty_memory_returns_none_label():
 
 
 def test_recall_empty_memory_trajectory_shape():
-    """Empty memory recall returns (n_steps, 3) zeros trajectory."""
+    """Empty memory recall returns (n_steps + 1, 3) zeros trajectory.
+
+    fix NEW-M5: trajectory shape is now (n_steps + 1, 3) — includes both
+    the initial state (row 0) and the final state (row n_steps).
+    """
     mem = ChaoticAssociativeMemory(rules=EmergenceRules())
     result = mem.recall(np.zeros(4), n_steps=50)
-    assert result["trajectory"].shape == (50, 3)
+    assert result["trajectory"].shape == (51, 3)
     assert np.all(result["trajectory"] == 0.0)
 
 
@@ -165,12 +169,16 @@ def test_recall_exact_match_similarity_one():
 
 
 def test_recall_trajectory_shape():
-    """Recall trajectory has shape (n_steps, 3) — Lorenz state."""
+    """Recall trajectory has shape (n_steps + 1, 3) — Lorenz state.
+
+    fix NEW-M5: trajectory shape is now (n_steps + 1, 3) — matches the
+    convention used by DifferentialGenerator.generate.
+    """
     rng = np.random.default_rng(0)
     mem = ChaoticAssociativeMemory(dim=8, rules=EmergenceRules(), rng=rng)
     mem.store(_make_pattern(rng, dim=8), label="A")
     result = mem.recall(_make_pattern(rng, dim=8), n_steps=100)
-    assert result["trajectory"].shape == (100, 3)
+    assert result["trajectory"].shape == (101, 3)
 
 
 def test_recall_trajectory_is_float_array():
@@ -351,7 +359,9 @@ def test_recall_returns_required_keys():
     result = mem.recall(_make_pattern(rng, dim=4), n_steps=10)
     for key in (
         "label", "similarity", "emerged",
-        "trajectory", "converged", "divergence"
+        "trajectory", "converged", "divergence",
+        # fix NEW-L1: spec §7.3 — nearest_pattern is now in the API contract.
+        "nearest_pattern",
     ):
         assert key in result, f"missing key: {key}"
 
