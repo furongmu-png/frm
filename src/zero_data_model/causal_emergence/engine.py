@@ -35,6 +35,13 @@ class CausalEmergenceEngine:
     Composes five modules into a recursive perception-causal-counterfactual
     -posterior-memory loop. Phases 1-3 wire up modules A-E; phase 4 adds
     the full ``emergence_cycle`` orchestration and emergence-score heuristic.
+
+    Thread safety (NEW-M6 documented): NOT thread-safe. The engine shares a
+    single ``np.random.Generator`` across all 5 modules (mutable state), and
+    ``ChaoticAssociativeMemory`` mutates Python lists without locks.
+    Concurrent ``emergence_cycle`` calls will interleave RNG draws and may
+    produce torn reads in memory storage. For multi-threaded use, give each
+    thread its own engine instance (and thus its own RNG + memory state).
     """
 
     def __init__(
@@ -301,7 +308,9 @@ class CausalEmergenceEngine:
             posterior = {
                 "samples": np.zeros((0, n_features)),
                 "mean": np.zeros(n_features),
-                "std": np.ones(n_features),  # large std -> low score term
+                # fix NEW-M2: large std (>> dim) drives term4 toward 0,
+                # correctly degrading the score when posterior fails.
+                "std": np.full(n_features, 1e6),
                 "accept_rate": 0.0,
                 "ess": 0.0,
                 "converged": False,

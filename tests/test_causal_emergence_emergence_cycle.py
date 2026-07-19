@@ -619,3 +619,120 @@ def test_higher_persistence_increases_score():
         r_circle["perception"]["persistence_entropy"]
         >= r_cluster["perception"]["persistence_entropy"]
     )
+
+
+# ----------------------------------------------------------------------
+# Forced module failure via monkeypatch (NEW-I3-c)
+# ----------------------------------------------------------------------
+
+def test_perception_failure_logs_warning_and_uses_placeholder():
+    """Forcing perceive_topology to raise logs a warning and uses placeholder.
+
+    The cycle should still complete; perception is replaced with a zero-
+    value placeholder and the warning list captures the failure.
+    """
+    engine = CausalEmergenceEngine(rules=EmergenceRules())
+    obs = _make_observation(n_samples=50, n_features=4)
+
+    def _boom(data, max_dim=None):
+        raise RuntimeError("synthetic topology failure")
+
+    engine.perceive_topology = _boom
+    result = engine.emergence_cycle(obs)
+    assert any("perception failed" in w for w in result["warnings"])
+    # Placeholder has the required keys.
+    assert "betti_numbers" in result["perception"]
+    assert result["perception"]["persistence_entropy"] == 0.0
+    # Score still computed.
+    assert "emergence_score" in result
+    assert np.isfinite(result["emergence_score"])
+
+
+def test_posterior_failure_drives_term4_to_zero():
+    """When HMC fails, the placeholder std=1e6 forces term4 ~ 0.
+
+    This is a regression test for NEW-M2: the previous placeholder
+    used std=1.0, which (counterintuitively) gave a HIGH term4 because
+    1.0 / dim is small. The new placeholder uses std=1e6 so that
+    term4 = 1 - mean(1e6) / dim ≈ 0.
+    """
+    engine = CausalEmergenceEngine(rules=EmergenceRules())
+    obs = _make_observation(n_samples=50, n_features=4)
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("synthetic HMC failure")
+
+    engine.sample_posterior = _boom
+    result = engine.emergence_cycle(obs)
+    # Posterior placeholder has std=1e6.
+    assert np.all(result["posterior"]["std"] == 1e6)
+    # Term4 should be ~0 (clipped from a large negative number).
+    # Verify via direct compute_emergence_score call.
+    score_with_failure = engine.compute_emergence_score(
+        perception={"persistence_entropy": 0.0},
+        causal_graph={"n_edges": 0, "adjacency": np.zeros((4, 4))},
+        counterfactual={"action": 0.0},
+        posterior={"std": np.full(4, 1e6)},
+        memory_response={"emerged": False},
+        reference_action=1.0,
+        dim=4,
+    )
+    np.testing.assert_allclose(score_with_failure, 0.0, atol=1e-12)
+
+
+def test_reference_action_zero_falls_back():
+    """reference_action=0 (when mean=0) triggers fallback in compute_emergence_score."""
+    engine = CausalEmergenceEngine(rules=EmergenceRules())
+    # mean=0 => reference_action=0 => fallback path triggers.
+    perception = {"persistence_entropy": 0.0}
+    causal_graph = {"n_edges": 0, "adjacency": np.zeros((4, 4))}
+    counterfactual = {"action": 0.5}
+    posterior = {"std": np.array([10.0, 10.0, 10.0, 10.0])}
+    memory_response = {"emerged": False}
+    score = engine.compute_emergence_score(
+        perception=perception,
+        causal_graph=causal_graph,
+        counterfactual=counterfactual,
+        posterior=posterior,
+        memory_response=memory_response,
+        reference_action=0.0,  # zero -> fallback to |action|=0.5
+        dim=4,
+    )
+    # term5 = action/reference = 0.5/0.5 = 1.0 -> 0.15 contribution.
+    np.testing.assert_allclose(score, 0.15, atol=1e-12)
+
+
+def test_warnings_format_includes_exception_type():
+    """Warning strings follow the format 'module failed: ExceptionType: message'."""
+    engine = CausalEmergenceEngine(rules=EmergenceRules())
+    obs = _make_observation(n_samples=50, n_features=4)
+
+    def _boom(data, max_dim=None):
+        raise ValueError("test_value_error")
+
+    engine.perceive_topology = _boom
+    result = engine.emergence_cycle(obs)
+    perception_warnings = [w for w in result["warnings"] if "perception failed" in w]
+    assert len(perception_warnings) >= 1
+    w = perception_warnings[0]
+    assert "ValueError" in w
+    assert "test_value_error" in w
+
+
+def test_emergence_score_lower_when_module_fails():
+    """A failed module produces a lower emergence_score than a successful one."""
+    rng1 = np.random.default_rng(42)
+    rng2 = np.random.default_rng(42)
+    e1 = CausalEmergenceEngine(rules=EmergenceRules(), rng=rng1)
+    e2 = CausalEmergenceEngine(rules=EmergenceRules(), rng=rng2)
+    obs = _make_observation(n_samples=50, n_features=4, seed=7)
+
+    r_success = e1.emergence_cycle(obs)
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("forced failure")
+    e2.perceive_topology = _boom
+    r_fail = e2.emergence_cycle(obs)
+
+    # Failed run should have a lower or equal score (perception term=0).
+    assert r_fail["emergence_score"] <= r_success["emergence_score"]

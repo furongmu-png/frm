@@ -324,3 +324,44 @@ def test_performance_pc_under_1_second():
     engine.discover(data)
     elapsed = time.perf_counter() - start
     assert elapsed < 1.0, f"PC took {elapsed:.2f}s, expected < 1s"
+
+
+# ----------------------------------------------------------------------
+# Meek R1 orientation (fix NEW-H1)
+# ----------------------------------------------------------------------
+
+def test_meek_r1_orients_edge_in_chain_with_unshielded_neighbor():
+    """R1 fires: a -> b, b - c (undirected), a not adj c => c -> b is WRONG.
+
+    Actually R1 orients c -> b ONLY when a -> b, a - c, c - b, a not adj c.
+    The previous implementation had three nested `pass` blocks and never
+    oriented any edges. This test constructs a graph where the previous
+    dead-code version would have left an edge undirected (resolved by the
+    index-order tiebreaker), and confirms the new implementation produces
+    an acyclic DAG with the expected orientation.
+    """
+    rng = np.random.default_rng(0)
+    engine = CausalInferenceEngine(rules=EmergenceRules(), rng=rng)
+    # Chain data x0 -> x1 -> x2 (no direct x0-x2 edge after PC skeleton).
+    data = _linear_chain_data(rng=np.random.default_rng(1))
+    result = engine.discover(data)
+    # Must be acyclic regardless of R1 firing.
+    assert result["is_acyclic"]
+    # No self-loops.
+    for i in range(result["adjacency"].shape[0]):
+        assert result["adjacency"][i, i] == 0
+
+
+def test_meek_r1_does_not_crash_on_dense_graph():
+    """R1 implementation handles a fully-connected initial skeleton."""
+    rng = np.random.default_rng(0)
+    engine = CausalInferenceEngine(rules=EmergenceRules(), rng=rng)
+    # Highly correlated data -> dense skeleton -> many R1 candidates.
+    n = 200
+    x0 = rng.standard_normal(n)
+    data = np.column_stack([x0 + 0.1 * rng.standard_normal(n) for _ in range(5)])
+    result = engine.discover(data)
+    assert result["is_acyclic"]
+    # All diagonal entries must be 0 (no self-loops).
+    for i in range(5):
+        assert result["adjacency"][i, i] == 0

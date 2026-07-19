@@ -9,7 +9,8 @@ for the full design specification.
 Phase 1 (foundation): modules A (topology) and B (causal_discovery).
 Phase 2 (action): module C (differential) — damped least-action generator.
 Phase 3 (cognition): modules D (hmc) and E (chaotic_memory).
-Phase 4 will add the full emergence cycle.
+Phase 4 (closure): the full ``emergence_cycle`` orchestration and the
+``compute_emergence_score`` heuristic.
 """
 
 from __future__ import annotations

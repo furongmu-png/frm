@@ -63,10 +63,11 @@ class ChaoticAssociativeMemory:
         ``evicted`` (list of evicted labels, FIFO when capacity exceeded).
         """
         p = self._sanitize(pattern)
-        if p.shape[0] != self.dim and self.dim != 64:
-            # Allow caller's pattern to override stored dim on first store
-            # if the default 64 doesn't match; otherwise require match.
-            pass
+        # fix NEW-M3: removed dead `if p.shape[0] != self.dim` block —
+        # dimension mismatch is handled downstream by _encode/_integrate_lorenz
+        # which index/slice based on the actual pattern shape. Storing a
+        # pattern with dim != self.dim is allowed; only Lorenz integration
+        # uses self.dim implicitly via _encode's two-halves split.
         target_y, target_z = self._encode(p)
         self._patterns.append(p)
         self._labels.append(label)
@@ -125,7 +126,11 @@ class ChaoticAssociativeMemory:
         qy, qz = self._encode(q)
         state0 = np.array([0.0, qy, qz])
 
-        # Integrate Lorenz trajectory
+        # Integrate Lorenz trajectory.
+        # fix NEW-M4 (documented): dt=0.01 is hardcoded — not configurable via
+        # EmergenceRules (no chaotic_dt field). The settled-tolerance 5.0
+        # below is calibrated to this dt. To tune, refactor to add
+        # chaotic_dt to EmergenceRules and scale the tolerance accordingly.
         dt = 0.01
         trajectory = self._integrate_lorenz(state0, q, n_steps, dt)
 

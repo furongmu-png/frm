@@ -169,7 +169,17 @@ class CausalInferenceEngine:
         """Counterfactual: 'what would have happened if X[var] had been value?'
 
         Linear closed-form (spec §4.3): ``cf = observed - W[:, var] *
-        (observed[var] - value)``.
+        (observed[var] - value)`` where ``W`` is the estimated weight matrix.
+
+        fix NEW-H2 (spec deviation documented): this implementation uses
+        **unit-weight simplified propagation** — every descendant of
+        ``intervention_var`` receives the identical scalar shift
+        ``delta = intervention_value - observed[intervention_var]``,
+        regardless of edge strength. The full spec formula requires
+        ``W`` which cannot be estimated from a single observation. For
+        spec-compliant counterfactual, call ``discover()`` first to fit
+        ``_estimate_weights``, then apply the weighted propagation
+        externally. Returns ``counterfactual``, ``factual``, ``shift``.
         """
         observed = np.asarray(observed, dtype=float).flatten()
         n_vars = observed.shape[0]
@@ -321,36 +331,26 @@ class CausalInferenceEngine:
                             changed = True
                             break
 
-            # R1: a -> b and a - c - b and a, c not adjacent => c -> b
-            for b in range(n_vars):
-                for c in range(n_vars):
-                    if b == c:
+            # R1 (fix NEW-H1): a -> b, a - c, c - b, and a NOT adjacent to c
+            #   => orient c -> b. The previous block was dead code with three
+            #   nested `pass` statements and never oriented any edges.
+            for a in range(n_vars):
+                for b in range(n_vars):
+                    if a == b or directed[a, b] != 1:
                         continue
-                    if directed[c, b] == 1:
-                        continue
-                    if adj[c, b] == 0 and adj[b, c] == 0:
-                        continue
-                    for a in range(n_vars):
-                        if a in (b, c):
+                    for c in range(n_vars):
+                        if c in (a, b) or directed[c, b] == 1:
                             continue
-                        if directed[a, b] == 1 and (
-                            adj[a, c] == 1 or adj[c, a] == 1
-                        ) and adj[a, c] == 0 and adj[c, a] == 0:
-                            # Wait — this needs a-c adjacency check.
-                            pass
-                        if directed[a, b] == 1 and adj[a, c] == 1:
-                            # a -> b, a - c, c - b, and a, c adjacent? R1 says NOT.
-                            pass
-                    # Simplified R1: if there's a -> b and a - c and c - b,
-                    # and a, c NOT adjacent, orient c -> b.
-                    for a in range(n_vars):
-                        if a in (b, c):
-                            continue
-                        if directed[a, b] == 1 and adj[a, c] == 1 and adj[c, b] == 1:
-                            # Check a, c not adjacent in original graph? They are adjacent here.
-                            # R1 actually requires a NOT adjacent to c.
-                            # Since adj[a, c] == 1 means adjacent, R1 doesn't apply.
-                            pass
+                        # c - b undirected and a NOT adjacent to c
+                        if (
+                            adj[c, b] == 1
+                            and adj[a, c] == 0
+                            and adj[c, a] == 0
+                        ):
+                            directed[c, b] = 1
+                            adj[c, b] = 0
+                            adj[b, c] = 0
+                            changed = True
 
             # R3: a - b, a - c, a - d, c -> b, d -> b, c, d not adjacent => a -> b
             for b in range(n_vars):
@@ -623,9 +623,15 @@ class CausalInferenceEngine:
         return all(not (color[u] == 0 and not dfs(u)) for u in range(n))
 
     def _break_cycles(self, adj: np.ndarray) -> np.ndarray:
-        """Greedily remove weakest edges to break cycles."""
+        """Greedily remove edges to break cycles.
+
+        fix NEW-L2: ``adj`` is binary (entries 0/1), so the sort is a
+        deterministic tiebreak by ``(i, j)`` index order, not by weight
+        magnitude. For weighted edge removal, populate ``adj`` with
+        correlation/LiNGAM coefficients before calling this method.
+        """
         adj = adj.copy()
-        # Sort edges by magnitude ascending; remove until acyclic.
+        # Binary adjacency: sort deterministically by (i, j) index order.
         edges = []
         n = adj.shape[0]
         for i in range(n):

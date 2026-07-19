@@ -267,8 +267,8 @@ class PersistentHomologyPerceiver:
         # captures the topology of the underlying continuous shape).
         for i, j in pairs:
             d_birth = len(simplices[i][0]) - 1
-            len(simplices[j][0]) - 1
-            # Pair should be d_birth + 1 == d_death; record at d_birth.
+            # Pair invariant: d_death == d_birth + 1 (not recorded; only
+            # d_birth is used to bucket the persistence pair).
             if d_birth <= max_dim:
                 birth = float(simplices[i][1])
                 death = float(simplices[j][1])
