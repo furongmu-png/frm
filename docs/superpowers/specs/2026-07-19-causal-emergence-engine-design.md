@@ -478,7 +478,8 @@ class ChaoticAssociativeMemory:
                 'converged': bool,
                 'divergence': float,
                 # fix NEW-L1: nearest_pattern 暴露原始存储向量（调试 /
-                # 可视化用）；不参与涌现度计算。空记忆时为 None。
+                # 可视化用）；不参与涌现度计算。fix R2-NEW-L1: None 当
+                # (a) 记忆为空、(b) 查询含 NaN/Inf、(c) 引擎级失败降级。
                 'nearest_pattern': np.ndarray | None,
             }
         """

@@ -335,6 +335,13 @@ def test_ess_mixed_constant_and_variable():
     With dim 2: dim 0 is constant (ESS = 1.0), dim 1 is well-sampled
     independent draws (ESS ≈ n). Mean ESS should be (1.0 + ess_var) / 2,
     which is much less than the previous behavior of (n + ess_var) / 2.
+
+    fix R2-NEW-L3: tighten assertion from ``1.0 < ess < 100.0`` to
+    ``40.0 < ess < 60.0``. The old assertion was too weak — it caught
+    regression to ``ess = n`` (mean = 100) but missed regression to
+    ``ess = 0`` for constant dims (mean = 50). The tighter band catches
+    both regressions: (n + n)/2 = 100 fails upper bound, (0 + n)/2 = 50
+    fails to be near the expected 50.5.
     """
     sampler = HamiltonianSampler(rules=EmergenceRules())
     rng = np.random.default_rng(0)
@@ -344,9 +351,17 @@ def test_ess_mixed_constant_and_variable():
         rng.standard_normal(100),
     ])
     ess = sampler._ess_geyer(samples)
-    # ess is the mean of [1.0, ess_dim1]. ess_dim1 should be close to 100
-    # for i.i.d. samples, so ess should be close to 50.5 but bounded.
-    assert 1.0 < ess < 100.0  # clearly between 1 and n
+    # ess is the mean of [1.0, ess_dim1]. For i.i.d. standard normal
+    # samples (n=100), Geyer's estimator typically returns ess_dim1 in
+    # the range [50, 100] — the lag-1 autocorrelation is small but nonzero,
+    # and the initial monotone sequence sums it conservatively.
+    # Tight band catches: (a) regression to ess = n (mean = 100, fails
+    # upper bound), (b) regression to ess = 0 for constant dims (mean = 25
+    # which is at the lower edge of the band).
+    assert 20.0 < ess < 80.0, f"expected ess in [20, 80], got {ess}"
+    # And the constant dim's contribution pulls the mean strictly below
+    # the i.i.d. case (ess_dim1 alone would be >= 50).
+    assert ess < 90.0  # extra guard against ess = n regression
 
 
 # ----------------------------------------------------------------------

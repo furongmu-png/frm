@@ -58,6 +58,12 @@ class EmergenceRules(DomainRules):
     chaotic_perturbation: float = 0.01      # emergence detection perturbation
     chaotic_divergence_threshold: float = 10.0  # emergence threshold (fix M6)
     chaotic_dt: float = 0.01                # Lorenz RK4 timestep (fix NEW-M4)
+    # fix R2-NEW-M2: settled-tolerance was hardcoded 5.0 calibrated to
+    # default dt=0.01. Now rule-ified; default preserves old behavior, and
+    # scales naturally if user changes chaotic_dt (e.g., chaotic_dt=0.001
+    # + chaotic_settled_tolerance=5.0 -> tighter absolute basin check,
+    # which is the desired behavior for finer integration).
+    chaotic_settled_tolerance: float = 5.0
 
     # Engine
     emergence_cycle_perturbation: float = 0.1  # counterfactual delta scale
@@ -92,5 +98,6 @@ class EmergenceRules(DomainRules):
             "chaotic_perturbation": self.chaotic_perturbation,
             "chaotic_divergence_threshold": self.chaotic_divergence_threshold,
             "chaotic_dt": self.chaotic_dt,
+            "chaotic_settled_tolerance": self.chaotic_settled_tolerance,
             "emergence_cycle_perturbation": self.emergence_cycle_perturbation,
         }

@@ -44,6 +44,11 @@ class CausalEmergenceEngine:
     thread its own engine instance (and thus its own RNG + memory state).
     """
 
+    # fix R2-NEW-M3: hoisted n_steps magic numbers to named class constants
+    # so the recall call and the failure placeholder stay in sync.
+    _MEMORY_N_STEPS: int = 50
+    _COUNTERFACTUAL_N_STEPS: int = 16
+
     def __init__(
         self,
         dim: int = 64,
@@ -283,13 +288,15 @@ class CausalEmergenceEngine:
             counterfactual = self.generate_trajectory(
                 start_state=mean,
                 end_state=mean + delta,
-                n_steps=16,
+                n_steps=self._COUNTERFACTUAL_N_STEPS,
             )
         except Exception as exc:  # noqa: BLE001
             warnings.append(f"differential failed: {type(exc).__name__}: {exc}")
             counterfactual = {
-                "trajectory": np.tile(mean, (17, 1)),
-                "lagrangian": np.zeros(16),
+                "trajectory": np.tile(
+                    mean, (self._COUNTERFACTUAL_N_STEPS + 1, 1)
+                ),
+                "lagrangian": np.zeros(self._COUNTERFACTUAL_N_STEPS),
                 "action": 0.0,
                 "converged": False,
                 "iterations": 0,
@@ -320,15 +327,19 @@ class CausalEmergenceEngine:
         # Step 5: memory recall (module E)
         memory_response: dict = {}
         try:
-            memory_response = self.recall_memory(mean, n_steps=50)
+            memory_response = self.recall_memory(
+                mean, n_steps=self._MEMORY_N_STEPS
+            )
         except Exception as exc:  # noqa: BLE001
             warnings.append(f"memory failed: {type(exc).__name__}: {exc}")
             memory_response = {
                 "label": None,
                 "similarity": 0.0,
                 "emerged": False,
-                # fix NEW-M5: shape is now (n_steps + 1, 3) = (51, 3).
-                "trajectory": np.zeros((51, 3)),
+                # fix NEW-M5 + R2-NEW-M3: shape is (n_steps + 1, 3), where
+                # n_steps is hoisted to _MEMORY_N_STEPS to stay in sync with
+                # the recall call above.
+                "trajectory": np.zeros((self._MEMORY_N_STEPS + 1, 3)),
                 "converged": False,
                 "divergence": 0.0,
                 # fix NEW-L1: spec §7.3 — failure placeholder mirrors real output.
@@ -336,8 +347,10 @@ class CausalEmergenceEngine:
             }
 
         # Step 6: emergence score (fix H4, H5)
+        # R2-NEW-M3: n_steps=16 was hardcoded; now uses _COUNTERFACTUAL_N_STEPS
+        # to stay in sync with the differential.generate call above.
         reference_action = (
-            float(np.sum(mean * mean)) * 16 / 2.0  # n_steps=16 matches step 3
+            float(np.sum(mean * mean)) * self._COUNTERFACTUAL_N_STEPS / 2.0
         )
         emergence_score = self.compute_emergence_score(
             perception=perception,

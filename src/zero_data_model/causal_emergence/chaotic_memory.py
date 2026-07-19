@@ -91,11 +91,13 @@ class ChaoticAssociativeMemory:
         """Recall the nearest stored pattern to ``query``.
 
         Returns dict with ``label``, ``similarity``, ``emerged``,
-        ``trajectory``, ``converged``, ``divergence``.
+        ``trajectory``, ``converged``, ``divergence``, ``nearest_pattern``.
 
         Empty memory -> ``label=None, similarity=0.0, emerged=True,
-        trajectory=zeros, converged=False, divergence=0.0``.
-        Query with NaN -> ``label=None, emerged=False, converged=False``.
+        trajectory=zeros, converged=False, divergence=0.0,
+        nearest_pattern=None``.
+        Query with NaN -> ``label=None, emerged=False, converged=False,
+        nearest_pattern=None``.
         """
         # Empty memory case
         if not self._patterns:
@@ -133,10 +135,10 @@ class ChaoticAssociativeMemory:
         state0 = np.array([0.0, qy, qz])
 
         # Integrate Lorenz trajectory.
-        # fix NEW-M4: dt is now configurable via EmergenceRules.chaotic_dt.
-        # The settled-tolerance 5.0 below is calibrated to the default dt=0.01;
-        # if you change chaotic_dt significantly, consider scaling the
-        # tolerance proportionally to keep convergence semantics stable.
+        # fix NEW-M4: dt is configurable via EmergenceRules.chaotic_dt.
+        # fix R2-NEW-M2: settled-tolerance is also configurable via
+        # EmergenceRules.chaotic_settled_tolerance (default 5.0), removing
+        # the hidden coupling between dt and the convergence check.
         dt = self.rules.chaotic_dt
         trajectory = self._integrate_lorenz(state0, q, n_steps, dt)
 
@@ -174,11 +176,12 @@ class ChaoticAssociativeMemory:
         target_y, target_z = self._targets[nearest_idx]
         final_state = trajectory[-1]
         target_state = np.array([0.0, target_y, target_z])
-        # Settled if final state's (y, z) is within 5.0 of target (Lorenz
-        # state space is large).
+        # Settled if final state's (y, z) is within chaotic_settled_tolerance
+        # of target (Lorenz state space is large). fix R2-NEW-M2: tolerance
+        # is now configurable via EmergenceRules.chaotic_settled_tolerance.
         settled = float(
             np.linalg.norm(final_state[1:] - target_state[1:])
-        ) < 5.0
+        ) < self.rules.chaotic_settled_tolerance
 
         # NaN guard on outputs
         trajectory = np.nan_to_num(trajectory, nan=0.0, posinf=0.0, neginf=0.0)

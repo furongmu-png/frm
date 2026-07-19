@@ -445,3 +445,73 @@ def test_lorenz_initial_state_encodes_query():
     result = mem.recall(p, n_steps=10)
     # Initial state is (0, target_y, target_z) = (0, 0.5, 1.5)
     np.testing.assert_allclose(result["trajectory"][0], [0.0, 0.5, 1.5])
+
+
+# ----------------------------------------------------------------------
+# Configurable chaotic_dt and chaotic_settled_tolerance
+# (fix R2-NEW-M1, R2-NEW-M2)
+# ----------------------------------------------------------------------
+
+def test_recall_with_smaller_chaotic_dt():
+    """A 10x smaller chaotic_dt produces a valid (n_steps + 1, 3) trajectory.
+
+    fix R2-NEW-M1: previously no test exercised non-default chaotic_dt.
+    """
+    rules = EmergenceRules(chaotic_dt=0.001)  # 10x smaller than default 0.01
+    rng = np.random.default_rng(0)
+    mem = ChaoticAssociativeMemory(dim=4, rules=rules, rng=rng)
+    mem.store(_make_pattern(rng, dim=4), label="A")
+    result = mem.recall(_make_pattern(rng, dim=4), n_steps=50)
+    assert result["trajectory"].shape == (51, 3)
+    assert np.all(np.isfinite(result["trajectory"]))
+    assert np.isfinite(result["divergence"])
+
+
+def test_recall_with_larger_chaotic_dt_does_not_blow_up():
+    """A 5x larger chaotic_dt still integrates without NaN/Inf blowup."""
+    rules = EmergenceRules(chaotic_dt=0.05)  # 5x larger than default
+    rng = np.random.default_rng(0)
+    mem = ChaoticAssociativeMemory(dim=4, rules=rules, rng=rng)
+    mem.store(_make_pattern(rng, dim=4), label="A")
+    result = mem.recall(_make_pattern(rng, dim=4), n_steps=50)
+    # NaN guard inside _integrate_lorenz catches blowup, so trajectory
+    # is always finite — but divergence may be large.
+    assert result["trajectory"].shape == (51, 3)
+    assert np.all(np.isfinite(result["trajectory"]))
+
+
+def test_chaotic_settled_tolerance_default_matches_old_behavior():
+    """Default chaotic_settled_tolerance=5.0 preserves old convergence check.
+
+    fix R2-NEW-M2: the previously-hardcoded 5.0 is now a rule; the default
+    must produce identical convergence decisions to the old hardcoded value.
+    """
+    rules = EmergenceRules()
+    assert rules.chaotic_settled_tolerance == 5.0
+
+
+def test_chaotic_settled_tolerance_affects_convergence():
+    """A larger tolerance makes the settled flag more permissive."""
+    rng = np.random.default_rng(0)
+    p = _make_pattern(rng, dim=8)
+    # With a tiny tolerance, settled is almost always False.
+    rules_tight = EmergenceRules(chaotic_settled_tolerance=0.001)
+    mem_tight = ChaoticAssociativeMemory(dim=8, rules=rules_tight, rng=rng)
+    mem_tight.store(p, label="A")
+    r_tight = mem_tight.recall(p, n_steps=50)
+    # With a huge tolerance, settled is almost always True.
+    rng2 = np.random.default_rng(0)  # same seed for reproducibility
+    rules_loose = EmergenceRules(chaotic_settled_tolerance=1e6)
+    mem_loose = ChaoticAssociativeMemory(dim=8, rules=rules_loose, rng=rng2)
+    mem_loose.store(p, label="A")
+    r_loose = mem_loose.recall(p, n_steps=50)
+    # Loose tolerance should be more permissive than tight.
+    assert r_loose["converged"] or not r_tight["converged"]
+
+
+def test_chaotic_dt_appears_in_rules_dict():
+    """chaotic_dt and chaotic_settled_tolerance are in the rules dict."""
+    rules = EmergenceRules(chaotic_dt=0.02, chaotic_settled_tolerance=7.5)
+    d = rules.to_dict() if hasattr(rules, "to_dict") else rules.rules
+    assert d["chaotic_dt"] == 0.02
+    assert d["chaotic_settled_tolerance"] == 7.5

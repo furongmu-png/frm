@@ -284,6 +284,12 @@ class HamiltonianSampler:
         For each dimension, compute the autocorrelation function and
         sum pairs (lag 2k-1, 2k) until the sum first becomes negative.
         ESS_d = n / (1 + 2 * sum). Return the mean across dimensions.
+
+        fix R2-NEW-L4: Constant dimensions (variance < 1e-12) return
+        ESS_d = 1.0 — a conservative middle ground between 0 (no info)
+        and n (perfectly representative). Returning ``n`` would inflate
+        the mean ESS for mixed posteriors and mask under-sampling in
+        well-sampled dimensions.
         """
         n, dim = samples.shape
         if n < 2:
