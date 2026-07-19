@@ -1,11 +1,11 @@
 # tests/test_causal_emergence_engine.py
-"""Tests for the CausalEmergenceEngine orchestrator (phases 1-3 implemented).
+"""Tests for the CausalEmergenceEngine orchestrator (phases 1-4 implemented).
 
 Phase 1 covers module A (topology) and module B (causal_discovery) facades.
 Phase 2 covers module C (differential) — the generate_trajectory facade.
 Phase 3 covers modules D (hmc) and E (chaotic_memory) — the
 sample_posterior and recall_memory facades.
-Phase 4 (emergence_cycle) will be tested in a later file.
+Phase 4 (emergence_cycle) is tested in test_causal_emergence_emergence_cycle.py.
 """
 
 from __future__ import annotations
@@ -87,13 +87,6 @@ def test_engine_counterfactual_facade():
     assert "counterfactual" in result
     assert "factual" in result
     assert "shift" in result
-
-
-def test_engine_phase4_facade_raises():
-    """Phase 4 facade (emergence_cycle) raises NotImplementedError in phase 3."""
-    engine = CausalEmergenceEngine()
-    with pytest.raises(NotImplementedError):
-        engine.emergence_cycle(np.zeros((10, 4)))
 
 
 def test_engine_sample_posterior_facade():
