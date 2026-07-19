@@ -125,6 +125,7 @@ from .capabilities.vision_advanced import (
     VideoFrameAnalyzer,
 )
 from .category_engine import CategoryTheoryEngine
+from .causal_emergence import CausalEmergenceEngine, EmergenceRules
 from .consciousness_core import ConsciousnessCore
 from .hardware import accel as _accel
 from .hardware.parallel import ParallelExecutor
@@ -209,8 +210,12 @@ class ZeroDataModel:
         # Round-5 audit RNG5-3: the count MUST match the number of modules
         # indexed below (_child_rngs[0]..[5]). If a 7th module is added,
         # bump _N_COGNITIVE_MODULES or the indexing will raise IndexError.
+        # spec §2.3 (causal emergence): the emergence engine is NOT a
+        # cognitive module — it stays out of ``self.modules`` and does NOT
+        # bump ``_N_COGNITIVE_MODULES``. It uses ``_child_rngs[6]``, so we
+        # spawn one extra child here.
         _N_COGNITIVE_MODULES = 6
-        _child_rngs = self._rng.spawn(_N_COGNITIVE_MODULES)
+        _child_rngs = self._rng.spawn(_N_COGNITIVE_MODULES + 1)
         self.consciousness = ConsciousnessCore(dim=dim, rng=_child_rngs[0])
         self.active_inference = ActiveInferenceEngine(
             state_dim=dim, obs_dim=dim, action_dim=dim // 2, rng=_child_rngs[1]
@@ -239,6 +244,20 @@ class ZeroDataModel:
             self.biological,
             self.math_universe,
         ]
+        # Causal emergence engine (spec §2.3): composes 5 modules (topology,
+        # causal discovery, differential, HMC, chaotic memory) into a single
+        # recursive perception-causal-counterfactual-posterior-memory loop.
+        # NOT in ``self.modules`` (preserves the 6-module cognitive count
+        # contract) and does NOT change ``_N_COGNITIVE_MODULES``. Uses its
+        # own child rng at index 6.
+        self.emergence_rules = EmergenceRules()
+        self.emergence = CausalEmergenceEngine(
+            dim=dim,
+            active_inference=self.active_inference,
+            math_universe=self.math_universe,
+            rules=self.emergence_rules,
+            rng=_child_rngs[6],
+        )
         # Domain capabilities built on top of the core modules.
         self.nlp_text_encoder = TextEncoder(dim=dim)
         self.nlp_comparator = SemanticComparator(
@@ -1241,3 +1260,89 @@ class ZeroDataModel:
             return self.causal_intervention.intervene(
                 data, intervention_var, intervention_value
             )
+
+    # ------------------------------------------------------------------
+    # Causal emergence engine facade (spec §2.3)
+    # ------------------------------------------------------------------
+    def perceive_topology(
+        self, data: np.ndarray, max_dim: int | None = None
+    ) -> dict:
+        """Perceive topological invariants of ``data`` (spec §2.3).
+
+        Delegates to ``CausalEmergenceEngine.perceive_topology`` under
+        ``self._lock`` (fix M9: lock granularity is the full method body).
+        Returns dict with ``betti_numbers``, ``persistence_entropy``,
+        ``euler_characteristic``, ``n_points``, ``max_eps``,
+        ``persistence_diagram``.
+        """
+        with self._lock:
+            return self.emergence.perceive_topology(data, max_dim=max_dim)
+
+    def discover_causal_dynamics(
+        self,
+        data: np.ndarray,
+        var_names: list[str] | None = None,
+        method: str | None = None,
+    ) -> dict:
+        """Discover causal DAG from observational data (spec §2.3).
+
+        Distinct from ``discover_causal_graph`` (which uses the basic
+        CausalGraphBuilder capability); this facade uses the emergence
+        engine's PC/LiNGAM/correlation pipeline.
+        """
+        with self._lock:
+            return self.emergence.discover_causal_dynamics(
+                data, var_names=var_names, method=method
+            )
+
+    def generate_trajectory(
+        self,
+        start_state: np.ndarray,
+        end_state: np.ndarray,
+        n_steps: int = 32,
+        constraints: dict | None = None,
+    ) -> dict:
+        """Generate damped least-action trajectory (spec §2.3)."""
+        with self._lock:
+            return self.emergence.generate_trajectory(
+                start_state, end_state, n_steps=n_steps, constraints=constraints
+            )
+
+    def sample_posterior(
+        self,
+        log_prob_fn,
+        initial_position: np.ndarray,
+        n_samples: int | None = None,
+        step_size: float | None = None,
+        n_leapfrog: int | None = None,
+        grad_fn=None,
+    ) -> dict:
+        """Sample posterior via HMC (spec §2.3)."""
+        with self._lock:
+            return self.emergence.sample_posterior(
+                log_prob_fn=log_prob_fn,
+                initial_position=initial_position,
+                n_samples=n_samples,
+                step_size=step_size,
+                n_leapfrog=n_leapfrog,
+                grad_fn=grad_fn,
+            )
+
+    def recall_memory(self, query: np.ndarray, n_steps: int = 100) -> dict:
+        """Recall from chaotic associative memory (spec §2.3)."""
+        with self._lock:
+            return self.emergence.recall_memory(query, n_steps=n_steps)
+
+    def emergence_cycle(self, observation: np.ndarray) -> dict:
+        """Run the full recursive emergence loop (spec §2.3, §8.2).
+
+        Observation must be 2D ``(n_samples, n_features)`` with both
+        dimensions >= 2; otherwise returns ``{'emergence_score': 0.0,
+        'reason': 'insufficient_data'}``.
+
+        Returns dict with ``perception``, ``causal_graph``,
+        ``counterfactual``, ``posterior``, ``memory``,
+        ``emergence_score``, ``warnings``.
+        """
+        with self._lock:
+            return self.emergence.emergence_cycle(observation)
