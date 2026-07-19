@@ -515,3 +515,108 @@ def test_chaotic_dt_appears_in_rules_dict():
     d = rules.to_dict() if hasattr(rules, "to_dict") else rules.rules
     assert d["chaotic_dt"] == 0.02
     assert d["chaotic_settled_tolerance"] == 7.5
+
+
+# ----------------------------------------------------------------------
+# n_steps edge cases (fix R2-NEW-M1 residual)
+# ----------------------------------------------------------------------
+
+def test_recall_n_steps_zero_returns_single_row_trajectory():
+    """n_steps=0 is a legal edge case returning a (1, 3) trajectory.
+
+    fix R2-NEW-M1 (residual): the spec defines the trajectory shape as
+    ``(n_steps + 1, 3)`` (initial state + n_steps RK4 steps). With
+    ``n_steps=0`` there are no RK4 steps, so the trajectory contains
+    just the initial Lorenz state ``traj[0] = (0, qy, qz)``. This is the
+    boundary between the empty-memory zero-fill path and the normal
+    RK4 path, and previously had no test coverage.
+    """
+    rng = np.random.default_rng(0)
+    mem = ChaoticAssociativeMemory(dim=4, rules=EmergenceRules(), rng=rng)
+    mem.store(_make_pattern(rng, dim=4), label="A")
+    result = mem.recall(_make_pattern(rng, dim=4), n_steps=0)
+
+    # Shape: (n_steps + 1, 3) = (1, 3)
+    assert result["trajectory"].shape == (1, 3)
+    # Initial state has x=0 (Lorenz convention); y, z encode the query.
+    assert result["trajectory"][0, 0] == 0.0
+    assert np.all(np.isfinite(result["trajectory"]))
+    # Other fields still well-formed.
+    assert isinstance(result["label"], str | int)
+    assert 0.0 <= result["similarity"] <= 1.0
+    assert isinstance(result["divergence"], float)
+    # nearest_pattern must be present (memory is non-empty).
+    assert result["nearest_pattern"] is not None
+
+
+def test_recall_n_steps_one_returns_two_row_trajectory():
+    """n_steps=1 returns a (2, 3) trajectory: initial + one RK4 step."""
+    rng = np.random.default_rng(0)
+    mem = ChaoticAssociativeMemory(dim=4, rules=EmergenceRules(), rng=rng)
+    mem.store(_make_pattern(rng, dim=4), label="A")
+    result = mem.recall(_make_pattern(rng, dim=4), n_steps=1)
+
+    assert result["trajectory"].shape == (2, 3)
+    # Row 0 is the initial state (x=0); row 1 is one RK4 step later.
+    assert result["trajectory"][0, 0] == 0.0
+    # After one step, x is generally nonzero (chaotic dynamics).
+    assert np.all(np.isfinite(result["trajectory"]))
+
+
+def test_recall_empty_memory_n_steps_zero_returns_single_row_zeros():
+    """Empty memory with n_steps=0 returns a (1, 3) zeros trajectory."""
+    mem = ChaoticAssociativeMemory(rules=EmergenceRules())
+    result = mem.recall(np.zeros(4), n_steps=0)
+
+    assert result["label"] is None
+    assert result["similarity"] == 0.0
+    assert result["emerged"] is True
+    assert result["converged"] is False
+    assert result["divergence"] == 0.0
+    assert result["nearest_pattern"] is None
+    # Shape (n_steps + 1, 3) = (1, 3), all zeros.
+    assert result["trajectory"].shape == (1, 3)
+    assert np.all(result["trajectory"] == 0.0)
+
+
+def test_recall_n_steps_negative_raises_value_error():
+    """Negative n_steps raises ValueError instead of crashing in _integrate_lorenz.
+
+    fix R2-NEW-M1 (residual): previously ``recall(query, n_steps=-1)``
+    would crash inside ``_integrate_lorenz`` with an opaque
+    ``IndexError: index 0 is out of bounds for axis 0 with size 0``
+    because ``np.zeros((n_steps + 1, 3))`` produced an empty array.
+    Now ``recall`` validates the input upfront and raises a clear
+    ``ValueError``, matching the spec's API style for invalid inputs
+    (see §4.5 / §5.4 / §6.5 — non-finite input raises ValueError).
+    """
+    rng = np.random.default_rng(0)
+    mem = ChaoticAssociativeMemory(dim=4, rules=EmergenceRules(), rng=rng)
+    mem.store(_make_pattern(rng, dim=4), label="A")
+
+    with pytest.raises(ValueError, match="n_steps must be non-negative"):
+        mem.recall(_make_pattern(rng, dim=4), n_steps=-1)
+
+    with pytest.raises(ValueError, match="n_steps must be non-negative"):
+        mem.recall(_make_pattern(rng, dim=4), n_steps=-100)
+
+
+def test_recall_n_steps_zero_with_nan_query_returns_single_row_zeros():
+    """NaN query + n_steps=0 still returns a (1, 3) zeros trajectory.
+
+    The NaN guard runs before integration, so n_steps=0 doesn't change
+    the NaN-rejection behavior — just the trajectory shape.
+    """
+    rng = np.random.default_rng(0)
+    mem = ChaoticAssociativeMemory(dim=4, rules=EmergenceRules(), rng=rng)
+    mem.store(_make_pattern(rng, dim=4), label="A")
+    result = mem.recall(
+        np.array([np.nan, 0.0, 0.0, 0.0]), n_steps=0
+    )
+
+    assert result["label"] is None
+    assert result["emerged"] is False
+    assert result["converged"] is False
+    assert result["nearest_pattern"] is None
+    assert result["trajectory"].shape == (1, 3)
+    assert np.all(result["trajectory"] == 0.0)

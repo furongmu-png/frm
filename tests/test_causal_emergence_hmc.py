@@ -336,12 +336,16 @@ def test_ess_mixed_constant_and_variable():
     independent draws (ESS ≈ n). Mean ESS should be (1.0 + ess_var) / 2,
     which is much less than the previous behavior of (n + ess_var) / 2.
 
-    fix R2-NEW-L3: tighten assertion from ``1.0 < ess < 100.0`` to
-    ``40.0 < ess < 60.0``. The old assertion was too weak — it caught
-    regression to ``ess = n`` (mean = 100) but missed regression to
-    ``ess = 0`` for constant dims (mean = 50). The tighter band catches
-    both regressions: (n + n)/2 = 100 fails upper bound, (0 + n)/2 = 50
-    fails to be near the expected 50.5.
+    fix R2-NEW-L3 (test surface tightening): the previous assertion
+    ``20.0 < ess < 80.0`` was too coarse to distinguish a hypothetical
+    ``ess_d = 0`` regression for the constant dim from the correct
+    ``ess_d = 1.0`` — both yield mean ≈ 37 for our seed=0 fixture.
+    Switch to per-dim verification via ``_ess_geyer_per_dim`` so we can
+    directly assert ``ess_dim[0] == 1.0`` and ``ess_dim[1]`` in a tight
+    range. This catches both regressions:
+      (a) ess_d = n for constant dim (mean would be ~87, but more
+          importantly dim 0 would equal 100, not 1.0);
+      (b) ess_d = 0 for constant dim (dim 0 would equal 0, not 1.0).
     """
     sampler = HamiltonianSampler(rules=EmergenceRules())
     rng = np.random.default_rng(0)
@@ -350,18 +354,29 @@ def test_ess_mixed_constant_and_variable():
         np.full(100, 0.5),
         rng.standard_normal(100),
     ])
-    ess = sampler._ess_geyer(samples)
-    # ess is the mean of [1.0, ess_dim1]. For i.i.d. standard normal
-    # samples (n=100), Geyer's estimator typically returns ess_dim1 in
-    # the range [50, 100] — the lag-1 autocorrelation is small but nonzero,
+    # Per-dim ESS exposes the constant-dim branch directly.
+    ess_per_dim = sampler._ess_geyer_per_dim(samples)
+    assert len(ess_per_dim) == 2
+    # Dim 0 is constant → must be exactly 1.0 (fix NEW-L3 contract).
+    assert ess_per_dim[0] == 1.0, (
+        f"constant dim ess must be 1.0, got {ess_per_dim[0]}"
+    )
+    # Dim 1 is i.i.d. standard normal (n=100) → Geyer's estimator returns
+    # a value in [50, 100]; lag-1 autocorrelation is small but nonzero,
     # and the initial monotone sequence sums it conservatively.
-    # Tight band catches: (a) regression to ess = n (mean = 100, fails
-    # upper bound), (b) regression to ess = 0 for constant dims (mean = 25
-    # which is at the lower edge of the band).
-    assert 20.0 < ess < 80.0, f"expected ess in [20, 80], got {ess}"
-    # And the constant dim's contribution pulls the mean strictly below
-    # the i.i.d. case (ess_dim1 alone would be >= 50).
-    assert ess < 90.0  # extra guard against ess = n regression
+    assert 40.0 < ess_per_dim[1] <= 100.0, (
+        f"varying dim ess should be in (40, 100], got {ess_per_dim[1]}"
+    )
+    # The mean of [1.0, ess_var] is pulled strictly below ess_var and
+    # strictly above 1.0 (the constant-dim floor).
+    ess = sampler._ess_geyer(samples)
+    assert 20.0 < ess < 60.0, (
+        f"mean ess should be in (20, 60) for our seed=0 fixture, got {ess}"
+    )
+    # Regression guard: if the constant dim ever reverts to ess = n,
+    # the mean would jump to (100 + ess_var) / 2 ≈ 87, well above 60.
+    # If it reverts to ess = 0, the mean drops to ess_var / 2 ≈ 37 —
+    # but the per-dim assertion above already catches that case directly.
 
 
 # ----------------------------------------------------------------------

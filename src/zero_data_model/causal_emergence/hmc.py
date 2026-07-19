@@ -278,24 +278,26 @@ class HamiltonianSampler:
             "warnings": warnings,
         }
 
-    def _ess_geyer(self, samples: np.ndarray) -> float:
-        """ESS via Geyer (1992) initial monotone sequence estimator.
+    def _ess_geyer_per_dim(self, samples: np.ndarray) -> list[float]:
+        """Per-dimension ESS via Geyer (1992) initial monotone sequence.
+
+        fix R2-NEW-L3 (test surface): exposes per-dimension ESS values so
+        tests can verify the constant-dim branch directly, instead of
+        relying on the mean (which is too coarse to distinguish
+        ``ess_d = 1.0`` from a hypothetical ``ess_d = 0`` regression when
+        the other dim carries ~75 effective samples).
 
         For each dimension, compute the autocorrelation function and
         sum pairs (lag 2k-1, 2k) until the sum first becomes negative.
-        ESS_d = n / (1 + 2 * sum). Return the mean across dimensions.
-
-        fix R2-NEW-L4: Constant dimensions (variance < 1e-12) return
-        ESS_d = 1.0 — a conservative middle ground between 0 (no info)
-        and n (perfectly representative). Returning ``n`` would inflate
-        the mean ESS for mixed posteriors and mask under-sampling in
-        well-sampled dimensions.
+        ESS_d = n / (1 + 2 * sum). Constant dimensions (variance < 1e-12)
+        return ESS_d = 1.0 — a conservative middle ground between 0 (no
+        info) and n (perfectly representative).
         """
         n, dim = samples.shape
         if n < 2:
-            return float(n)
+            return [float(n)] * dim
 
-        ess_values = []
+        ess_values: list[float] = []
         for d in range(dim):
             x = samples[:, d] - samples[:, d].mean()
             var = float(np.sum(x * x)) / n
@@ -326,6 +328,20 @@ class HamiltonianSampler:
             ess = n / (1.0 + 2.0 * s)
             ess_values.append(max(1.0, min(float(n), ess)))
 
+        return ess_values
+
+    def _ess_geyer(self, samples: np.ndarray) -> float:
+        """ESS via Geyer (1992) initial monotone sequence estimator.
+
+        Returns the mean across dimensions of ``_ess_geyer_per_dim``.
+
+        fix R2-NEW-L4: Constant dimensions (variance < 1e-12) return
+        ESS_d = 1.0 — a conservative middle ground between 0 (no info)
+        and n (perfectly representative). Returning ``n`` would inflate the
+        mean ESS for mixed posteriors and mask under-sampling in
+        well-sampled dimensions.
+        """
+        ess_values = self._ess_geyer_per_dim(samples)
         return float(np.mean(ess_values))
 
     @staticmethod

@@ -98,7 +98,21 @@ class ChaoticAssociativeMemory:
         nearest_pattern=None``.
         Query with NaN -> ``label=None, emerged=False, converged=False,
         nearest_pattern=None``.
+
+        fix R2-NEW-M1 (residual): ``n_steps`` must be a non-negative int.
+        ``n_steps=0`` is a legal edge case returning a single-row trajectory
+        of shape ``(1, 3)`` (just the initial state, no RK4 steps).
+        Negative ``n_steps`` raises ``ValueError`` — previously it would
+        crash inside ``_integrate_lorenz`` with an opaque ``IndexError``
+        on ``traj[0] = state0`` because ``np.zeros((n_steps + 1, 3))``
+        would be empty.
         """
+        # Guard against negative n_steps (fix R2-NEW-M1 residual).
+        if n_steps < 0:
+            raise ValueError(
+                f"n_steps must be non-negative, got {n_steps}"
+            )
+
         # Empty memory case
         if not self._patterns:
             return {

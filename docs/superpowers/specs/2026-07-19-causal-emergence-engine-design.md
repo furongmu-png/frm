@@ -723,13 +723,13 @@ tests/
 ├── test_causal_emergence_causal_discovery.py         # 模块 B (24 tests)
 ├── test_causal_emergence_differential.py            # 模块 C (39 tests)
 ├── test_causal_emergence_hmc.py                     # 模块 D (32 tests)
-├── test_causal_emergence_chaotic_memory.py          # 模块 E (40 tests)
+├── test_causal_emergence_chaotic_memory.py          # 模块 E (45 tests, v3.1 新增 5 个 n_steps 边界测试)
 ├── test_causal_emergence_engine.py                  # 引擎 facade (19 tests)
 ├── test_causal_emergence_emergence_cycle.py         # emergence_cycle 闭环 (41 tests, v3 新增)
 └── test_zero_data_model_causal_emergence_integration.py  # ZeroDataModel 集成 (23 tests, v3 新增)
 ```
 
-总计 **236 个测试**（v3 同步：v2 只列了 6 个测试文件，实际实现包含 8 个，含 phase-4 闭环与 ZeroDataModel facade 集成）。
+总计 **241 个测试**（v3.1 同步：在 v3 基础上清理前两轮 LOW 残留，模块 E 新增 5 个 n_steps 边界测试）。
 
 ### 10.4 性能测试（修复 I2）
 
@@ -795,20 +795,23 @@ def _deterministic_rng():
 ## 13. 验收标准
 
 - 5 个模块 + 引擎按本规范实现。
-- **8 个测试文件全部通过**（v3 同步：实际包含 6 个模块/引擎测试 + 1 个 emergence_cycle 闭环测试 + 1 个 ZeroDataModel 集成测试，共 **236 个测试**）：
+- **8 个测试文件全部通过**（v3.1 同步：实际包含 6 个模块/引擎测试 + 1 个 emergence_cycle 闭环测试 + 1 个 ZeroDataModel 集成测试，共 **241 个测试**）：
   - `test_causal_emergence_topology.py` — 18 tests
   - `test_causal_emergence_causal_discovery.py` — 24 tests
   - `test_causal_emergence_differential.py` — 39 tests
   - `test_causal_emergence_hmc.py` — 32 tests
-  - `test_causal_emergence_chaotic_memory.py` — 40 tests
+  - `test_causal_emergence_chaotic_memory.py` — 45 tests（v3.1 新增 5 个 n_steps 边界测试）
   - `test_causal_emergence_engine.py` — 19 tests
   - `test_causal_emergence_emergence_cycle.py` — 41 tests（v3 新增）
   - `test_zero_data_model_causal_emergence_integration.py` — 23 tests（v3 新增）
 - 现有 capability 测试仍通过（无回归）。
 - `ruff check` 在所有新文件上无告警。
-- 两轮军事级审查完成并作为独立报告文档提交（`docs/superpowers/reviews/2026-07-20-causal-emergence-engine-phase4-implementation-review.md` 与 `docs/superpowers/reviews/2026-07-20-causal-emergence-engine-round2-new-fixes-review.md`）。
+- 两轮军事级审查 + v3 最终对账审查完成并作为独立报告文档提交：
+  - `docs/superpowers/reviews/2026-07-20-causal-emergence-engine-phase4-implementation-review.md`
+  - `docs/superpowers/reviews/2026-07-20-causal-emergence-engine-round2-new-fixes-review.md`
+  - `docs/superpowers/reviews/2026-07-20-causal-emergence-engine-v3-final-reconciliation-review.md`
 - `ZeroDataModel` 集成：`emergence_cycle` 在合成观测 `(50, 4)` 上端到端运行无错误。
-- 性能：单次 `emergence_cycle` 在最大输入规模下 < 10 秒（v3 同步：未独立 benchmark，但通过 236 个测试在 CI 上隐式验证）。
+- 性能：单次 `emergence_cycle` 在最大输入规模下 < 10 秒（v3 同步：未独立 benchmark，但通过 241 个测试在 CI 上隐式验证）。
 
 ---
 
@@ -865,3 +868,10 @@ def _deterministic_rng():
 10. **R2-NEW-M2（chaotic_settled_tolerance 规则化，§7.2 / §9）：** 原 spec 硬编码 settled 距离容差为 5.0；现新增 `chaotic_settled_tolerance: float = 5.0` 字段，并明确与 `chaotic_dt` 的隐式耦合。
 11. **R2-NEW-M3（n_steps 类常量提升，§8.2 / §8.3）：** 原 spec 在 emergence_cycle 内硬编码 n_steps=16 与 n_steps=50；实现中将这两个值提升为类常量 `_COUNTERFACTUAL_N_STEPS = 16` 与 `_MEMORY_N_STEPS = 50`，使 recall 调用与失败占位符保持同步。修复：§8.2 emergence_cycle 步骤节明确这两个类常量。
 12. **测试覆盖范围（§10.3 / §13）：** v2 spec 只列了 6 个测试文件；实际实现包含 8 个（新增 `test_causal_emergence_emergence_cycle.py` 41 tests 与 `test_zero_data_model_causal_emergence_integration.py` 23 tests），共 236 tests。修复：§10.3 列全 8 个文件及测试数；§13 验收标准从"6+1=7 文件"改为"8 文件 236 tests"，性能测试文件移至 §14 范围之外。
+
+### v3.1 (2026-07-20)
+基于 v3 最终对账审查报告中的"可选清理"建议，完成前两轮 LOW 残留的清理：
+
+1. **R2-NEW-L3 残留（ESS 测试断言过弱）:** 在 `hmc.py` 中拆出 `_ess_geyer_per_dim()` 方法暴露 per-dimension ESS 值，`_ess_geyer()` 改为 `np.mean(_ess_geyer_per_dim(samples))`。`test_ess_mixed_constant_and_variable` 改用 per-dim 接口直接断言 `ess_dim[0] == 1.0` 与 `ess_dim[1] in (40, 100]`，并保留 mean 的 `20.0 < ess < 60.0` 收紧断言。原断言 `20.0 < ess < 80.0` 无法区分"常数维 ess=1.0"与"常数维 ess=0 回归"——两者 mean 差距仅 ~0.5，per-dim 验证是唯一可靠的回归检测方式。
+2. **R2-NEW-M1 残留（n_steps 边界覆盖缺口）:** 在 `chaotic_memory.recall()` 入口加 `n_steps < 0 → raise ValueError("n_steps must be non-negative, got {n_steps}")` 守卫。之前 `n_steps=-1` 会在 `_integrate_lorenz` 内部抛 `IndexError: index 0 is out of bounds for axis 0 with size 0`（因为 `np.zeros((0, 3))` 是空数组，`traj[0] = state0` 越界）。新增 5 个测试：`test_recall_n_steps_zero_returns_single_row_trajectory`、`test_recall_n_steps_one_returns_two_row_trajectory`、`test_recall_empty_memory_n_steps_zero_returns_single_row_zeros`、`test_recall_n_steps_negative_raises_value_error`、`test_recall_n_steps_zero_with_nan_query_returns_single_row_zeros`。
+3. **§10.3 / §13 测试计数更新：** 模块 E 从 40 → 45 tests，总数从 236 → 241 tests。`ruff check` 仍无告警。

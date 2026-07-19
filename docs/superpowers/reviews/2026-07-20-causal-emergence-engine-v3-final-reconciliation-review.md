@@ -381,8 +381,10 @@ spec §12 描述的 4 阶段（基石 / 行动 / 认知 / 闭环）已在 engine
 ## 8. 后续建议
 
 1. ~~**修复 V3-REC-001（LOW）**~~ —— ✅ 已在本轮内修复。
-2. **可选清理（非本审查发现，来自前两轮报告的 LOW 残留）：** 若未来开展新一轮维护，可考虑收紧 `test_ess_mixed_constant_and_variable` 的断言（来自 R2-NEW-L3），并补 `n_steps=0` / 非默认 `chaotic_dt` 的测试覆盖（来自 R2-NEW-M1）。这些均为测试加固，不影响 spec↔代码一致性结论。
-3. **项目收尾：** spec v3 已对账完成，建议关闭审查流程，将本报告与 phase-4 / round-2 报告一同归档。
+2. ~~**可选清理（前两轮 LOW 残留）**~~ —— ✅ 已在 v3.1 后续清理中完成：
+   - **R2-NEW-L3（test_ess_mixed_constant_and_variable 断言过弱）:** 在 `hmc.py` 中拆出 `_ess_geyer_per_dim()` 公开 per-dim ESS，测试改用 per-dim 接口直接断言 `ess_dim[0] == 1.0` 与 `ess_dim[1]` 在 (40, 100]，同时保留 mean 的 `20.0 < ess < 60.0` 收紧断言（捕获 ess=n 回归）。
+   - **R2-NEW-M1 残留（n_steps=0 / 负值覆盖缺口）:** 在 `chaotic_memory.recall()` 入口加 `n_steps < 0 → raise ValueError` 守卫（之前 `n_steps=-1` 会在 `_integrate_lorenz` 内部抛 `IndexError`），新增 5 个测试覆盖 n_steps=0 合法边界（含空记忆、NaN 查询）、n_steps=1、n_steps 负值 → ValueError。
+3. **项目收尾：** spec v3 + v3.1 已对账完成，建议关闭审查流程，将本报告与 phase-4 / round-2 报告一同归档。
 
 ---
 
