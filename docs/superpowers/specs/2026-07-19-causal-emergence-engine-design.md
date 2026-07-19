@@ -1,54 +1,54 @@
-# Causal Emergence Engine — Design Specification
+# 因果涌现引擎 — 设计规范
 
-> **Status:** Approved (2026-07-19)
-> **Author:** Agent
-> **Implementation plan:** follow-up document in `docs/superpowers/plans/`
-
----
-
-## 1. Motivation and Axioms
-
-This specification defines a **Causal Emergence Engine** (CEE): a self-contained, zero-data reasoning system that composes persistent homology, causal discovery, variational PDE solving, Hamiltonian Monte Carlo, and chaotic-attractor memory into a single recursive loop. The design is grounded in three axioms (per the originating brief):
-
-- **Axiom I (Physical Realism):** The world's substance is action and symmetry, not pixels or words. The system's primary task is to compute conserved quantities, not to classify or predict next tokens.
-- **Axiom II (Topology First):** Semantic information lives in topological invariants (connected components, loops, voids). Deformations, noise, and modality changes do not alter topological essence.
-- **Axiom III (Causality over Correlation):** True intelligence must answer counterfactual queries ("what if?") via structural causal models, not merely output probability distributions.
-
-The engine is **zero-data**: no pretrained weights, no external datasets, no heavy ML dependencies (gudhi / pymc / causal-learn / ripser are explicitly excluded). All algorithms are implemented in pure `numpy` + `scipy` + Python stdlib, consistent with the existing `zero_data_model` codebase philosophy.
+> **状态:** 已批准 (2026-07-19)
+> **作者:** Agent
+> **实现计划:** 后续文档位于 `docs/superpowers/plans/`
 
 ---
 
-## 2. Architecture Overview
+## 1. 动机与公理
 
-### 2.1 Package Location
+本规范定义**因果涌现引擎**（Causal Emergence Engine, CEE）：一个自包含、零数据的推理系统，将持久同调、因果发现、变分 PDE 求解、哈密顿蒙特卡洛与混沌吸引子记忆组合为单一递归循环。设计基于三条公理（按原始简报）：
+
+- **公理 I（物理现实主义）:** 世界的本质是作用量与对称性，而非像素或文字。系统的核心任务是计算守恒量，而非分类或预测下一个 token。
+- **公理 II（拓扑优先）:** 语义信息蕴含在拓扑不变量中（连通分量、环路、空洞）。变形、噪声、模态转换均不改变拓扑本质。
+- **公理 III（因果优于相关）:** 真正的智能必须基于结构因果模型回答反事实查询（"如果...会怎样？"），而非仅输出概率分布。
+
+本引擎是**零数据**的：无预训练权重、无外部数据集、无重型 ML 依赖（明确排除 gudhi / pymc / causal-learn / ripser）。所有算法仅用 `numpy` + `scipy` + Python 标准库实现，与现有 `zero_data_model` 代码库哲学一致。
+
+---
+
+## 2. 架构概览
+
+### 2.1 包位置
 
 ```
 src/zero_data_model/causal_emergence/
-├── __init__.py            # Public exports + CausalEmergenceEngine re-export
-├── rules.py               # EmergenceRules dataclass (configurable priors)
-├── topology.py            # Module A: PersistentHomologyPerceiver
-├── causal_discovery.py    # Module B: CausalInferenceEngine (PC + LiNGAM + do-calculus)
-├── differential.py       # Module C: DifferentialGenerator (Euler-Lagrange PDE solver)
-├── hmc.py                 # Module D: HamiltonianSampler (leapfrog HMC)
-├── chaotic_memory.py      # Module E: ChaoticAssociativeMemory (Lorenz attractor basins)
-└── engine.py              # CausalEmergenceEngine (recursive-loop orchestrator)
+├── __init__.py            # 公开导出 + CausalEmergenceEngine 再导出
+├── rules.py               # EmergenceRules dataclass（可配置先验）
+├── topology.py            # 模块 A: PersistentHomologyPerceiver（持久同调感知器）
+├── causal_discovery.py    # 模块 B: CausalInferenceEngine（PC + LiNGAM + do-calculus）
+├── differential.py       # 模块 C: DifferentialGenerator（欧拉-拉格朗日 PDE 求解器）
+├── hmc.py                 # 模块 D: HamiltonianSampler（蛙跳 HMC 采样器）
+├── chaotic_memory.py      # 模块 E: ChaoticAssociativeMemory（Lorenz 吸引子盆记忆）
+└── engine.py              # CausalEmergenceEngine（递归循环编排器）
 ```
 
-### 2.2 Module Pattern
+### 2.2 模块模式
 
-Each module is a **plain Python class** (not a `CognitiveModule` subclass, not in `self.modules`, not counted in `_N_COGNITIVE_MODULES`). This matches the existing `capabilities/` pattern:
+每个模块都是**纯 Python 类**（不继承 `CognitiveModule`、不进入 `self.modules`、不计入 `_N_COGNITIVE_MODULES`）。这与现有 `capabilities/` 模式一致：
 
-- Constructor: `(dim=64, <core_module>=None, rules=None)`. Core-module arguments default to `None`; each constructor lazily instantiates a fallback (`if x is None: x = CoreModule(...)`).
-- Methods return plain dicts / ndarrays; all numeric outputs are `np.nan_to_num`-guarded.
-- L2-normalized vector outputs where applicable.
-- Determinism: every class accepts an optional `rng: np.random.Generator | None`.
+- 构造函数签名：`(dim=64, <core_module>=None, rules=None)`。核心模块参数默认 `None`，每个构造函数惰性实例化回退（`if x is None: x = CoreModule(...)`）。
+- 方法返回纯 dict / ndarray；所有数值输出经 `np.nan_to_num` 守卫。
+- 适用处返回 L2 归一化向量。
+- 确定性：每个类接受可选 `rng: np.random.Generator | None`。
 
-### 2.3 Integration with ZeroDataModel
+### 2.3 与 ZeroDataModel 的集成
 
-The engine is wired into `ZeroDataModel` as a single instance attribute + facade methods:
+引擎作为单一实例属性 + facade 方法接入 `ZeroDataModel`：
 
 ```python
-# in ZeroDataModel.__init__
+# 在 ZeroDataModel.__init__ 中
 self.emergence_rules = EmergenceRules()
 self.emergence = CausalEmergenceEngine(
     dim=dim,
@@ -58,7 +58,7 @@ self.emergence = CausalEmergenceEngine(
     rng=_child_rngs[N],
 )
 
-# facade methods
+# facade 方法
 def perceive_topology(self, data: np.ndarray) -> dict: ...
 def discover_causal_dynamics(self, data: np.ndarray, var_names=None) -> dict: ...
 def generate_trajectory(self, boundary: dict) -> dict: ...
@@ -67,25 +67,25 @@ def recall_memory(self, query: np.ndarray) -> dict: ...
 def emergence_cycle(self, observation: np.ndarray) -> dict: ...
 ```
 
-The engine instance is **not** added to `self.modules` and does not change `_N_COGNITIVE_MODULES`. This preserves the existing cognitive-module count contract.
+引擎实例**不**加入 `self.modules`，**不**改变 `_N_COGNITIVE_MODULES`。这保留了现有认知模块计数契约。
 
 ---
 
-## 3. Module A: PersistentHomologyPerceiver (`topology.py`)
+## 3. 模块 A：PersistentHomologyPerceiver（`topology.py`）
 
-### 3.1 Purpose
+### 3.1 目的
 
-Perceive arbitrary high-dimensional data as a topological point cloud and compute its persistent homology. Output is invariant under rotation, translation, and non-degenerate deformation.
+将任意高维数据感知为拓扑点云并计算其持久同调。输出对旋转、平移、非退化变形不变。
 
-### 3.2 Algorithm
+### 3.2 算法
 
-1. **Input shaping:** flatten input to a 2D point cloud `(n_points, n_features)`. If input is 1D, treat as a 1-point cloud (degenerate case: returns trivial invariants).
-2. **Pairwise distance matrix:** Euclidean `D[i, j] = ||x_i - x_j||`. Symmetric, zero diagonal.
-3. **Vietoris-Rips filtration:** for each threshold `eps` in increasing order, build a simplicial complex where simplices appear when all pairwise distances ≤ `eps`.
-4. **Boundary matrix reduction:** standard left-to-right column reduction over GF(2) (for low-dimensional betti numbers, this is tractable for n ≤ 32 points). For larger inputs, fall back to the existing `hardware/kernels._betti_numbers` JIT kernel if available, else cap n_points at 64 by random subsampling (deterministic with the rng).
-5. **Persistence diagram:** for each homology dimension `d` (0, 1, 2), record `(birth, death)` pairs where features appear and disappear.
-6. **Persistence entropy:** `H = -sum(p_i * log(p_i))` where `p_i = (death_i - birth_i) / total_persistence`.
-7. **Euler characteristic:** `chi = sum_d (-1)^d * betti_d`.
+1. **输入整形:** 将输入展平为 2D 点云 `(n_points, n_features)`。若输入为 1D，视为单点点云（退化情形：返回平凡不变量）。
+2. **成对距离矩阵:** 欧氏距离 `D[i, j] = ||x_i - x_j||`。对称、零对角。
+3. **Vietoris-Rips 过滤:** 对每个递增阈值 `eps`，构建单纯复形——当所有成对距离 ≤ `eps` 时单形出现。
+4. **边界矩阵归约:** 标准从左到右列归约（GF(2)）——对低维 Betti 数，n ≤ 32 点时可行。对更大输入，若可用则回退到现有 `hardware/kernels._betti_numbers` JIT kernel；否则用 rng 做确定性子采样，将 n_points 上限设为 64。
+5. **持久图:** 对每个同调维度 `d`（0, 1, 2），记录特征出现与消失的 `(birth, death)` 对。
+6. **持久熵:** `H = -sum(p_i * log(p_i))`，其中 `p_i = (death_i - birth_i) / total_persistence`。
+7. **欧拉示性数:** `chi = sum_d (-1)^d * betti_d`。
 
 ### 3.3 API
 
@@ -100,11 +100,11 @@ class PersistentHomologyPerceiver:
     ): ...
 
     def perceive(self, data: np.ndarray, max_dim: int = 2) -> dict:
-        """Compute persistent homology of the input point cloud.
+        """计算输入点云的持久同调。
 
-        Returns:
+        返回:
             {
-                'betti_numbers': list[int],      # [betti_0, betti_1, betti_2]
+                'betti_numbers': list[int],          # [betti_0, betti_1, betti_2]
                 'persistence_diagram': list[tuple],  # [(dim, birth, death), ...]
                 'persistence_entropy': float,
                 'euler_characteristic': int,
@@ -114,39 +114,39 @@ class PersistentHomologyPerceiver:
         """
 ```
 
-### 3.4 Edge Cases
+### 3.4 边界情况
 
-- Empty input: return `{betti_numbers: [0, 0, 0], persistence_diagram: [], persistence_entropy: 0.0, euler_characteristic: 0, n_points: 0, max_eps: 0.0}`.
-- Single point: `betti_numbers = [1, 0, 0]`, empty persistence diagram, entropy 0.
-- `NaN`/`Inf` in input: `np.nan_to_num` guard before distance computation.
-- Large input (> 64 points): deterministic subsampling via `rng.choice`.
+- 空输入：返回 `{betti_numbers: [0, 0, 0], persistence_diagram: [], persistence_entropy: 0.0, euler_characteristic: 0, n_points: 0, max_eps: 0.0}`。
+- 单点：`betti_numbers = [1, 0, 0]`，持久图为空，熵为 0。
+- 输入含 `NaN`/`Inf`：距离计算前用 `np.nan_to_num` 守卫。
+- 大输入（> 64 点）：通过 `rng.choice` 做确定性子采样。
 
 ---
 
-## 4. Module B: CausalInferenceEngine (`causal_discovery.py`)
+## 4. 模块 B：CausalInferenceEngine（`causal_discovery.py`）
 
-### 4.1 Purpose
+### 4.1 目的
 
-Discover a directed acyclic graph (DAG) from multivariate observational data and answer interventional / counterfactual queries.
+从多变量观测数据发现有向无环图（DAG），并回答干预 / 反事实查询。
 
-### 4.2 Algorithm
+### 4.2 算法
 
-Three discovery methods, selected by `rules.causal_method`:
+三种发现方法，由 `rules.causal_method` 选择：
 
-1. **PC algorithm (default):** Start with complete undirected graph; for each pair `(i, j)`, remove edge if `i ⊥ j | S` for some conditioning set `S` (partial correlation test against a significance threshold `causal_significance`). Orient edges using collider detection (v-structures) and acyclicity constraints. Deterministic ordering of edge tests for reproducibility.
+1. **PC 算法（默认）:** 起始为完全无向图；对每对 `(i, j)`，若存在条件集 `S` 使 `i ⊥ j | S`（偏相关检验，阈值 `causal_significance`），则删除边。用 collider 检测（v-结构）和无环性约束定向边。边检验顺序确定以保证可复现。
 
-2. **LiNGAM (non-Gaussian ICA):** Run FastICA on the data to obtain independent components; the mixing matrix `W` reveals causal directions (non-zero entries in `W` indicate causal edges). Convert `W` to a lower-triangular DAG after permutation.
+2. **LiNGAM（非高斯 ICA）:** 对数据运行 FastICA 获得独立成分；混合矩阵 `W` 揭示因果方向（`W` 的非零项指示因果边）。将 `W` 经置换后转换为下三角 DAG。
 
-3. **Correlation fallback:** when n_samples < 3 or the data is degenerate (zero variance in any column), fall back to the existing `CausalGraphBuilder` correlation-threshold method.
+3. **相关回退:** 当 `n_samples < 3` 或数据退化（任一列零方差）时，回退到现有 `CausalGraphBuilder` 的相关阈值法。
 
-### 4.3 Do-Calculus
+### 4.3 Do-calculus
 
-Given the discovered DAG, `intervene(var, value)` estimates the intervention effect:
-- Set `data[:, var] = value` (mutilation).
-- Recompute marginal means.
-- Effect = post - pre.
+给定已发现的 DAG，`intervene(var, value)` 估计干预效应：
+- 置 `data[:, var] = value`（图割裂）。
+- 重新计算边际均值。
+- 效应 = 后 - 前。
 
-Counterfactual: for a single observation, compute the posterior mean under intervention via belief propagation on the DAG.
+反事实：对单条观测，通过 DAG 上的信念传播计算干预下的后验均值。
 
 ### 4.4 API
 
@@ -164,13 +164,13 @@ class CausalInferenceEngine:
         self,
         data: np.ndarray,
         var_names: list[str] | None = None,
-        method: str | None = None,  # 'pc' | 'lingam' | 'correlation'; default rules.causal_method
+        method: str | None = None,  # 'pc' | 'lingam' | 'correlation'；默认 rules.causal_method
     ) -> dict:
-        """Discover causal DAG from observational data.
+        """从观测数据发现因果 DAG。
 
-        Returns:
+        返回:
             {
-                'adjacency': np.ndarray,        # (n_vars, n_vars) binary
+                'adjacency': np.ndarray,        # (n_vars, n_vars) 二值
                 'edges': list[tuple[int, int]],
                 'method': str,
                 'var_names': list[str],
@@ -186,7 +186,7 @@ class CausalInferenceEngine:
         intervention_var: int,
         intervention_value: float,
     ) -> dict:
-        """Estimate the effect of do(X[intervention_var] = value)."""
+        """估计 do(X[intervention_var] = value) 的效应。"""
 
     def counterfactual(
         self,
@@ -195,39 +195,39 @@ class CausalInferenceEngine:
         intervention_var: int,
         intervention_value: float,
     ) -> dict:
-        """Counterfactual: 'what would have happened if X[var] had been value?'."""
+        """反事实查询：'如果 X[var] 当时是 value，会发生什么？'"""
 ```
 
-### 4.5 Edge Cases
+### 4.5 边界情况
 
-- `n_samples < 3`: fall back to correlation method.
-- Constant column: skip the column in causal tests.
-- Non-convergent ICA: fall back to correlation method.
-- Cyclic adjacency from LiNGAM (rare): prune edges to break cycles greedily.
+- `n_samples < 3`：回退到相关法。
+- 常数列：在因果检验中跳过该列。
+- ICA 不收敛：回退到相关法。
+- LiNGAM 产生环（罕见）：贪心删边破环。
 
 ---
 
-## 5. Module C: DifferentialGenerator (`differential.py`)
+## 5. 模块 C：DifferentialGenerator（`differential.py`）
 
-### 5.1 Purpose
+### 5.1 目的
 
-Generate continuous, physically-realistic trajectories by solving a discretized Euler-Lagrange boundary value problem.
+通过求解离散化的欧拉-拉格朗日边值问题，生成连续且物理可行的轨迹。
 
-### 5.2 Algorithm
+### 5.2 算法
 
-Given boundary conditions `(start_state, end_state, n_steps)`:
+给定边界条件 `(start_state, end_state, n_steps)`：
 
-1. Initialize a linear interpolation trajectory `q(t)` between start and end.
-2. Define a Lagrangian `L(q, q_dot) = T(q_dot) - V(q)` where:
-   - `T(q_dot) = 0.5 * ||q_dot||^2` (kinetic energy)
-   - `V(q) = 0.5 * ||q - target||^2` (quadratic potential toward target)
-3. Discretize on a uniform grid `t = 0, 1, ..., n_steps` with `dt = 1 / n_steps`.
-4. Solve the discretized Euler-Lagrange equation:
+1. 初始化 `start` 与 `end` 之间的线性插值轨迹 `q(t)`。
+2. 定义拉格朗日量 `L(q, q_dot) = T(q_dot) - V(q)`，其中：
+   - `T(q_dot) = 0.5 * ||q_dot||^2`（动能）
+   - `V(q) = 0.5 * ||q - target||^2`（朝目标的二次势能）
+3. 在均匀网格 `t = 0, 1, ..., n_steps` 上离散化，`dt = 1 / n_steps`。
+4. 求解离散化的欧拉-拉格朗日方程：
    `d/dt(dL/dq_dot) - dL/dq = 0`
-   In discretized form:
+   离散形式：
    `(q[k+1] - 2*q[k] + q[k-1]) / dt^2 = -dV/dq = -(q[k] - target)`
-5. Iterate via Gauss-Seidel relaxation until `max ||delta|| < tol` or `max_iter` reached.
-6. Compute per-step Lagrangian, total action `S = sum(L * dt)`.
+5. 用 Gauss-Seidel 松弛迭代，直到 `max ||delta|| < tol` 或达到 `max_iter`。
+6. 计算每步拉格朗日量、总作用量 `S = sum(L * dt)`。
 
 ### 5.3 API
 
@@ -245,14 +245,14 @@ class DifferentialGenerator:
         start_state: np.ndarray,
         end_state: np.ndarray,
         n_steps: int = 32,
-        constraints: dict | None = None,  # optional obstacle avoidance
+        constraints: dict | None = None,  # 可选避障
     ) -> dict:
-        """Solve the boundary value problem.
+        """求解边值问题。
 
-        Returns:
+        返回:
             {
                 'trajectory': np.ndarray,       # (n_steps+1, dim)
-                'lagrangian': np.ndarray,        # (n_steps,) per-step
+                'lagrangian': np.ndarray,        # (n_steps,) 每步
                 'action': float,
                 'converged': bool,
                 'iterations': int,
@@ -260,36 +260,36 @@ class DifferentialGenerator:
         """
 ```
 
-### 5.4 Edge Cases
+### 5.4 边界情况
 
-- `start == end`: return constant trajectory.
-- `n_steps == 0`: return single-point trajectory.
-- Non-convergence within `max_iter`: return the last iterate with `converged=False`.
-- NaN guard on all outputs.
+- `start == end`：返回常数轨迹。
+- `n_steps == 0`：返回单点轨迹。
+- `max_iter` 内未收敛：返回最后一次迭代，`converged=False`。
+- 所有输出 NaN 守卫。
 
 ---
 
-## 6. Module D: HamiltonianSampler (`hmc.py`)
+## 6. 模块 D：HamiltonianSampler（`hmc.py`）
 
-### 6.1 Purpose
+### 6.1 目的
 
-Sample from a posterior distribution using Hamiltonian Monte Carlo with leapfrog integration. Provides calibrated uncertainty estimates.
+用哈密顿蒙特卡洛（蛙跳积分）从后验分布采样。提供校准的不确定性估计。
 
-### 6.2 Algorithm
+### 6.2 算法
 
-1. **Inputs:** `log_prob_fn(position) -> float` (the log posterior), `initial_position`, `n_samples`, `step_size`, `n_leapfrog`.
-2. **Potential energy:** `U(q) = -log_prob_fn(q)`. Gradient via finite differences (or analytic gradient if provided).
-3. **Momentum resampling:** `p ~ N(0, M)` where `M` is the identity mass matrix.
-4. **Leapfrog integration:**
+1. **输入:** `log_prob_fn(position) -> float`（对数后验）、`initial_position`、`n_samples`、`step_size`、`n_leapfrog`。
+2. **势能:** `U(q) = -log_prob_fn(q)`。梯度用有限差分（或调用方提供的解析梯度）。
+3. **动量重采样:** `p ~ N(0, M)`，`M` 为单位质量矩阵。
+4. **蛙跳积分:**
    ```
    p_half = p - (step_size / 2) * grad_U(q)
    q_new = q + step_size * p_half
    p_new = p_half - (step_size / 2) * grad_U(q_new)
    ```
-   Repeat for `n_leapfrog` steps.
-5. **Metropolis accept/reject:** accept with probability `min(1, exp(H_old - H_new))` where `H = U + 0.5 * ||p||^2`.
-6. Repeat for `n_samples` to collect samples.
-7. Compute mean, std, ESS (effective sample size), and `accept_rate`.
+   重复 `n_leapfrog` 步。
+5. **Metropolis 接受/拒绝:** 以概率 `min(1, exp(H_old - H_new))` 接受，`H = U + 0.5 * ||p||^2`。
+6. 重复 `n_samples` 次收集样本。
+7. 计算均值、标准差、ESS（有效样本量）和 `accept_rate`。
 
 ### 6.3 API
 
@@ -304,54 +304,54 @@ class HamiltonianSampler:
 
     def sample(
         self,
-        log_prob_fn,                       # callable: np.ndarray -> float
+        log_prob_fn,                       # 可调用: np.ndarray -> float
         initial_position: np.ndarray,
         n_samples: int = 100,
         step_size: float = 0.1,
         n_leapfrog: int = 10,
-        grad_fn=None,                      # optional analytic gradient
+        grad_fn=None,                      # 可选解析梯度
     ) -> dict:
-        """Sample from the posterior defined by log_prob_fn.
+        """从 log_prob_fn 定义的后验中采样。
 
-        Returns:
+        返回:
             {
                 'samples': np.ndarray,     # (n_samples, dim)
                 'mean': np.ndarray,
                 'std': np.ndarray,
                 'accept_rate': float,
-                'ess': float,             # effective sample size
-                'converged': bool,         # True if accept_rate in [0.2, 0.9]
+                'ess': float,             # 有效样本量
+                'converged': bool,         # accept_rate 在 [0.2, 0.9] 内为 True
             }
         """
 ```
 
-### 6.4 Edge Cases
+### 6.4 边界情况
 
-- `log_prob_fn` returns `-inf` or NaN: reject the proposal.
-- `initial_position` non-finite: raise `ValueError` at the boundary.
-- `n_samples == 0`: return empty arrays.
-- Accept rate < 0.2 or > 0.9: flag `converged=False` (tuning recommended).
+- `log_prob_fn` 返回 `-inf` 或 NaN：拒绝该提议。
+- `initial_position` 非有限：在边界处抛出 `ValueError`。
+- `n_samples == 0`：返回空数组。
+- 接受率 < 0.2 或 > 0.9：标记 `converged=False`（建议调参）。
 
 ---
 
-## 7. Module E: ChaoticAssociativeMemory (`chaotic_memory.py`)
+## 7. 模块 E：ChaoticAssociativeMemory（`chaotic_memory.py`）
 
-### 7.1 Purpose
+### 7.1 目的
 
-Store patterns as stable attractor basins of a Lorenz-like dynamical system. Recall converges to the nearest stored pattern; queries on basin boundaries produce chaotic wandering (defined as "insight" or "emergence").
+将模式存储为 Lorenz 类动力系统的稳定吸引子盆。检索时收敛到最近的已存模式；落在盆边界上的查询产生混沌游走（定义为"灵感"或"涌现"）。
 
-### 7.2 Algorithm
+### 7.2 算法
 
-1. **Storage:** each pattern is encoded as a target equilibrium point of a Lorenz-like system:
+1. **存储:** 每个模式编码为 Lorenz 类系统的目标平衡点：
    ```
    dx/dt = sigma * (y - x)
    dy/dt = x * (rho - z) - y - alpha * (y - target_y)
    dz/dt = x * y - beta * z - alpha * (z - target_z)
    ```
-   where `(target_y, target_z)` are derived from the pattern. The `alpha` term pulls the trajectory toward the stored pattern's basin.
-2. **Recall:** integrate the Lorenz system with the query as initial condition for `n_steps` using RK4. After convergence (or `n_steps`), find the nearest stored pattern by L2 distance.
-3. **Emergence detection:** if the trajectory's Lyapunov exponent stays positive (chaotic wandering) for the full `n_steps` without converging, flag `emerged=True`.
-4. **Capacity:** no theoretical limit (each pattern is an independent attractor), but practical memory is bounded by `rules.chaotic_memory_capacity` (default 32).
+   其中 `(target_y, target_z)` 由模式推导。`alpha` 项将轨迹拉向已存模式的盆。
+2. **检索:** 用 RK4 以查询为初值积分 Lorenz 系统 `n_steps` 步。收敛（或达 `n_steps`）后，按 L2 距离找最近的已存模式。
+3. **涌现检测:** 若轨迹的 Lyapunov 指数全程为正（混沌游走）且未收敛，则标记 `emerged=True`。
+4. **容量:** 理论无上限（每个模式为独立吸引子），但实际容量受 `rules.chaotic_memory_capacity`（默认 32）限制。
 
 ### 7.3 API
 
@@ -365,41 +365,41 @@ class ChaoticAssociativeMemory:
     ): ...
 
     def store(self, pattern: np.ndarray, label: int | str) -> dict:
-        """Store a pattern as a new attractor basin.
+        """将模式存为新吸引子盆。
 
-        Returns: {'label': ..., 'n_stored': int, 'capacity': int}
+        返回: {'label': ..., 'n_stored': int, 'capacity': int}
         """
 
     def recall(self, query: np.ndarray, n_steps: int = 100) -> dict:
-        """Recall the nearest stored pattern.
+        """检索最近的已存模式。
 
-        Returns:
+        返回:
             {
                 'label': int | str | None,
                 'similarity': float,
                 'emerged': bool,
-                'trajectory': np.ndarray,    # (n_steps, 3) Lorenz state
+                'trajectory': np.ndarray,    # (n_steps, 3) Lorenz 状态
                 'converged': bool,
             }
         """
 
     def clear(self) -> None:
-        """Erase all stored patterns."""
+        """清除所有已存模式。"""
 ```
 
-### 7.4 Edge Cases
+### 7.4 边界情况
 
-- Empty memory: `recall` returns `label=None, similarity=0.0, emerged=True` (chaotic wandering with no basin).
-- Pattern capacity exceeded: oldest pattern is evicted (FIFO).
-- Query is NaN: return `label=None, emerged=False, converged=False`.
+- 空记忆：`recall` 返回 `label=None, similarity=0.0, emerged=True`（无盆的混沌游走）。
+- 容量超限：驱逐最旧模式（FIFO）。
+- 查询含 NaN：返回 `label=None, emerged=False, converged=False`。
 
 ---
 
-## 8. CausalEmergenceEngine (`engine.py`)
+## 8. CausalEmergenceEngine（`engine.py`）
 
-### 8.1 Purpose
+### 8.1 目的
 
-Orchestrate the five modules into the recursive loop described in the brief: perception → causal anchoring → counterfactual simulation → uncertainty assessment → memory interaction → emergence.
+将五个模块编排为简报所述的递归循环：感知 → 因果锚定 → 反事实模拟 → 不确定性评估 → 记忆交互 → 涌现。
 
 ### 8.2 API
 
@@ -418,32 +418,32 @@ class CausalEmergenceEngine:
         self.differential = DifferentialGenerator(dim=dim, ...)
         self.hmc = HamiltonianSampler(dim=dim, ...)
         self.memory = ChaoticAssociativeMemory(dim=dim, ...)
-        # ... store core modules
+        # ... 保存核心模块
 
     def perceive_topology(self, data: np.ndarray) -> dict:
-        """Module A facade."""
+        """模块 A facade。"""
 
     def discover_causal_dynamics(self, data: np.ndarray, var_names=None) -> dict:
-        """Module B facade."""
+        """模块 B facade。"""
 
     def generate_trajectory(self, boundary: dict) -> dict:
-        """Module C facade."""
+        """模块 C facade。"""
 
     def sample_posterior(self, log_prob_fn, initial_position, **kwargs) -> dict:
-        """Module D facade."""
+        """模块 D facade。"""
 
     def recall_memory(self, query: np.ndarray) -> dict:
-        """Module E facade."""
+        """模块 E facade。"""
 
     def emergence_cycle(self, observation: np.ndarray) -> dict:
-        """Run the full recursive loop on an observation.
+        """对一条观测运行完整递归循环。
 
-        Steps:
+        步骤:
         1. perception = perceive_topology(observation)
         2. causal_graph = discover_causal_dynamics(observation)
         3. counterfactual = generate_trajectory({
                'start_state': observation,
-               'end_state': observation + delta,  # perturbation
+               'end_state': observation + delta,  # 扰动
            })
         4. posterior = sample_posterior(
                log_prob_fn=lambda x: -0.5 * ||x - observation||^2,
@@ -455,96 +455,95 @@ class CausalEmergenceEngine:
                perception, causal_graph, counterfactual, posterior, memory_response
            )
 
-        Returns: {
+        返回: {
             'perception': dict,
             'causal_graph': dict,
             'counterfactual': dict,
             'posterior': dict,
             'memory': dict,
-            'emergence_score': float,    # in [0, 1]
+            'emergence_score': float,    # [0, 1]
         }
         """
 
     def compute_emergence_score(self, *outputs) -> float:
-        """Heuristic emergence score: high persistence entropy +
-        high causal graph density + high memory emergence + low
-        posterior variance -> high emergence score."""
+        """启发式涌现度: 高持久熵 + 高因果图密度 + 高记忆涌现 +
+        低后验方差 → 高涌现度。"""
 ```
 
-### 8.3 Emergence Score
+### 8.3 涌现度评分
 
-The emergence score is a heuristic in `[0, 1]` combining:
-- `0.3 * persistence_entropy` (topological complexity)
-- `0.2 * (n_edges / max_edges)` (causal graph density)
-- `0.2 * memory.emerged` (1.0 if chaotic wandering occurred)
-- `0.15 * (1 - posterior.std / dim)` (low uncertainty → high score)
-- `0.15 * (counterfactual.action / reference_action)` (action magnitude)
+涌现度是 `[0, 1]` 区间的启发式指标，组合：
+- `0.3 * persistence_entropy`（拓扑复杂度）
+- `0.2 * (n_edges / max_edges)`（因果图密度）
+- `0.2 * memory.emerged`（若发生混沌游走取 1.0）
+- `0.15 * (1 - posterior.std / dim)`（低不确定度 → 高分）
+- `0.15 * (counterfactual.action / reference_action)`（作用量量级）
 
-All terms are normalized to `[0, 1]` before combining.
+所有项在组合前归一化到 `[0, 1]`。权重总和 = 1.0。
 
 ---
 
-## 9. EmergenceRules (`rules.py`)
+## 9. EmergenceRules（`rules.py`）
 
 ```python
 @dataclass
 class EmergenceRules(DomainRules):
-    """Priors for the causal emergence engine."""
+    """因果涌现引擎的先验。"""
 
-    # Module A: topology
-    topology_max_points: int = 64          # cap on point cloud size
-    topology_max_dim: int = 2              # max homology dimension
-    topology_eps_steps: int = 50          # filtration resolution
+    # 模块 A: 拓扑
+    topology_max_points: int = 64          # 点云规模上限
+    topology_max_dim: int = 2              # 最大同调维度
+    topology_eps_steps: int = 50          # 过滤分辨率
 
-    # Module B: causal discovery
+    # 模块 B: 因果发现
     causal_method: str = "pc"              # 'pc' | 'lingam' | 'correlation'
-    causal_significance: float = 0.05      # independence test threshold
-    causal_max_cond_set: int = 3          # max conditioning set size in PC
+    causal_significance: float = 0.05      # 独立性检验阈值
+    causal_max_cond_set: int = 3          # PC 中条件集大小上限
 
-    # Module C: differential
-    differential_max_iter: int = 100       # Gauss-Seidel iterations
-    differential_tol: float = 1e-6         # convergence tolerance
-    differential_dt: float = 0.01          # time step
+    # 模块 C: 微分
+    differential_max_iter: int = 100       # Gauss-Seidel 迭代上限
+    differential_tol: float = 1e-6         # 收敛容差
+    differential_dt: float = 0.01          # 时间步长
 
-    # Module D: HMC
+    # 模块 D: HMC
     hmc_step_size: float = 0.1
     hmc_n_leapfrog: int = 10
     hmc_samples: int = 100
-    hmc_target_accept: float = 0.65        # optimal per Beskos et al.
+    hmc_target_accept: float = 0.65        # Beskos 等的最优值
 
-    # Module E: chaotic memory
+    # 模块 E: 混沌记忆
     chaotic_memory_capacity: int = 32
     chaotic_lorenz_sigma: float = 10.0
     chaotic_lorenz_rho: float = 28.0
     chaotic_lorenz_beta: float = 8.0 / 3.0
-    chaotic_lyapunov_threshold: float = 0.9  # emergence detection
+    chaotic_lyapunov_threshold: float = 0.9  # 涌现检测阈值
 
-    # Engine
-    emergence_cycle_perturbation: float = 0.1  # delta for counterfactual
+    # 引擎
+    emergence_cycle_perturbation: float = 0.1  # 反事实扰动量
     seed: int | None = None
 ```
 
 ---
 
-## 10. Testing Strategy
+## 10. 测试策略
 
-### 10.1 Per-module tests
+### 10.1 各模块测试
 
-For each module, a `tests/test_causal_emergence_<module>.py` file:
+每个模块对应 `tests/test_causal_emergence_<module>.py`：
 
-- **Correctness:** known-answer tests (e.g., betti numbers of a circle = [1, 1, 0]; HMC recovers the mean of a Gaussian).
-- **Edge cases:** empty input, single point, NaN, degenerate (zero variance), high-dim.
-- **Determinism:** seeded runs produce identical outputs.
-- **API contract:** return dict has the expected keys.
+- **正确性:** 已知答案测试（如圆的 Betti 数 = [1, 1, 0]；HMC 恢复高斯均值）。
+- **边界情况:** 空输入、单点、NaN、退化（零方差）、高维。
+- **确定性:** 同种子产出相同输出。
+- **API 契约:** 返回 dict 含期望键。
 
-### 10.2 Engine integration tests
+### 10.2 引擎集成测试
 
-`tests/test_causal_emergence_engine.py`:
-- Full `emergence_cycle` on a synthetic observation.
-- Each facade method delegates correctly to the underlying module.
-- Thread safety: concurrent `emergence_cycle` calls under `self._lock`.
+`tests/test_causal_emergence_engine.py`：
+- 在合成观测上运行完整 `emergence_cycle`。
+- 每个 facade 正确委托给底层模块。
+- 线程安全：`self._lock` 下并发 `emergence_cycle` 调用。
 
-### 10.3 Test files
+### 10.3 测试文件
 
 ```
 tests/
@@ -556,9 +555,9 @@ tests/
 └── test_causal_emergence_engine.py
 ```
 
-### 10.4 Determinism fixture
+### 10.4 确定性 fixture
 
-Every test file includes:
+每个测试文件包含：
 
 ```python
 @pytest.fixture(autouse=True)
@@ -568,60 +567,60 @@ def _deterministic_rng():
 
 ---
 
-## 11. Military-Grade Review Scope (15 Dimensions)
+## 11. 军事级审查范围（15 维）
 
-After implementation, a comprehensive review covering:
+实现完成后，全面审查覆盖：
 
-1. **Mathematical correctness:** algorithms compared against reference literature (Edelsbrunner for persistent homology; Spirtes-Glymour-Scheines for PC; Shimizu et al. for LiNGAM; Betancourt for HMC; Lorenz 1963 for the attractor).
-2. **Numerical stability:** NaN/Inf guards, condition numbers, convergence thresholds, finite-difference step choices.
-3. **Edge cases:** empty input, single point, degenerate distributions, all-zero data, extreme magnitudes.
-4. **Thread safety:** `_lock` consistency on `ZeroDataModel` facades; no shared mutable state in modules.
-5. **API contract consistency:** return-dict keys match the spec; types match annotations; `Optional` returns are documented.
-6. **Performance:** algorithmic complexity (e.g., persistent homology is O(n^3) in the worst case for boundary matrix reduction); degradation paths for large inputs (subsampling, JIT kernel fallback).
-7. **Test coverage gaps:** branch coverage, mutation testing, parameter boundary tests.
-8. **Integration correctness:** engine composes modules without hidden coupling; `ZeroDataModel` facade delegates correctly; `_N_COGNITIVE_MODULES` unchanged.
-9. **zero-data philosophy adherence:** no pretrained weights, no external datasets, no heavy ML deps; all priors are encoded in `EmergenceRules`.
-10. **Documentation accuracy:** docstrings match implementation; examples in docstrings are runnable.
-11. **Determinism:** seeded runs are reproducible; no global state mutation.
-12. **Memory bounds:** bounded deques, no unbounded caches, subsampling caps memory usage.
-13. **Type annotations:** all public APIs are annotated; `from __future__ import annotations` consistently used.
-14. **Error handling at boundaries:** `ValueError` for non-finite inputs at the public API; `try/except` for optional JIT kernel imports.
-15. **Adversarial inputs:** NaN, Inf, all-zero, all-same, extremely large/small magnitudes, non-contiguous arrays, wrong dtype.
+1. **数学正确性:** 算法对照参考文献（持久同调 Edelsbrunner；PC 算法 Spirtes-Glymour-Scheines；LiNGAM Shimizu 等；HMC Betancourt；Lorenz 吸引子 Lorenz 1963）。
+2. **数值稳定性:** NaN/Inf 守卫、条件数、收敛阈值、有限差分步长选择。
+3. **边界情况:** 空输入、单点、退化分布、全零数据、极端量级。
+4. **线程安全:** `ZeroDataModel` facade 的 `_lock` 一致性；模块内无共享可变状态。
+5. **API 契约一致性:** 返回 dict 键与规范一致；类型与注解一致；`Optional` 返回值有文档。
+6. **性能:** 算法复杂度（如持久同调边界矩阵归约最坏 O(n^3)）；大输入退化路径（子采样、JIT kernel 回退）。
+7. **测试覆盖盲区:** 分支覆盖、变异测试、参数边界测试。
+8. **集成正确性:** 引擎组合模块无隐藏耦合；`ZeroDataModel` facade 正确委托；`_N_COGNITIVE_MODULES` 未变。
+9. **zero-data 哲学符合度:** 无预训练权重、无外部数据集、无重型 ML 依赖；所有先验编码在 `EmergenceRules`。
+10. **文档准确性:** docstring 与实现一致；docstring 中的示例可运行。
+11. **确定性:** 同种子可复现；无全局状态突变。
+12. **内存边界:** 有界 deque、无无界缓存、子采样限制内存。
+13. **类型注解:** 所有公开 API 有注解；统一使用 `from __future__ import annotations`。
+14. **边界错误处理:** 公开 API 对非有限输入抛 `ValueError`；可选 JIT kernel 导入用 `try/except`。
+15. **对抗输入:** NaN、Inf、全零、全相同、极端大小、非连续数组、错误 dtype。
 
-The review produces a written report with severity-tagged findings (CRITICAL / HIGH / MEDIUM / LOW / INFO) and concrete fix recommendations.
-
----
-
-## 12. Implementation Phases
-
-The implementation follows the four phases from the originating brief, executed sequentially as a single batch:
-
-1. **Phase 1 (Foundation):** Module A (topology) + Module B (causal_discovery) + `EmergenceRules` + partial engine (perceive + discover facades only).
-2. **Phase 2 (Action):** Module C (differential) + generate_trajectory facade.
-3. **Phase 3 (Cognition):** Module D (hmc) + Module E (chaotic_memory) + sample_posterior + recall_memory facades.
-4. **Phase 4 (Closed loop):** `emergence_cycle` orchestration + emergence_score computation + ZeroDataModel integration.
-
-Each phase ends with a commit and a focused test pass.
+审查产出一份带严重性分级（CRITICAL / HIGH / MEDIUM / LOW / INFO）的书面报告与具体修复建议。
 
 ---
 
-## 13. Acceptance Criteria
+## 12. 实现阶段
 
-- All 5 modules + engine implemented per this spec.
-- All 6 test files pass (≥ 30 tests per module, ≥ 15 tests for engine).
-- Existing capability tests still pass (no regressions).
-- `ruff check` clean on all new files.
-- Military-grade review completed and committed as a separate report document.
-- `ZeroDataModel` integration: `emergence_cycle` runs end-to-end on a synthetic observation without errors.
+实现按原始简报的四个阶段顺序执行，作为单一批次：
+
+1. **阶段 1（基石）:** 模块 A（topology）+ 模块 B（causal_discovery）+ `EmergenceRules` + 部分引擎（仅 perceive + discover facade）。
+2. **阶段 2（行动）:** 模块 C（differential）+ generate_trajectory facade。
+3. **阶段 3（认知）:** 模块 D（hmc）+ 模块 E（chaotic_memory）+ sample_posterior + recall_memory facade。
+4. **阶段 4（闭环）:** `emergence_cycle` 编排 + 涌现度计算 + ZeroDataModel 集成。
+
+每个阶段以一次 commit 与一轮聚焦测试收尾。
 
 ---
 
-## 14. Out of Scope
+## 13. 验收标准
 
-- Production-grade persistent homology (no gudhi / ripser).
-- GPU acceleration (no cupy / numba CUDA kernels).
-- Distributed / parallel sampling (no MPI / Dask).
-- Web API endpoints (no FastAPI routes).
-- Pretrained models or external datasets.
-- Real-time performance guarantees.
-- Persistence layer (no save/load of the engine state).
+- 5 个模块 + 引擎按本规范实现。
+- 6 个测试文件全部通过（每模块 ≥ 30 测试，引擎 ≥ 15 测试）。
+- 现有 capability 测试仍通过（无回归）。
+- `ruff check` 在所有新文件上无告警。
+- 军事级审查完成并作为独立报告文档提交。
+- `ZeroDataModel` 集成：`emergence_cycle` 在合成观测上端到端运行无错误。
+
+---
+
+## 14. 范围之外
+
+- 生产级持久同调（不引入 gudhi / ripser）。
+- GPU 加速（不引入 cupy / numba CUDA kernel）。
+- 分布式 / 并行采样（不引入 MPI / Dask）。
+- Web API 端点（不引入 FastAPI 路由）。
+- 预训练模型或外部数据集。
+- 实时性性能保证。
+- 持久层（不保存/加载引擎状态）。
