@@ -1,9 +1,11 @@
 # tests/test_causal_emergence_engine.py
-"""Tests for the CausalEmergenceEngine orchestrator (phases 1-2 implemented).
+"""Tests for the CausalEmergenceEngine orchestrator (phases 1-3 implemented).
 
 Phase 1 covers module A (topology) and module B (causal_discovery) facades.
 Phase 2 covers module C (differential) — the generate_trajectory facade.
-Phases 3-4 (modules D-E and emergence_cycle) will be tested in later files.
+Phase 3 covers modules D (hmc) and E (chaotic_memory) — the
+sample_posterior and recall_memory facades.
+Phase 4 (emergence_cycle) will be tested in a later file.
 """
 
 from __future__ import annotations
@@ -28,8 +30,8 @@ def test_engine_constructs_with_defaults():
     assert engine.topology is not None
     assert engine.causal is not None
     assert engine.differential is not None  # phase 2
-    assert engine.hmc is None  # phase 3
-    assert engine.memory is None  # phase 3
+    assert engine.hmc is not None  # phase 3
+    assert engine.memory is not None  # phase 3
 
 
 def test_engine_perceive_topology_facade():
@@ -87,15 +89,64 @@ def test_engine_counterfactual_facade():
     assert "shift" in result
 
 
-def test_engine_phase3_4_facades_raise():
-    """Phase 3-4 facades raise NotImplementedError in phase 2."""
+def test_engine_phase4_facade_raises():
+    """Phase 4 facade (emergence_cycle) raises NotImplementedError in phase 3."""
     engine = CausalEmergenceEngine()
     with pytest.raises(NotImplementedError):
-        engine.sample_posterior(lambda x: 0.0, np.zeros(4))
-    with pytest.raises(NotImplementedError):
-        engine.recall_memory(np.zeros(4))
-    with pytest.raises(NotImplementedError):
         engine.emergence_cycle(np.zeros((10, 4)))
+
+
+def test_engine_sample_posterior_facade():
+    """sample_posterior facade delegates to module D (phase 3)."""
+    rng = np.random.default_rng(0)
+    engine = CausalEmergenceEngine(rules=EmergenceRules(), rng=rng)
+
+    def log_prob(q):
+        # Standard Gaussian: log N(0, I)
+        return -0.5 * float(np.sum(q * q))
+
+    result = engine.sample_posterior(log_prob, np.zeros(2), n_samples=20)
+    assert "samples" in result
+    assert "ess" in result
+    assert result["samples"].shape == (20, 2)
+
+
+def test_engine_recall_memory_facade():
+    """recall_memory facade delegates to module E (phase 3)."""
+    rng = np.random.default_rng(0)
+    engine = CausalEmergenceEngine(rules=EmergenceRules(), rng=rng)
+    # Empty memory -> label=None, emerged=True
+    result = engine.recall_memory(np.zeros(8))
+    assert result["label"] is None
+    assert result["emerged"] is True
+
+
+def test_engine_hmc_uses_shared_rng():
+    """Engine passes its rng to module D."""
+    rng = np.random.default_rng(42)
+    engine = CausalEmergenceEngine(rules=EmergenceRules(), rng=rng)
+    assert engine.hmc.rng is rng
+
+
+def test_engine_memory_uses_shared_rng():
+    """Engine passes its rng to module E."""
+    rng = np.random.default_rng(42)
+    engine = CausalEmergenceEngine(rules=EmergenceRules(), rng=rng)
+    assert engine.memory.rng is rng
+
+
+def test_engine_hmc_rules_propagated():
+    """Engine's rules propagate to module D."""
+    rules = EmergenceRules(hmc_step_size=0.05)
+    engine = CausalEmergenceEngine(rules=rules)
+    assert engine.hmc.rules is rules
+
+
+def test_engine_memory_rules_propagated():
+    """Engine's rules propagate to module E."""
+    rules = EmergenceRules(chaotic_memory_capacity=10)
+    engine = CausalEmergenceEngine(rules=rules)
+    assert engine.memory.rules is rules
 
 
 def test_engine_generate_trajectory_facade():
@@ -140,19 +191,25 @@ def test_engine_accepts_core_modules():
 
 
 def test_engine_uses_shared_rng():
-    """Engine passes its rng to submodules."""
+    """Engine passes its rng to all submodules."""
     rng = np.random.default_rng(42)
     engine = CausalEmergenceEngine(rules=EmergenceRules(), rng=rng)
     assert engine.topology.rng is rng
     assert engine.causal.rng is rng
+    assert engine.differential.rng is rng
+    assert engine.hmc.rng is rng
+    assert engine.memory.rng is rng
 
 
 def test_engine_rules_propagated():
-    """Engine's rules propagate to submodules."""
+    """Engine's rules propagate to all submodules."""
     rules = EmergenceRules(topology_max_points=8)
     engine = CausalEmergenceEngine(rules=rules)
     assert engine.topology.rules is rules
     assert engine.causal.rules is rules
+    assert engine.differential.rules is rules
+    assert engine.hmc.rules is rules
+    assert engine.memory.rules is rules
 
 
 def test_engine_default_rules_when_none():

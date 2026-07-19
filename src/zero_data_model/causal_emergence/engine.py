@@ -1,11 +1,13 @@
 # src/zero_data_model/causal_emergence/engine.py
-"""Causal emergence engine — orchestrator (phases 1-2 implemented).
+"""Causal emergence engine — orchestrator (phases 1-3 implemented).
 
 Phase 1 (foundation): wires up modules A (topology) and B
 (causal_discovery) and exposes their facade methods.
 Phase 2 (action): adds module C (differential) — damped least-action
 trajectory generator with the ``generate_trajectory`` facade.
-Phases 3-4 will add modules D-E and the full ``emergence_cycle``.
+Phase 3 (cognition): adds modules D (hmc) and E (chaotic_memory) with
+the ``sample_posterior`` and ``recall_memory`` facades.
+Phase 4 will add the full ``emergence_cycle``.
 
 See ``docs/superpowers/specs/2026-07-19-causal-emergence-engine-design.md``
 for the full design specification.
@@ -13,12 +15,15 @@ for the full design specification.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 import numpy as np
 
 from .causal_discovery import CausalInferenceEngine
+from .chaotic_memory import ChaoticAssociativeMemory
 from .differential import DifferentialGenerator
+from .hmc import HamiltonianSampler
 from .rules import EmergenceRules
 from .topology import PersistentHomologyPerceiver
 
@@ -27,9 +32,8 @@ class CausalEmergenceEngine:
     """Causal emergence engine orchestrator.
 
     Composes five modules into a recursive perception-causal-counterfactual
-    -posterior-memory loop. Phase 1 wires up modules A and B; phase 2 adds
-    module C (differential); phases 3-4 add modules D-E and the full
-    ``emergence_cycle``.
+    -posterior-memory loop. Phases 1-3 wire up modules A-E; phase 4 will
+    add the full ``emergence_cycle``.
     """
 
     def __init__(
@@ -66,9 +70,18 @@ class CausalEmergenceEngine:
             rules=self.rules,
             rng=self.rng,
         )
-        # Modules D, E will be added in phase 3.
-        self.hmc = None
-        self.memory = None
+        # Module D: HMC sampler (phase 3)
+        self.hmc = HamiltonianSampler(
+            dim=dim,
+            rules=self.rules,
+            rng=self.rng,
+        )
+        # Module E: chaotic associative memory (phase 3)
+        self.memory = ChaoticAssociativeMemory(
+            dim=dim,
+            rules=self.rules,
+            rng=self.rng,
+        )
 
     # ------------------------------------------------------------------
     # Facade methods (phase 1)
@@ -136,16 +149,52 @@ class CausalEmergenceEngine:
         )
 
     # ------------------------------------------------------------------
-    # Phase 3-4 placeholders (will be implemented in later phases)
+    # Facade methods (phase 3)
     # ------------------------------------------------------------------
-    def sample_posterior(self, log_prob_fn, initial_position, **kwargs) -> dict:
-        """Module D facade (phase 3). Not yet implemented."""
-        raise NotImplementedError("HamiltonianSampler (phase 3) not yet implemented")
+    def sample_posterior(
+        self,
+        log_prob_fn: Callable[[np.ndarray], float],
+        initial_position: np.ndarray,
+        n_samples: int | None = None,
+        step_size: float | None = None,
+        n_leapfrog: int | None = None,
+        grad_fn: Callable[[np.ndarray], np.ndarray] | None = None,
+    ) -> dict:
+        """Module D facade: HMC posterior sampling.
 
-    def recall_memory(self, query: np.ndarray) -> dict:
-        """Module E facade (phase 3). Not yet implemented."""
-        raise NotImplementedError("ChaoticAssociativeMemory (phase 3) not yet implemented")
+        Single-chain ESS estimates have large uncertainty; recommend
+        multi-chain runs with Gelman-Rubin R-hat for production use.
 
+        Returns dict with ``samples``, ``mean``, ``std``,
+        ``accept_rate``, ``ess``, ``converged``, ``warnings``.
+        """
+        if n_samples is None:
+            n_samples = self.rules.hmc_samples
+        return self.hmc.sample(
+            log_prob_fn=log_prob_fn,
+            initial_position=initial_position,
+            n_samples=n_samples,
+            step_size=step_size,
+            n_leapfrog=n_leapfrog,
+            grad_fn=grad_fn,
+        )
+
+    def recall_memory(
+        self,
+        query: np.ndarray,
+        n_steps: int = 100,
+    ) -> dict:
+        """Module E facade: chaotic associative memory recall.
+
+        Returns dict with ``label``, ``similarity``, ``emerged``,
+        ``trajectory``, ``converged``, ``divergence``. Empty memory
+        returns ``label=None, emerged=True``.
+        """
+        return self.memory.recall(query, n_steps=n_steps)
+
+    # ------------------------------------------------------------------
+    # Phase 4 placeholder
+    # ------------------------------------------------------------------
     def emergence_cycle(self, observation: np.ndarray) -> dict:
         """Full recursive loop (phase 4). Not yet implemented."""
         raise NotImplementedError("emergence_cycle (phase 4) not yet implemented")

@@ -8,14 +8,17 @@ for the full design specification.
 
 Phase 1 (foundation): modules A (topology) and B (causal_discovery).
 Phase 2 (action): module C (differential) — damped least-action generator.
-Phases 3-4 will add modules D-E and the full emergence cycle.
+Phase 3 (cognition): modules D (hmc) and E (chaotic_memory).
+Phase 4 will add the full emergence cycle.
 """
 
 from __future__ import annotations
 
 from .causal_discovery import CausalInferenceEngine
+from .chaotic_memory import ChaoticAssociativeMemory
 from .differential import DifferentialGenerator
 from .engine import CausalEmergenceEngine
+from .hmc import HamiltonianSampler
 from .rules import EmergenceRules
 from .topology import PersistentHomologyPerceiver
 
@@ -24,5 +27,7 @@ __all__ = [
     "PersistentHomologyPerceiver",
     "CausalInferenceEngine",
     "DifferentialGenerator",
+    "HamiltonianSampler",
+    "ChaoticAssociativeMemory",
     "CausalEmergenceEngine",
 ]
