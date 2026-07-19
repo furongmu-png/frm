@@ -222,11 +222,18 @@ class CausalInferenceEngine:
     # Internals — data preparation
     # ------------------------------------------------------------------
     def _prepare(self, data: np.ndarray) -> np.ndarray:
-        """Sanitize input: contiguous float, NaN/Inf -> 0, 2D."""
+        """Sanitize input: contiguous float, 2D. Raises ValueError on NaN/Inf.
+
+        fix V3-REC-001: spec §4.5 mandates raising ``ValueError`` on non-finite
+        input. Previously this method silently ``np.nan_to_num``-cleaned the
+        data, which diverged from the spec contract and was inconsistent with
+        ``differential.py`` / ``hmc.py`` (both raise). Aligned to spec here.
+        """
         if data is None:
             return np.zeros(0)
         arr = np.ascontiguousarray(data, dtype=float)
-        arr = np.nan_to_num(arr, nan=0.0, posinf=0.0, neginf=0.0)
+        if not np.all(np.isfinite(arr)):
+            raise ValueError("data must be finite (no NaN/Inf)")
         if arr.ndim == 1:
             arr = arr.reshape(-1, 1)
         return arr

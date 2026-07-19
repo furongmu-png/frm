@@ -220,14 +220,42 @@ def test_constant_column_skipped():
     assert result["is_acyclic"]
 
 
-def test_nan_input_sanitized():
-    """NaN in input is sanitized."""
+def test_discover_raises_on_non_finite():
+    """fix V3-REC-001: spec §4.5 mandates raising ValueError on NaN/Inf.
+
+    Replaces the previous ``test_nan_input_sanitized`` which depended on
+    silent ``np.nan_to_num`` cleaning in ``CausalInferenceEngine._prepare``.
+    The new contract (aligned with ``differential.py`` / ``hmc.py``) is to
+    reject non-finite input explicitly so callers don't silently receive
+    sanitized-but-misleading DAGs.
+    """
     rng = np.random.default_rng(0)
     engine = CausalInferenceEngine(rules=EmergenceRules(), rng=rng)
-    data = rng.standard_normal((50, 3))
-    data[0, 0] = np.nan
-    result = engine.discover(data)
-    assert result["is_acyclic"]
+
+    # NaN in any cell should raise
+    data_nan = rng.standard_normal((50, 3))
+    data_nan[0, 0] = np.nan
+    with pytest.raises(ValueError, match="finite"):
+        engine.discover(data_nan)
+
+    # Inf in any cell should raise
+    data_inf = rng.standard_normal((50, 3))
+    data_inf[3, 2] = np.inf
+    with pytest.raises(ValueError, match="finite"):
+        engine.discover(data_inf)
+
+    # -Inf should also raise
+    data_ninf = rng.standard_normal((50, 3))
+    data_ninf[10, 1] = -np.inf
+    with pytest.raises(ValueError, match="finite"):
+        engine.discover(data_ninf)
+
+    # intervene() shares the _prepare path and should also raise on NaN.
+    adj = np.array([[0, 1, 0], [0, 0, 1], [0, 0, 0]])
+    clean = rng.standard_normal((50, 3))
+    clean[0, 0] = np.nan
+    with pytest.raises(ValueError, match="finite"):
+        engine.intervene(adj, clean, intervention_var=0, intervention_value=1.0)
 
 
 def test_var_names_default():

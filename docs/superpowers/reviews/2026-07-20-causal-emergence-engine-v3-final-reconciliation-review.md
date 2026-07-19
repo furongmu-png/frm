@@ -5,12 +5,13 @@
 > **审查人:** Agent
 > **审查范围:** spec §1-§15 全部章节 + 8 个实现文件 + 8 个测试文件
 > **前置审查:** phase-4 (v2) + round-2 (v3 同步)
+> **状态:** 已收尾 — 唯一发现的 LOW 偏差 V3-REC-001 已在本轮内修复并验证
 
 ---
 
 ## 1. 总体结论
 
-**spec v3 与代码实现整体高度一致**：12 项 v3 同步偏差均已正确落地到代码与 spec 双侧。逐项核对 §1-§15 后发现 **1 项 LOW 级别偏差**（causal_discovery 对非有限输入的处理与 spec §4.5 描述不一致），不影响正确性与现有测试基线，仅是 API 契约层面的轻微不一致。**严重性分布：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 1、INFO 0。** 项目可标记为"已对账完成"，建议在下一轮维护周期内修复该 LOW 项。
+**spec v3 与代码实现整体高度一致**：12 项 v3 同步偏差均已正确落地到代码与 spec 双侧。逐项核对 §1-§15 后发现 **1 项 LOW 级别偏差**（V3-REC-001：causal_discovery 对非有限输入的处理与 spec §4.5 描述不一致），不影响正确性与现有测试基线，仅是 API 契约层面的轻微不一致。**严重性分布：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 1、INFO 0。** 该 LOW 偏差已在本次审查内同步修复（修复方案 A：对齐 spec），并将 `test_nan_input_sanitized` 替换为 `test_discover_raises_on_non_finite`，回归全量 236 tests 通过，ruff 无告警。**项目可标记为"已对账完成"。**
 
 ---
 
@@ -23,7 +24,7 @@
 | §2.2 模块模式 | 5 个模块 + engine | ✅ | 构造签名一致；EmergenceRules 无 seed；引擎未入 self.modules |
 | §2.3 ZeroDataModel 集成 | `model.py:128, 253-260, 1267-1348` | ✅ | facade 6 方法 + lock；`_N_COGNITIVE_MODULES = 6` 未变 |
 | §3 模块 A | `topology.py` | ✅ | max_points=16；VR + 边界矩阵列归约 GF(2)；阈值 0.5×max_filtration 在 line 253 |
-| §4 模块 B | `causal_discovery.py` | ⚠️ | Fisher z + Meek R1-R3 + LiNGAM + 单位权反事实均一致；§4.5 非有限输入处理与 spec 描述不符（见偏差 V3-REC-001） |
+| §4 模块 B | `causal_discovery.py` | ✅（修复后） | Fisher z + Meek R1-R3 + LiNGAM + 单位权反事实均一致；§4.5 非有限输入处理在 V3-REC-001 修复后已对齐 spec |
 | §5 模块 C | `differential.py` | ✅ | 阻尼最小作用量 + Gauss-Seidel；边界点固定；边界情况齐全 |
 | §6 模块 D | `hmc.py` | ✅ | U=-logp；h=1e-5；单位质量；蛙跳；Metropolis；Geyer ESS；常数序列返回 1.0；收敛 [0.5, 0.95] |
 | §7 模块 E | `chaotic_memory.py` | ✅ | Lorenz + alpha 吸引 + 高斯核；RK4 用 rules.chaotic_dt；轨迹 (n_steps+1, 3)；nearest_pattern；settled 用 rules.chaotic_settled_tolerance；FIFO |
@@ -40,8 +41,9 @@
 
 ## 3. 发现的偏差
 
-### 偏差 V3-REC-001 [LOW]
+### 偏差 V3-REC-001 [LOW] — ✅ 已修复
 
+- **状态:** 已在本轮内修复并验证（commit 待提交）。
 - **位置:** spec §4.5（行 258）vs 代码 `src/zero_data_model/causal_emergence/causal_discovery.py:224-232`（`_prepare` 方法）
 - **spec 描述:** "非有限输入：抛 `ValueError`。"（与其他模块 §5.4 / §6.5 一致，要求抛异常）
 - **代码实际:** `_prepare` 方法第 229 行 `arr = np.nan_to_num(arr, nan=0.0, posinf=0.0, neginf=0.0)` 静默将 NaN/Inf 替换为 0，而非抛 `ValueError`。这与 spec §4.5 显式声明的"抛 ValueError"不一致。
@@ -60,6 +62,26 @@
   2. （备选，对齐代码）修改 spec §4.5 改为"非有限输入：用 `np.nan_to_num` 守卫"，与 §3.4 拓扑模块的描述风格统一。但此选项会让 §4.5 与 §5.4/§6.5 的处理风格产生不一致，不推荐。
 
 **结论：** 此项不阻塞项目收尾，可在下一维护周期内任选一种方案修复。
+
+### V3-REC-001 修复记录
+
+- **采用方案：** 方案 A（对齐 spec），与 subagent 推荐一致。
+- **代码修改：** `src/zero_data_model/causal_emergence/causal_discovery.py:224-239`，将 `_prepare` 的 `np.nan_to_num(arr, ...)` 替换为：
+  ```python
+  if not np.all(np.isfinite(arr)):
+      raise ValueError("data must be finite (no NaN/Inf)")
+  ```
+  docstring 同步标注 `fix V3-REC-001` 与对齐 §5.4 / §6.5 的处理风格。
+- **测试修改：** `tests/test_causal_emergence_causal_discovery.py:223-258`，将原 `test_nan_input_sanitized`（依赖旧 nan_to_num 行为）替换为 `test_discover_raises_on_non_finite`，覆盖：
+  - NaN 单元格 → `ValueError`（match="finite"）
+  - +Inf 单元格 → `ValueError`
+  - -Inf 单元格 → `ValueError`
+  - `intervene()` 共享 `_prepare` 路径 → `ValueError`
+  保持模块 B 测试总数 24 不变（不破坏 spec §10.3 的 236 tests 计数契约）。
+- **验证结果：**
+  - `python -m pytest tests/test_causal_emergence_*.py tests/test_zero_data_model_causal_emergence_integration.py` → **236 passed in 36.31s**（无回归）
+  - `ruff check src/zero_data_model/causal_emergence/ tests/test_causal_emergence_*.py tests/test_zero_data_model_causal_emergence_integration.py` → **All checks passed!**
+- **spec §4.5 一致性恢复：** 修复后 `_prepare` 严格按 spec §4.5 "非有限输入：抛 `ValueError`" 抛异常，与 `differential.py` 和 `hmc.py` 的非有限输入处理方式统一。
 
 ---
 
@@ -132,7 +154,7 @@
   - ICA 不收敛回退相关法 ✓（causal_discovery.py:470-471）
   - LiNGAM 产生环贪心破环 ✓（causal_discovery.py:84-85）
   - `n_vars > 8` 且 method='lingam' 自动回退 ✓（causal_discovery.py:77-79）
-  - **非有限输入：** ⚠️ spec 说抛 `ValueError`，代码 `_prepare` 用 `np.nan_to_num` 静默替换（见偏差 V3-REC-001）
+  - **非有限输入：** ✅（V3-REC-001 修复后）spec §4.5 说抛 `ValueError`，代码 `_prepare` 现已 `raise ValueError("data must be finite (no NaN/Inf)")`，对齐 spec
 
 ### §5 模块 C：DifferentialGenerator
 
@@ -340,30 +362,25 @@ spec §12 描述的 4 阶段（基石 / 行动 / 认知 / 闭环）已在 engine
 | CRITICAL | 0 | — |
 | HIGH | 0 | — |
 | MEDIUM | 0 | — |
-| LOW | 1 | V3-REC-001（causal_discovery `_prepare` 静默清洗 NaN/Inf 而非按 spec §4.5 抛 `ValueError`） |
+| LOW | 1 → 0（已修复） | V3-REC-001（causal_discovery `_prepare` 静默清洗 NaN/Inf 而非按 spec §4.5 抛 `ValueError`）—— 已在本轮内修复 |
 | INFO | 0 | — |
 
 ---
 
 ## 7. 最终结论
 
-**spec v3 与代码实现对账状态：已对账完成（1 项 LOW 偏差不阻塞）。**
+**spec v3 与代码实现对账状态：已对账完成（含 V3-REC-001 修复）。**
 
 - spec §1-§15 全部章节逐项核对，12 项 v3 同步偏差全部在代码与 spec 双侧落地一致。
-- 唯一发现的偏差 V3-REC-001 为 LOW 级别：`causal_discovery._prepare` 用 `np.nan_to_num` 静默清洗而非按 spec §4.5 抛 `ValueError`，与同包内 `differential.py`、`hmc.py` 的非有限输入处理方式不一致。该偏差：
-  - 不影响引擎端到端流程（`emergence_cycle` 已在调用前清洗输入）；
-  - 不影响现有测试基线（无测试覆盖该契约）；
-  - 不影响 spec v3 的核心算法描述；
-  - 仅影响直接调用 `discover()` / `intervene()` 传入 NaN/Inf 时的用户可见行为。
-- 项目可标记为"已对账完成"。建议在下一维护周期内修复 V3-REC-001（推荐对齐 spec，将 `_prepare` 改为抛 `ValueError`），并补充对应单元测试。
+- 唯一发现的偏差 V3-REC-001 为 LOW 级别，**已在本轮内修复**：`causal_discovery._prepare` 改为按 spec §4.5 抛 `ValueError`，与同包内 `differential.py`、`hmc.py` 的非有限输入处理方式统一；原依赖旧行为的 `test_nan_input_sanitized` 测试被替换为 `test_discover_raises_on_non_finite`，覆盖 NaN / +Inf / -Inf / `intervene()` 共享路径四条用例。
+- 修复后回归：全量 236 tests 通过，ruff 无告警，spec §10.3 测试计数契约（8 文件 236 tests）未受影响。
+- 项目可正式标记为"**已对账完成**"。
 
 ---
 
 ## 8. 后续建议
 
-1. **修复 V3-REC-001（LOW，建议但非阻塞）：**
-   - 优先方案：将 `causal_discovery.py:229` 的 `np.nan_to_num` 替换为非有限检查并 `raise ValueError`，与 spec §4.5 + `differential.py:77-78` + `hmc.py:141-142` 的处理方式统一。
-   - 同步补充测试：`test_discover_raises_on_non_finite`、`test_intervene_raises_on_non_finite`。
+1. ~~**修复 V3-REC-001（LOW）**~~ —— ✅ 已在本轮内修复。
 2. **可选清理（非本审查发现，来自前两轮报告的 LOW 残留）：** 若未来开展新一轮维护，可考虑收紧 `test_ess_mixed_constant_and_variable` 的断言（来自 R2-NEW-L3），并补 `n_steps=0` / 非默认 `chaotic_dt` 的测试覆盖（来自 R2-NEW-M1）。这些均为测试加固，不影响 spec↔代码一致性结论。
 3. **项目收尾：** spec v3 已对账完成，建议关闭审查流程，将本报告与 phase-4 / round-2 报告一同归档。
 
