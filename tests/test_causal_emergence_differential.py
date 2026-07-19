@@ -375,6 +375,227 @@ def test_constraints_empty_dict_accepted():
 
 
 # ----------------------------------------------------------------------
+# Phase 5: obstacle avoidance
+# ----------------------------------------------------------------------
+
+def test_constraints_with_obstacle_avoids_it():
+    """Phase 5: trajectory must avoid the obstacle's safety margin.
+
+    Place an obstacle right on the linear interpolation path between
+    start and end. Without avoidance, the midpoint of the trajectory
+    would lie exactly on the obstacle. With avoidance, every interior
+    point must be at least ``margin`` away from every obstacle.
+    """
+    gen = DifferentialGenerator(rules=EmergenceRules())
+    start = np.array([0.0, 0.0])
+    end = np.array([1.0, 0.0])
+    obstacles = np.array([[0.5, 0.0]])  # middle of the line
+    margin = 0.2
+    result = gen.generate(
+        start, end, n_steps=10,
+        constraints={"obstacles": obstacles, "margin": margin},
+    )
+
+    # Result key for violation count must be present.
+    assert "obstacle_violations" in result
+    assert result["obstacle_violations"] > 0  # projection was active
+
+    # Every interior point must be at least `margin` away from the obstacle.
+    traj = result["trajectory"]
+    for k in range(1, 10):
+        d = float(np.linalg.norm(traj[k] - obstacles[0]))
+        assert d >= margin - 1e-6, (
+            f"interior point {k} at distance {d} < margin {margin}"
+        )
+
+
+def test_constraints_obstacle_on_path_increases_action():
+    """Phase 5: avoidance perturbs the trajectory, raising the action.
+
+    Without obstacles the linear-interpolation start → end is the
+    minimum-action path. With an obstacle on that path, the trajectory
+    must detour, so action is strictly higher. The penalty term also
+    contributes, but even without it the geometric detour raises action.
+    """
+    gen = DifferentialGenerator(rules=EmergenceRules())
+    start = np.array([0.0, 0.0])
+    end = np.array([1.0, 0.0])
+    obstacles = np.array([[0.5, 0.0]])
+
+    r_no_obs = gen.generate(start, end, n_steps=10, constraints=None)
+    r_with_obs = gen.generate(
+        start, end, n_steps=10,
+        constraints={"obstacles": obstacles, "margin": 0.2},
+    )
+
+    assert r_with_obs["action"] > r_no_obs["action"]
+
+
+def test_constraints_obstacle_off_path_does_not_perturb():
+    """Phase 5: obstacle far from the path should not change the trajectory.
+
+    The obstacle sits well off the linear interpolation; no interior
+    point enters the safety margin, so no projection happens and the
+    trajectory matches the unconstrained case.
+    """
+    gen = DifferentialGenerator(rules=EmergenceRules())
+    start = np.array([0.0, 0.0])
+    end = np.array([1.0, 0.0])
+    obstacles = np.array([[0.5, 100.0]])  # far off-path
+    margin = 0.1
+
+    r_no_obs = gen.generate(start, end, n_steps=10, constraints=None)
+    r_with_obs = gen.generate(
+        start, end, n_steps=10,
+        constraints={"obstacles": obstacles, "margin": margin},
+    )
+
+    # No violations means no projection, so trajectory is unchanged.
+    assert r_with_obs["obstacle_violations"] == 0
+    np.testing.assert_allclose(
+        r_with_obs["trajectory"], r_no_obs["trajectory"], atol=1e-10
+    )
+
+
+def test_constraints_invalid_type_raises():
+    """Phase 5: constraints must be a dict (or None)."""
+    gen = DifferentialGenerator(rules=EmergenceRules())
+    with pytest.raises(ValueError, match="constraints must be a dict"):
+        gen.generate(
+            np.zeros(2), np.ones(2), n_steps=4,
+            constraints="not_a_dict",
+        )
+
+
+def test_constraints_invalid_obstacle_type_value_raises():
+    """Phase 5: constraints['type'] must be 'soft' or 'hard'."""
+    gen = DifferentialGenerator(rules=EmergenceRules())
+    with pytest.raises(ValueError, match="constraints\\['type'\\]"):
+        gen.generate(
+            np.zeros(2), np.ones(2), n_steps=4,
+            constraints={"type": "invalid"},
+        )
+
+
+def test_constraints_negative_margin_raises():
+    """Phase 5: margin must be positive finite."""
+    gen = DifferentialGenerator(rules=EmergenceRules())
+    with pytest.raises(ValueError, match="margin"):
+        gen.generate(
+            np.zeros(2), np.ones(2), n_steps=4,
+            constraints={"obstacles": [[0.5, 0.0]], "margin": -0.1},
+        )
+
+
+def test_constraints_obstacles_wrong_dim_raises():
+    """Phase 5: obstacles shape must match state dim."""
+    gen = DifferentialGenerator(rules=EmergenceRules())
+    # start/end are 2D, but obstacles are 3D.
+    with pytest.raises(ValueError, match="obstacles"):
+        gen.generate(
+            np.zeros(2), np.ones(2), n_steps=4,
+            constraints={"obstacles": [[0.5, 0.0, 0.0]]},
+        )
+
+
+def test_constraints_nan_in_obstacles_raises():
+    """Phase 5: obstacles with NaN are rejected."""
+    gen = DifferentialGenerator(rules=EmergenceRules())
+    with pytest.raises(ValueError, match="finite"):
+        gen.generate(
+            np.zeros(2), np.ones(2), n_steps=4,
+            constraints={"obstacles": [[np.nan, 0.0]]},
+        )
+
+
+def test_constraints_obstacle_violations_key_present_when_active():
+    """Phase 5: 'obstacle_violations' key is in result when obstacles active."""
+    gen = DifferentialGenerator(rules=EmergenceRules())
+    r = gen.generate(
+        np.zeros(2), np.ones(2), n_steps=4,
+        constraints={"obstacles": [[0.5, 0.0]], "margin": 0.1},
+    )
+    assert "obstacle_violations" in r
+    assert isinstance(r["obstacle_violations"], int)
+
+
+def test_constraints_obstacle_violations_key_absent_when_none():
+    """Phase 5: 'obstacle_violations' key absent when constraints=None.
+
+    Backward compatibility: callers not using obstacles should not see
+    a new key in the result dict.
+    """
+    gen = DifferentialGenerator(rules=EmergenceRules())
+    r = gen.generate(np.zeros(2), np.ones(2), n_steps=4, constraints=None)
+    assert "obstacle_violations" not in r
+
+
+def test_constraints_obstacle_violations_key_absent_for_empty_dict():
+    """Phase 5: empty constraints dict also omits the violations key."""
+    gen = DifferentialGenerator(rules=EmergenceRules())
+    r = gen.generate(
+        np.zeros(2), np.ones(2), n_steps=4, constraints={}
+    )
+    assert "obstacle_violations" not in r
+
+
+def test_constraints_margin_override_uses_call_value():
+    """Phase 5: constraints['margin'] overrides rules.differential_obstacle_margin."""
+    gen = DifferentialGenerator(rules=EmergenceRules())
+    start = np.array([0.0, 0.0])
+    end = np.array([1.0, 0.0])
+    obstacles = np.array([[0.5, 0.0]])
+
+    # Large margin -> more points projected, larger action penalty.
+    r_large = gen.generate(
+        start, end, n_steps=10,
+        constraints={"obstacles": obstacles, "margin": 0.4},
+    )
+    r_small = gen.generate(
+        start, end, n_steps=10,
+        constraints={"obstacles": obstacles, "margin": 0.05},
+    )
+    assert r_large["obstacle_violations"] >= r_small["obstacle_violations"]
+
+
+def test_constraints_n_steps_zero_with_obstacles_returns_zero_violations():
+    """Phase 5: n_steps=0 + obstacles still returns a valid result.
+
+    No interior points exist, so no projection can occur; the
+    ``obstacle_violations`` key is present but equals 0.
+    """
+    gen = DifferentialGenerator(rules=EmergenceRules())
+    r = gen.generate(
+        np.zeros(2), np.ones(2), n_steps=0,
+        constraints={"obstacles": [[0.5, 0.5]], "margin": 0.1},
+    )
+    assert r["trajectory"].shape == (1, 2)
+    assert r["obstacle_violations"] == 0
+
+
+def test_constraints_start_equals_end_with_obstacle_on_point():
+    """Phase 5: degenerate trajectory (start == end) with obstacle nearby.
+
+    The boundary points themselves are not projected (only interior
+    points are), so the trajectory stays constant at ``start``. The
+    ``obstacle_violations`` key counts interior points within margin,
+    which for a constant trajectory are all equal to ``start``.
+    """
+    gen = DifferentialGenerator(rules=EmergenceRules())
+    start = np.array([0.5, 0.0])
+    obstacles = np.array([[0.5, 0.0]])  # exactly on start
+    r = gen.generate(
+        start, start, n_steps=5,
+        constraints={"obstacles": obstacles, "margin": 0.1},
+    )
+    # All 4 interior points are at start, which is within margin of obs.
+    assert r["obstacle_violations"] == 4
+    # Trajectory is still constant (boundary points not projected).
+    np.testing.assert_allclose(r["trajectory"][0], start)
+    np.testing.assert_allclose(r["trajectory"][-1], start)
+
+
+# ----------------------------------------------------------------------
 # Symmetry / scaling
 # ----------------------------------------------------------------------
 

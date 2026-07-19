@@ -1,12 +1,17 @@
-# 因果涌现引擎 — 设计规范（修订版 v3）
+# 因果涌现引擎 — 设计规范（修订版 v4）
 
 > **状态:** 已修订 (2026-07-20)
 > **作者:** Agent
 > **修订原因:**
 > - v2 (2026-07-19)：第一轮超级军事级审查发现 4 项 CRITICAL + 7 项 HIGH + 9 项 MEDIUM + 5 项 LOW + 2 项 INFO 问题
 > - v3 (2026-07-20)：实现完成后，两轮军事级审查（phase-4 + round-2）发现并修复了 12 项 spec 与实现的偏差；本 v3 将所有偏差反向同步到 spec，使 spec 与实现一致
+> - v3.1 (2026-07-20)：清理前两轮 LOW 残留（R2-NEW-L3 收紧 ESS 测试断言 + R2-NEW-M1 残留补 n_steps 边界测试）
+> - v4 (2026-07-20)：扩展 4 个集成入口（CLI emergence 子命令 + Web API 6 端点 + MCP 6 工具 + differential constraints 避障），测试总数从 241 增至 352
 > **实现计划:** 后续文档位于 `docs/superpowers/plans/`
-> **审查报告:** `docs/superpowers/reviews/2026-07-20-causal-emergence-engine-phase4-implementation-review.md` 与 `docs/superpowers/reviews/2026-07-20-causal-emergence-engine-round2-new-fixes-review.md`
+> **审查报告:**
+> - `docs/superpowers/reviews/2026-07-20-causal-emergence-engine-phase4-implementation-review.md`
+> - `docs/superpowers/reviews/2026-07-20-causal-emergence-engine-round2-new-fixes-review.md`
+> - `docs/superpowers/reviews/2026-07-20-causal-emergence-engine-v3-final-reconciliation-review.md`
 
 ---
 
@@ -326,6 +331,38 @@ class DifferentialGenerator:
 - `max_iter` 内未收敛：返回最后一次迭代，`converged = False`。
 - 所有输出 NaN 守卫。
 - 非有限 start/end：抛 `ValueError`。
+
+### 5.5 避障扩展（v4 新增 / Phase 5）
+
+**constraints** 参数从 placeholder 升级为完整的避障契约：
+
+```python
+constraints = {
+    "obstacles": list[list[float]] | np.ndarray,  # shape (K, dim)，每个 row 是一个障碍中心
+    "margin": float | None,                       # 默认 rules.differential_obstacle_margin
+    "type": "soft" | "hard",                       # 默认 "soft"（hard 等价，前向兼容）
+}
+```
+
+**算法（soft projection）:**
+1. 在每次 Gauss-Seidel 松弛迭代后，遍历所有内部点 `q[k]`（k=1..n_steps-1，边界点不投影）。
+2. 对每个障碍 `obs`，计算 `d = ||q[k] - obs||`；若 `d < margin`，将 `q[k]` 沿径向投影到安全边界：`q[k] = obs + (q[k] - obs) * margin / (d + 1e-12)`。
+3. 累计投影次数 `obstacle_violations`，并在最终 `action` 上加 `penalty = rules.differential_obstacle_penalty * obstacle_violations * dt`（量纲与 action 一致）。
+
+**新增 rules 字段（§9）:**
+- `differential_obstacle_margin: float = 1e-3` — 默认安全距离
+- `differential_obstacle_penalty: float = 1e6` — soft penalty 系数
+
+**返回 dict 扩展（向后兼容）:**
+- `constraints=None` 或 `{}`：返回 dict 不含 `obstacle_violations` 键（与 v3 行为完全一致）
+- `constraints={"obstacles": ...}`：返回 dict 含 `obstacle_violations: int` 键
+
+**校验:**
+- `constraints` 非 dict → `ValueError`
+- `constraints["type"]` 非 `"soft"`/`"hard"` → `ValueError`
+- `constraints["margin"]` ≤ 0 或非有限 → `ValueError`
+- `constraints["obstacles"]` shape 不为 `(K, dim)` → `ValueError`
+- `constraints["obstacles"]` 含 NaN/Inf → `ValueError`
 
 ---
 
@@ -665,6 +702,9 @@ class EmergenceRules(DomainRules):
     differential_dt: float = 0.01          # 时间步长
     differential_lambda: float = 1.0        # 吸引强度（新增）
     differential_gamma: float = 0.5        # 阻尼系数（新增）
+    # Phase 5 — 避障扩展（§5.5）
+    differential_obstacle_margin: float = 1e-3     # 障碍安全距离
+    differential_obstacle_penalty: float = 1e6     # soft penalty 系数
 
     # 模块 D: HMC
     hmc_step_size: float = 0.1
@@ -721,15 +761,18 @@ class EmergenceRules(DomainRules):
 tests/
 ├── test_causal_emergence_topology.py                # 模块 A (18 tests)
 ├── test_causal_emergence_causal_discovery.py         # 模块 B (24 tests)
-├── test_causal_emergence_differential.py            # 模块 C (39 tests)
+├── test_causal_emergence_differential.py            # 模块 C (53 tests, v4 新增 14 个避障测试)
 ├── test_causal_emergence_hmc.py                     # 模块 D (32 tests)
-├── test_causal_emergence_chaotic_memory.py          # 模块 E (45 tests, v3.1 新增 5 个 n_steps 边界测试)
+├── test_causal_emergence_chaotic_memory.py          # 模块 E (45 tests)
 ├── test_causal_emergence_engine.py                  # 引擎 facade (19 tests)
-├── test_causal_emergence_emergence_cycle.py         # emergence_cycle 闭环 (41 tests, v3 新增)
-└── test_zero_data_model_causal_emergence_integration.py  # ZeroDataModel 集成 (23 tests, v3 新增)
+├── test_causal_emergence_emergence_cycle.py         # emergence_cycle 闭环 (41 tests)
+├── test_zero_data_model_causal_emergence_integration.py  # ZeroDataModel 集成 (23 tests)
+├── test_cli_emergence.py                            # CLI emergence 子命令 (16 tests, v4 新增)
+├── test_api_emergence.py                            # Web API emergence 端点 (15 tests, v4 新增)
+└── test_mcp_emergence.py                            # MCP emergence 工具 (20 tests, v4 新增)
 ```
 
-总计 **241 个测试**（v3.1 同步：在 v3 基础上清理前两轮 LOW 残留，模块 E 新增 5 个 n_steps 边界测试）。
+总计 **306 个 causal_emergence 相关测试**（v4 同步：新增 3 个集成入口测试文件 + 模块 C 避障测试）。加上现有 `test_api.py` (32) 与 `test_mcp_server.py` (14) 共 **352 个测试**。
 
 ### 10.4 性能测试（修复 I2）
 
@@ -795,15 +838,18 @@ def _deterministic_rng():
 ## 13. 验收标准
 
 - 5 个模块 + 引擎按本规范实现。
-- **8 个测试文件全部通过**（v3.1 同步：实际包含 6 个模块/引擎测试 + 1 个 emergence_cycle 闭环测试 + 1 个 ZeroDataModel 集成测试，共 **241 个测试**）：
+- **11 个测试文件全部通过**（v4 同步：8 个模块/引擎/集成测试 + 3 个 v4 新增入口测试，共 **306 个测试**）：
   - `test_causal_emergence_topology.py` — 18 tests
   - `test_causal_emergence_causal_discovery.py` — 24 tests
-  - `test_causal_emergence_differential.py` — 39 tests
+  - `test_causal_emergence_differential.py` — 53 tests（v4 新增 14 个避障测试）
   - `test_causal_emergence_hmc.py` — 32 tests
   - `test_causal_emergence_chaotic_memory.py` — 45 tests（v3.1 新增 5 个 n_steps 边界测试）
   - `test_causal_emergence_engine.py` — 19 tests
   - `test_causal_emergence_emergence_cycle.py` — 41 tests（v3 新增）
   - `test_zero_data_model_causal_emergence_integration.py` — 23 tests（v3 新增）
+  - `test_cli_emergence.py` — 16 tests（v4 新增：CLI `python -m zero_data_model emergence ...` 4 个子命令）
+  - `test_api_emergence.py` — 15 tests（v4 新增：6 个 FastAPI 端点 + auth/rate-limit 边界）
+  - `test_mcp_emergence.py` — 20 tests（v4 新增：6 个 MCP 工具 + JSON 序列化 + docstring 契约）
 - 现有 capability 测试仍通过（无回归）。
 - `ruff check` 在所有新文件上无告警。
 - 两轮军事级审查 + v3 最终对账审查完成并作为独立报告文档提交：
@@ -811,7 +857,8 @@ def _deterministic_rng():
   - `docs/superpowers/reviews/2026-07-20-causal-emergence-engine-round2-new-fixes-review.md`
   - `docs/superpowers/reviews/2026-07-20-causal-emergence-engine-v3-final-reconciliation-review.md`
 - `ZeroDataModel` 集成：`emergence_cycle` 在合成观测 `(50, 4)` 上端到端运行无错误。
-- 性能：单次 `emergence_cycle` 在最大输入规模下 < 10 秒（v3 同步：未独立 benchmark，但通过 241 个测试在 CI 上隐式验证）。
+- **集成入口（v4 新增）:** CLI / Web API / MCP 三层入口均路由通过 `ZeroDataModel` facade（不绕过 `model._lock`），且 constraints 避障在三层入口均可访问。
+- 性能：单次 `emergence_cycle` 在最大输入规模下 < 10 秒（v4 同步：306 个测试在 CI 上约 46 秒通过，隐式覆盖性能契约）。
 
 ---
 
@@ -820,12 +867,11 @@ def _deterministic_rng():
 - 生产级持久同调（不引入 gudhi / ripser）。
 - GPU 加速（不引入 cupy / numba CUDA kernel）。
 - 分布式 / 并行采样（不引入 MPI / Dask）。
-- Web API 端点（不引入 FastAPI 路由）。
 - 预训练模型或外部数据集。
 - 实时性性能保证。
 - 持久层（不保存/加载引擎状态）。
-- constraints 避障（DifferentialGenerator 的 constraints 参数为 placeholder，本期不实现）。
 - 独立性能基准测试文件 `test_causal_emergence_performance.py`（v3 同步：本期未实现，性能契约由 §13 验收标准隐式覆盖）。
+- **MCP `sample_posterior` 任意 log_prob_fn（v4 同步）:** MCP 协议无法序列化 Python callable，故 `mcp_server.ZeroDataMCPServer.sample_posterior` 仅暴露高斯闭包 `(mean, std)` 输入；调用者需自定义 log_prob 时直接使用 `ZeroDataModel.sample_posterior()` Python API。
 
 ---
 
@@ -875,3 +921,36 @@ def _deterministic_rng():
 1. **R2-NEW-L3 残留（ESS 测试断言过弱）:** 在 `hmc.py` 中拆出 `_ess_geyer_per_dim()` 方法暴露 per-dimension ESS 值，`_ess_geyer()` 改为 `np.mean(_ess_geyer_per_dim(samples))`。`test_ess_mixed_constant_and_variable` 改用 per-dim 接口直接断言 `ess_dim[0] == 1.0` 与 `ess_dim[1] in (40, 100]`，并保留 mean 的 `20.0 < ess < 60.0` 收紧断言。原断言 `20.0 < ess < 80.0` 无法区分"常数维 ess=1.0"与"常数维 ess=0 回归"——两者 mean 差距仅 ~0.5，per-dim 验证是唯一可靠的回归检测方式。
 2. **R2-NEW-M1 残留（n_steps 边界覆盖缺口）:** 在 `chaotic_memory.recall()` 入口加 `n_steps < 0 → raise ValueError("n_steps must be non-negative, got {n_steps}")` 守卫。之前 `n_steps=-1` 会在 `_integrate_lorenz` 内部抛 `IndexError: index 0 is out of bounds for axis 0 with size 0`（因为 `np.zeros((0, 3))` 是空数组，`traj[0] = state0` 越界）。新增 5 个测试：`test_recall_n_steps_zero_returns_single_row_trajectory`、`test_recall_n_steps_one_returns_two_row_trajectory`、`test_recall_empty_memory_n_steps_zero_returns_single_row_zeros`、`test_recall_n_steps_negative_raises_value_error`、`test_recall_n_steps_zero_with_nan_query_returns_single_row_zeros`。
 3. **§10.3 / §13 测试计数更新：** 模块 E 从 40 → 45 tests，总数从 236 → 241 tests。`ruff check` 仍无告警。
+
+### v4 (2026-07-20)
+扩展 4 个集成入口，使因果涌现引擎可从 CLI / Web API / MCP 三层调用，并启用 `DifferentialGenerator` 的 constraints 避障。测试总数从 241 → 306 tests。
+
+1. **Phase 5 — 避障扩展（§5.5 / §9 / `differential.py` / `rules.py`）：**
+   - `EmergenceRules` 新增 `differential_obstacle_margin: float = 1e-3` 与 `differential_obstacle_penalty: float = 1e6`。
+   - `DifferentialGenerator.generate(start, end, n_steps, constraints=None)` 的 `constraints` 参数从 placeholder 升级为完整契约：`{"obstacles": (K, dim) array, "margin": float | None, "type": "soft" | "hard"}`。
+   - 算法：每次 Gauss-Seidel 松弛迭代后，遍历内部点（k=1..n_steps-1，边界点不投影）；对每个障碍计算 `d = ||q[k] - obs||`，若 `d < margin` 则径向投影 `q[k] = obs + (q[k] - obs) * margin / (d + 1e-12)` 并累计 `obstacle_violations`。最终 `action += rules.differential_obstacle_penalty * obstacle_violations * dt`。
+   - 向后兼容：`constraints=None` / `constraints={}` 保持 v3 行为（不投影，结果 dict 不含 `obstacle_violations` 键）。
+   - 校验：非 dict / 错误 type / 非正 margin / shape 不匹配 / NaN-Inf 障碍 → `ValueError`。
+   - 新增 14 个测试覆盖避障、action 增量、off-path 不扰动、各类非法输入、violations 键存在/缺失、margin override、n_steps=0、start==end。
+
+2. **CLI 入口（§2.3 / `__main__.py` / `test_cli_emergence.py`）：**
+   - `python -m zero_data_model emergence {perceive,causal,trajectory,cycle} ...` 4 个子命令。
+   - 辅助函数：`_load_observation(path)`（支持 .npz / .npy / .csv）、`_load_vector(arg)`（JSON 字符串或文件路径）、`_to_jsonable(obj)`（递归 numpy → Python，NaN/Inf → null）。
+   - 所有命令通过 `ZeroDataModel(dim=16, seed=42)` facade 调用，错误 → stderr + exit code 1。原 `--version` / `--mcp` / 默认 demo 行为保持不变。
+   - 新增 16 个测试覆盖 4 子命令 × (成功 + 边界) + `--version` 回归。
+
+3. **Web API 入口（§2.3 / `api.py` / `test_api_emergence.py`）：**
+   - 6 个 FastAPI 端点：`POST /emergence/{perceive,causal,trajectory,sample,recall,cycle}`。
+   - 鉴权：`Depends(verify_api_key)`；限流：`@_limit("30/minute")`（cycle 端点 `10/minute`）；输入清洗：`_ensure_finite()`；数组边界：`Field(min_length=..., max_length=...)` 防 CWE-400/770。
+   - 输出：`_to_jsonable()` 递归将 numpy 标量/数组转为 Python 原生类型，NaN/Inf → `None` 以保证 JSON 合法。
+   - `sample` 端点用 `def` 闭包（非 lambda）构造 Gaussian log_prob，避免 E731。
+   - 新增 15 个测试覆盖 6 端点 × (成功 + 边界) + 鉴权失败；`pytest.importorskip("fastapi")` / `pytest.importorskip("httpx")` 守护依赖。
+
+4. **MCP 工具包装（§2.3 / `mcp_server.py` / `test_mcp_emergence.py`）：**
+   - 6 个 `@_error_to_dict` 装饰的 MCP 工具：`perceive_topology` / `discover_causal_dynamics` / `generate_trajectory` / `sample_posterior` / `recall_memory` / `emergence_cycle`。
+   - 所有输入 `np.asarray(..., dtype=float)`，所有输出经 `_to_py()` 转 JSON-safe；docstring 作为 MCP 工具描述暴露给 LLM agent，含 `Failure mode:` 契约段。
+   - `sample_posterior` 因 MCP 协议无法序列化 callable，仅暴露高斯闭包 `(mean, std)`（详见 §14 范围之外）。
+   - 工具总数从 16 → 22。
+   - 新增 20 个测试覆盖 6 工具 × (成功 + 边界 + 错误处理 + JSON 序列化 + docstring 保留)。
+
+5. **§13 / §14 / §10.3 同步：** 测试文件清单从 8 → 11 文件、241 → 306 tests；§14 移除"Web API 端点"与"constraints 避障"两条已实现项，新增"MCP `sample_posterior` 任意 log_prob_fn"作为已知限制。`ruff check` 全部通过。

@@ -267,6 +267,32 @@ def _ensure_finite(arr: np.ndarray, name: str) -> None:
         )
 
 
+def _to_jsonable(obj: Any) -> Any:
+    """Recursively convert numpy types to JSON-serializable Python natives.
+
+    Used by the ``/emergence/cycle`` endpoint whose response shape is too
+    dynamic for a strict pydantic schema. Non-finite floats (NaN, +/-Inf)
+    become ``None`` because standard JSON has no representation for them
+    (the topology module's persistence diagram uses +Inf for essential
+    homology classes).
+    """
+    if isinstance(obj, np.ndarray):
+        return _to_jsonable(obj.tolist())
+    if isinstance(obj, np.bool_):
+        return bool(obj)
+    if isinstance(obj, np.integer):
+        return int(obj)
+    if isinstance(obj, np.floating):
+        return float(obj) if np.isfinite(obj) else None
+    if isinstance(obj, dict):
+        return {str(k): _to_jsonable(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_to_jsonable(x) for x in obj]
+    if isinstance(obj, float):
+        return obj if np.isfinite(obj) else None
+    return obj
+
+
 # --------------------------------------------------------------------------- #
 # API key auth dependency (CWE-306)
 # --------------------------------------------------------------------------- #
@@ -491,6 +517,90 @@ class SaveResponse(BaseModel):
 
 class LoadResponse(BaseModel):
     loaded: bool
+
+
+# --------------------------------------------------------------------------- #
+# Emergence schemas (spec §2.3) — /emergence/* endpoints
+# --------------------------------------------------------------------------- #
+
+
+class EmergencePerceiveRequest(BaseModel):
+    data: list[list[float]] = Field(..., min_length=2, max_length=1000)
+    max_dim: int | None = Field(None, ge=0, le=4)
+
+
+class EmergencePerceiveResponse(BaseModel):
+    betti_numbers: list[int]
+    persistence_entropy: float
+    euler_characteristic: int
+    n_points: int
+    max_eps: float
+    # Omitted by default (too large); add ?full_diagram=true to include.
+    persistence_diagram: list[list[float | None]] | None = None
+
+
+class EmergenceCausalRequest(BaseModel):
+    data: list[list[float]] = Field(..., min_length=2, max_length=1000)
+    var_names: list[str] | None = Field(None, max_length=20)
+    method: str | None = Field(None, pattern="^(pc|lingam|correlation)$")
+
+
+class EmergenceCausalResponse(BaseModel):
+    adjacency: list[list[int]]
+    edges: list[list[int]]
+    n_edges: int
+    is_acyclic: bool
+    method: str
+    var_names: list[str]
+
+
+class EmergenceTrajectoryRequest(BaseModel):
+    start_state: list[float] = Field(..., min_length=1, max_length=100)
+    end_state: list[float] = Field(..., min_length=1, max_length=100)
+    n_steps: int = Field(32, ge=0, le=1000)
+    obstacles: list[list[float]] | None = Field(None, max_length=50)
+    margin: float | None = Field(None, ge=1e-9, le=10.0)
+
+
+class EmergenceTrajectoryResponse(BaseModel):
+    trajectory: list[list[float]]
+    lagrangian: list[float]
+    action: float
+    converged: bool
+    iterations: int
+    obstacle_violations: int | None = None
+
+
+class EmergenceSampleRequest(BaseModel):
+    mean: list[float] = Field(..., min_length=1, max_length=100)
+    std: float = Field(1.0, ge=1e-9, le=100.0)
+    n_samples: int = Field(100, ge=1, le=1000)
+
+
+class EmergenceSampleResponse(BaseModel):
+    mean: list[float]
+    std: list[float]
+    accept_rate: float
+    ess: float
+    converged: bool
+
+
+class EmergenceRecallRequest(BaseModel):
+    query: list[float] = Field(..., min_length=1, max_length=100)
+    n_steps: int = Field(100, ge=0, le=1000)
+
+
+class EmergenceRecallResponse(BaseModel):
+    label: str | int | None
+    similarity: float
+    emerged: bool
+    trajectory: list[list[float]]
+    converged: bool
+    divergence: float
+
+
+class EmergenceCycleRequest(BaseModel):
+    observation: list[list[float]] = Field(..., min_length=2, max_length=1000)
 
 
 # --------------------------------------------------------------------------- #
@@ -1226,6 +1336,221 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=500, detail="load failed") from exc
         set_model(new_model)
         return LoadResponse(loaded=True)
+
+    # ---------------------------------------------------------------- #
+    # Causal emergence endpoints (spec §2.3)
+    # ---------------------------------------------------------------- #
+    @app.post(
+        "/emergence/perceive",
+        response_model=EmergencePerceiveResponse,
+        tags=["emergence"],
+    )
+    @_limit("30/minute")
+    async def perceive_topology(  # noqa: ANN202
+        request: Request,
+        req: EmergencePerceiveRequest,
+        _api_key: str = Depends(verify_api_key),
+        full_diagram: bool = False,
+    ) -> EmergencePerceiveResponse:
+        """Perceive topological invariants (Betti numbers, persistence entropy)."""
+        arr = np.asarray(req.data, dtype=float)
+        _ensure_finite(arr, "data")
+        if arr.ndim != 2 or arr.shape[0] < 2 or arr.shape[1] < 2:
+            raise HTTPException(
+                status_code=400,
+                detail="data must be 2D with shape (n>=2, d>=2)",
+            )
+        model = get_model()
+        # CONCUR8-6: read under model._lock (same pattern as /classify etc.).
+        with model._lock:
+            result = model.perceive_topology(arr, max_dim=req.max_dim)
+        diagram: list[list[float | None]] | None = None
+        if full_diagram:
+            diagram = _to_jsonable(result.get("persistence_diagram", []))
+        return EmergencePerceiveResponse(
+            betti_numbers=[int(x) for x in result["betti_numbers"]],
+            persistence_entropy=float(result["persistence_entropy"]),
+            euler_characteristic=int(result["euler_characteristic"]),
+            n_points=int(result["n_points"]),
+            max_eps=float(result["max_eps"]),
+            persistence_diagram=diagram,
+        )
+
+    @app.post(
+        "/emergence/causal",
+        response_model=EmergenceCausalResponse,
+        tags=["emergence"],
+    )
+    @_limit("30/minute")
+    async def discover_causal_dynamics(  # noqa: ANN202
+        request: Request,
+        req: EmergenceCausalRequest,
+        _api_key: str = Depends(verify_api_key),
+    ) -> EmergenceCausalResponse:
+        """Discover causal DAG from observational data (PC/LiNGAM/correlation)."""
+        arr = np.asarray(req.data, dtype=float)
+        _ensure_finite(arr, "data")
+        if arr.ndim != 2 or arr.shape[0] < 2 or arr.shape[1] < 2:
+            raise HTTPException(
+                status_code=400,
+                detail="data must be 2D with shape (n>=2, d>=2)",
+            )
+        model = get_model()
+        with model._lock:
+            result = model.discover_causal_dynamics(
+                arr, var_names=req.var_names, method=req.method
+            )
+        adj = np.asarray(result["adjacency"])
+        return EmergenceCausalResponse(
+            adjacency=[[int(x) for x in row] for row in adj.tolist()],
+            edges=[[int(x) for x in edge] for edge in result.get("edges", [])],
+            n_edges=int(result["n_edges"]),
+            is_acyclic=bool(result["is_acyclic"]),
+            method=str(result["method"]),
+            var_names=[str(x) for x in result["var_names"]],
+        )
+
+    @app.post(
+        "/emergence/trajectory",
+        response_model=EmergenceTrajectoryResponse,
+        tags=["emergence"],
+    )
+    @_limit("30/minute")
+    async def generate_emergence_trajectory(  # noqa: ANN202
+        request: Request,
+        req: EmergenceTrajectoryRequest,
+        _api_key: str = Depends(verify_api_key),
+    ) -> EmergenceTrajectoryResponse:
+        """Generate a damped least-action trajectory between two states."""
+        start = np.asarray(req.start_state, dtype=float)
+        end = np.asarray(req.end_state, dtype=float)
+        _ensure_finite(start, "start_state")
+        _ensure_finite(end, "end_state")
+        if start.shape != end.shape:
+            raise HTTPException(
+                status_code=400,
+                detail="start_state and end_state must have the same shape",
+            )
+        constraints: dict | None = None
+        if req.obstacles is not None or req.margin is not None:
+            constraints = {}
+            if req.obstacles is not None:
+                obs_arr = np.asarray(req.obstacles, dtype=float)
+                _ensure_finite(obs_arr, "obstacles")
+                constraints["obstacles"] = obs_arr
+            if req.margin is not None:
+                constraints["margin"] = float(req.margin)
+        model = get_model()
+        with model._lock:
+            result = model.generate_trajectory(
+                start, end, n_steps=req.n_steps, constraints=constraints
+            )
+        traj = np.asarray(result["trajectory"])
+        lagr = np.asarray(result["lagrangian"])
+        return EmergenceTrajectoryResponse(
+            trajectory=[[float(x) for x in row] for row in traj.tolist()],
+            lagrangian=[float(x) for x in lagr.tolist()],
+            action=float(result["action"]),
+            converged=bool(result["converged"]),
+            iterations=int(result["iterations"]),
+            obstacle_violations=(
+                int(result["obstacle_violations"])
+                if "obstacle_violations" in result
+                else None
+            ),
+        )
+
+    @app.post(
+        "/emergence/sample",
+        response_model=EmergenceSampleResponse,
+        tags=["emergence"],
+    )
+    @_limit("30/minute")
+    async def sample_posterior(  # noqa: ANN202
+        request: Request,
+        req: EmergenceSampleRequest,
+        _api_key: str = Depends(verify_api_key),
+    ) -> EmergenceSampleResponse:
+        """Sample a Gaussian posterior via HMC."""
+        mean_arr = np.asarray(req.mean, dtype=float)
+        _ensure_finite(mean_arr, "mean")
+        std = float(req.std)
+
+        # Gaussian log-prob: -0.5 * sum(((q - mean) / std) ** 2)
+        def _gaussian_log_prob(q: np.ndarray) -> float:
+            return -0.5 * float(np.sum(((q - mean_arr) / std) ** 2))
+
+        model = get_model()
+        with model._lock:
+            result = model.sample_posterior(
+                log_prob_fn=_gaussian_log_prob,
+                initial_position=mean_arr,
+                n_samples=req.n_samples,
+            )
+        return EmergenceSampleResponse(
+            mean=[float(x) for x in np.asarray(result["mean"]).tolist()],
+            std=[float(x) for x in np.asarray(result["std"]).tolist()],
+            accept_rate=float(result["accept_rate"]),
+            ess=float(result["ess"]),
+            converged=bool(result["converged"]),
+        )
+
+    @app.post(
+        "/emergence/recall",
+        response_model=EmergenceRecallResponse,
+        tags=["emergence"],
+    )
+    @_limit("30/minute")
+    async def recall_memory(  # noqa: ANN202
+        request: Request,
+        req: EmergenceRecallRequest,
+        _api_key: str = Depends(verify_api_key),
+    ) -> EmergenceRecallResponse:
+        """Recall from chaotic associative memory."""
+        query = np.asarray(req.query, dtype=float)
+        _ensure_finite(query, "query")
+        model = get_model()
+        with model._lock:
+            result = model.recall_memory(query, n_steps=req.n_steps)
+        label: str | int | None = result.get("label")
+        if isinstance(label, np.integer):
+            label = int(label)
+        traj = np.asarray(result["trajectory"])
+        return EmergenceRecallResponse(
+            label=label,
+            similarity=float(result["similarity"]),
+            emerged=bool(result["emerged"]),
+            trajectory=[[float(x) for x in row] for row in traj.tolist()],
+            converged=bool(result["converged"]),
+            divergence=float(result["divergence"]),
+        )
+
+    @app.post(
+        "/emergence/cycle",
+        tags=["emergence"],
+    )
+    @_limit("10/minute")  # tighter limit — this is the expensive call
+    async def emergence_cycle(  # noqa: ANN202
+        request: Request,
+        req: EmergenceCycleRequest,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Run the full recursive emergence loop.
+
+        Perception -> causal graph -> counterfactual trajectory ->
+        posterior sampling -> memory recall -> emergence score.
+        """
+        arr = np.asarray(req.observation, dtype=float)
+        _ensure_finite(arr, "observation")
+        if arr.ndim != 2 or arr.shape[0] < 2 or arr.shape[1] < 2:
+            raise HTTPException(
+                status_code=400,
+                detail="observation must be 2D with shape (n>=2, d>=2)",
+            )
+        model = get_model()
+        with model._lock:
+            result = model.emergence_cycle(arr)
+        return _to_jsonable(result)
 
     return app
 

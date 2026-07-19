@@ -40,6 +40,12 @@ class EmergenceRules(DomainRules):
     differential_dt: float = 0.01          # time step
     differential_lambda: float = 1.0       # attraction strength (new)
     differential_gamma: float = 0.5        # damping coefficient (new)
+    # Phase 5 — constraints avoidance (spec §5.5):
+    # obstacle_margin defines the safety radius around each obstacle center;
+    # points within this radius are projected to the boundary.
+    differential_obstacle_margin: float = 1e-3
+    # penalty coefficient for soft obstacle cost (added to action).
+    differential_obstacle_penalty: float = 1e6
 
     # Module D: HMC
     hmc_step_size: float = 0.1
@@ -84,6 +90,8 @@ class EmergenceRules(DomainRules):
             "differential_dt": self.differential_dt,
             "differential_lambda": self.differential_lambda,
             "differential_gamma": self.differential_gamma,
+            "differential_obstacle_margin": self.differential_obstacle_margin,
+            "differential_obstacle_penalty": self.differential_obstacle_penalty,
             "hmc_step_size": self.hmc_step_size,
             "hmc_n_leapfrog": self.hmc_n_leapfrog,
             "hmc_samples": self.hmc_samples,
