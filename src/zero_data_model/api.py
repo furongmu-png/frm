@@ -907,6 +907,57 @@ class ReasoningCausalRequest(BaseModel):
 
 
 # --------------------------------------------------------------------------- #
+# Phase 7 — Causal request schemas.
+# --------------------------------------------------------------------------- #
+
+
+class CausalDecisionTreeRequest(BaseModel):
+    """Fit a decision tree to (features, labels)."""
+    features: list[list[float]] = Field(..., min_length=1, max_length=65536)
+    labels: list[Any] = Field(..., min_length=1, max_length=65536)
+
+
+class CausalGameRequest(BaseModel):
+    """Analyze a 2-player normal-form game."""
+    payoff_a: list[list[float]] = Field(..., min_length=1, max_length=1024)
+    payoff_b: list[list[float]] | None = Field(None, max_length=1024)
+
+
+class CausalCounterfactualRequest(BaseModel):
+    """Estimate counterfactual outcome under do(X[index] = value)."""
+    observed: list[float] = Field(..., min_length=1, max_length=65536)
+    index: int = Field(0, ge=0, le=65535)
+    value: float = 0.0
+
+
+class CausalBanditRequest(BaseModel):
+    """Select the next bandit arm given per-arm reward histories."""
+    rewards_history: list[list[float]] = Field(
+        default_factory=list, max_length=1024
+    )
+
+
+class CausalPOMDPRequest(BaseModel):
+    """Solve a (PO)MDP via value iteration."""
+    transitions: list[list[list[float]]] = Field(..., max_length=256)
+    observations: list[list[float]] = Field(default_factory=list, max_length=256)
+    rewards: list[Any] = Field(default_factory=list, max_length=256)
+
+
+class CausalGraphRequest(BaseModel):
+    """Discover a causal graph from observational data."""
+    data: list[list[float]] = Field(..., min_length=2, max_length=65536)
+    var_names: list[str] | None = Field(None, max_length=4096)
+
+
+class CausalInterveneRequest(BaseModel):
+    """Estimate the effect of do(X[intervention_var] = value)."""
+    data: list[list[float]] = Field(..., min_length=2, max_length=65536)
+    intervention_var: int = Field(..., ge=0, le=4095)
+    intervention_value: float
+
+
+# --------------------------------------------------------------------------- #
 # Request tracing middleware (X-Request-ID, structured access log)
 # --------------------------------------------------------------------------- #
 
@@ -2812,6 +2863,132 @@ def create_app() -> FastAPI:
                 if len(link) >= 2:
                     model.add_causal_link(str(link[0]), str(link[1]))
             result = model.trace_causal_chain(req.start, max_depth=req.max_depth)
+        return _to_jsonable(result)
+
+    # ------------------------------------------------------------------
+    # Phase 7 — Causal endpoints.
+    # ------------------------------------------------------------------
+    @app.post("/causal/decision-tree", tags=["causal"])
+    @_limit("30/minute")
+    async def causal_decision_tree(  # noqa: ANN202
+        request: Request,
+        req: CausalDecisionTreeRequest,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Fit an ID3-style decision tree to (features, labels)."""
+        if len(req.features) != len(req.labels):
+            raise HTTPException(
+                status_code=400,
+                detail="features and labels must have the same length",
+            )
+        features = np.asarray(req.features, dtype=float)
+        labels = np.asarray(req.labels)
+        _ensure_finite(features, "features")
+        model = get_model()
+        with model._lock:
+            result = model.fit_decision_tree(features, labels)
+        return _to_jsonable(result)
+
+    @app.post("/causal/game", tags=["causal"])
+    @_limit("30/minute")
+    async def causal_game(  # noqa: ANN202
+        request: Request,
+        req: CausalGameRequest,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Analyze a 2-player normal-form game; find pure Nash equilibria."""
+        payoff_a = np.asarray(req.payoff_a, dtype=float)
+        _ensure_finite(payoff_a, "payoff_a")
+        payoff_b = None
+        if req.payoff_b is not None:
+            payoff_b = np.asarray(req.payoff_b, dtype=float)
+            _ensure_finite(payoff_b, "payoff_b")
+        model = get_model()
+        with model._lock:
+            result = model.analyze_game(payoff_a, payoff_b)
+        return _to_jsonable(result)
+
+    @app.post("/causal/counterfactual", tags=["causal"])
+    @_limit("30/minute")
+    async def causal_counterfactual(  # noqa: ANN202
+        request: Request,
+        req: CausalCounterfactualRequest,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Estimate counterfactual outcome under do(X[index] = value)."""
+        observed = np.asarray(req.observed, dtype=float)
+        _ensure_finite(observed, "observed")
+        intervention = {"index": req.index, "value": req.value}
+        model = get_model()
+        with model._lock:
+            result = model.counterfactual(observed, intervention)
+        return _to_jsonable(result)
+
+    @app.post("/causal/bandit", tags=["causal"])
+    @_limit("30/minute")
+    async def causal_bandit(  # noqa: ANN202
+        request: Request,
+        req: CausalBanditRequest,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Select the next bandit arm (epsilon-greedy + UCB1)."""
+        model = get_model()
+        with model._lock:
+            result = model.select_bandit_arm(req.rewards_history)
+        return _to_jsonable(result)
+
+    @app.post("/causal/pomdp", tags=["causal"])
+    @_limit("30/minute")
+    async def causal_pomdp(  # noqa: ANN202
+        request: Request,
+        req: CausalPOMDPRequest,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Solve a (PO)MDP via value iteration."""
+        transitions = np.asarray(req.transitions, dtype=float)
+        observations = np.asarray(req.observations, dtype=float)
+        rewards = np.asarray(req.rewards, dtype=float)
+        if transitions.size > 0:
+            _ensure_finite(transitions, "transitions")
+        if observations.size > 0:
+            _ensure_finite(observations, "observations")
+        if rewards.size > 0:
+            _ensure_finite(rewards, "rewards")
+        model = get_model()
+        with model._lock:
+            result = model.solve_pomdp(transitions, observations, rewards)
+        return _to_jsonable(result)
+
+    @app.post("/causal/discover-graph", tags=["causal"])
+    @_limit("30/minute")
+    async def causal_discover_graph(  # noqa: ANN202
+        request: Request,
+        req: CausalGraphRequest,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Discover a causal graph from observational data (PC-style)."""
+        data = np.asarray(req.data, dtype=float)
+        _ensure_finite(data, "data")
+        model = get_model()
+        with model._lock:
+            result = model.discover_causal_graph(data, var_names=req.var_names)
+        return _to_jsonable(result)
+
+    @app.post("/causal/intervene", tags=["causal"])
+    @_limit("30/minute")
+    async def causal_intervene(  # noqa: ANN202
+        request: Request,
+        req: CausalInterveneRequest,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Estimate the effect of do(X[intervention_var] = value)."""
+        data = np.asarray(req.data, dtype=float)
+        _ensure_finite(data, "data")
+        model = get_model()
+        with model._lock:
+            result = model.intervene(
+                data, req.intervention_var, req.intervention_value
+            )
         return _to_jsonable(result)
 
     return app

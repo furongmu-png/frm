@@ -2270,6 +2270,314 @@ class ZeroDataMCPServer:
         return _to_py(m.trace_causal_chain(start, max_depth=max_depth))
 
     # ------------------------------------------------------------------
+    # Phase 7 — Causal tools (decision-tree / game / counterfactual /
+    # bandit / pomdp / discover-graph / intervene). All Causal facade
+    # methods are stateless (no add_X mutators affecting later queries;
+    # counterfactual/intervene use the active_inference free-energy score
+    # which is itself a pure function), so each tool delegates directly
+    # to ``self.model.<method>()`` without a fresh-model indirection.
+    # ------------------------------------------------------------------
+
+    @_error_to_dict
+    def causal_fit_decision_tree(
+        self,
+        features: list[list[float]],
+        labels: list,
+    ) -> dict:
+        """Fit an ID3-style decision tree to ``(features, labels)``.
+
+        Args:
+            features: 2D list of shape ``(n_samples, n_features)``. Must
+                be non-empty. Each inner list is a sample's feature
+                vector. 1D input (a single list of floats) is treated
+                as a single-feature 2D array.
+            labels: 1D list of labels aligned with ``features``. Labels
+                can be any JSON-serializable type (string / int / bool);
+                the tree picks the majority label at each leaf.
+
+        Returns:
+            Dict with keys ``tree`` (nested dict: internal nodes have
+            ``feature`` and ``children``; leaves have ``label`` and
+            ``n_samples``), ``depth`` (int), ``n_leaves`` (int),
+            ``features_used`` (sorted list[int] of feature indices used
+            for splitting).
+
+        Failure mode: returns ``{"error": "causal_fit_decision_tree: ..."}``.
+        """
+        if not isinstance(features, list):
+            raise ValueError("features must be a list")
+        if not isinstance(labels, list):
+            raise ValueError("labels must be a list")
+        if len(features) != len(labels):
+            raise ValueError(
+                f"features ({len(features)}) and labels ({len(labels)}) "
+                f"must have the same length"
+            )
+        feats = np.asarray(features, dtype=float)
+        labs = np.asarray(labels)
+        _ensure_finite(feats, "features")
+        return _to_py(self.model.fit_decision_tree(feats, labs))
+
+    @_error_to_dict
+    def causal_analyze_game(
+        self,
+        payoff_a: list[list[float]],
+        payoff_b: list[list[float]] | None = None,
+    ) -> dict:
+        """Find pure-strategy Nash equilibria of a 2-player normal-form game.
+
+        Args:
+            payoff_a: 2D payoff matrix for player A (rows = A's
+                strategies, cols = B's strategies). Must be non-empty.
+            payoff_b: Optional 2D payoff matrix for player B, same
+                shape as ``payoff_a``. When omitted, the game is
+                treated as zero-sum (``payoff_b = -payoff_a``).
+
+        Returns:
+            Dict with keys ``nash_equilibria`` (list of ``[row, col]``
+            pairs), ``value_a`` (float, payoff to A at the first
+            equilibrium, or 0.0 when none), ``value_b`` (float, payoff
+            to B), ``is_zero_sum`` (bool).
+
+        Failure mode: returns ``{"error": "causal_analyze_game: ..."}``.
+        """
+        if not isinstance(payoff_a, list):
+            raise ValueError("payoff_a must be a list")
+        a = np.asarray(payoff_a, dtype=float)
+        _ensure_finite(a, "payoff_a")
+        b = None
+        if payoff_b is not None:
+            if not isinstance(payoff_b, list):
+                raise ValueError("payoff_b must be a list")
+            b = np.asarray(payoff_b, dtype=float)
+            _ensure_finite(b, "payoff_b")
+        return _to_py(self.model.analyze_game(a, b))
+
+    @_error_to_dict
+    def causal_counterfactual(
+        self,
+        observed: list[float],
+        index: int,
+        value: float,
+    ) -> dict:
+        """Estimate the counterfactual outcome under ``do(X[index] = value)``.
+
+        Args:
+            observed: 1D list of observed values. Must be non-empty.
+            index: Position in ``observed`` to replace (0-based). Must
+                be in ``[0, len(observed))``.
+            value: The counterfactual value to substitute at ``index``.
+
+        Returns:
+            Dict with keys ``factual`` (float, mean of ``observed``),
+            ``counterfactual`` (float, mean of the modified array),
+            ``effect`` (``counterfactual - factual``), ``surprisal``
+            (float, free-energy score of the effect).
+
+        Failure mode: returns ``{"error": "causal_counterfactual: ..."}``.
+        """
+        if not isinstance(observed, list):
+            raise ValueError("observed must be a list")
+        if not isinstance(index, int) or isinstance(index, bool):
+            raise ValueError(f"index must be an int, got {type(index).__name__}")
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            raise ValueError(f"value must be a number, got {type(value).__name__}")
+        arr = np.asarray(observed, dtype=float)
+        if arr.ndim != 1:
+            raise ValueError(f"observed must be 1D, got {arr.ndim}D")
+        if arr.size == 0:
+            raise ValueError("observed must be non-empty")
+        _ensure_finite(arr, "observed")
+        return _to_py(
+            self.model.counterfactual(
+                arr, {"index": index, "value": float(value)}
+            )
+        )
+
+    @_error_to_dict
+    def causal_select_bandit_arm(
+        self,
+        rewards_history: list[list[float]],
+    ) -> dict:
+        """Select the next bandit arm (epsilon-greedy + UCB1).
+
+        Args:
+            rewards_history: List of per-arm reward histories.
+                ``rewards_history[i]`` is the list of rewards observed
+                for arm ``i``. Empty inner lists are allowed (the arm
+                was never pulled). An empty outer list returns a
+                ``method="none"`` result.
+
+        Returns:
+            Dict with keys ``arm`` (int, the selected arm index),
+            ``method`` (``"explore"`` | ``"exploit"`` | ``"none"``),
+            ``expected_values`` (list[float], per-arm mean reward),
+            ``confidence_bounds`` (list[float], per-arm UCB1 bound;
+            ``None`` for unpulled arms with infinite UCB).
+
+        Failure mode: returns ``{"error": "causal_select_bandit_arm: ..."}``.
+        """
+        if not isinstance(rewards_history, list):
+            raise ValueError("rewards_history must be a list")
+        # Coerce each arm's history to a list of floats.
+        normalized: list[list[float]] = []
+        for i, h in enumerate(rewards_history):
+            if not isinstance(h, list):
+                raise ValueError(
+                    f"rewards_history[{i}] must be a list, got {type(h).__name__}"
+                )
+            arm = [float(x) for x in h]
+            if arm and not np.all(np.isfinite(np.asarray(arm))):
+                raise ValueError(f"rewards_history[{i}] must be finite")
+            normalized.append(arm)
+        return _to_py(self.model.select_bandit_arm(normalized))
+
+    @_error_to_dict
+    def causal_solve_pomdp(
+        self,
+        transitions: list[list[list[float]]],
+        observations: list[list[float]],
+        rewards: list,
+    ) -> dict:
+        """Solve a (PO)MDP via value iteration.
+
+        Args:
+            transitions: 3D tensor of shape ``(S, A, S)`` where
+                ``transitions[s][a][s']`` is the probability of
+                transitioning from state ``s`` to ``s'`` under action
+                ``a``. Must be a cube (``S`` == ``S``).
+            observations: 2D tensor of shape ``(S, O)``. Accepted for
+                API completeness; the MDP-level solver does not use it
+                for belief updates.
+            rewards: 1D list of shape ``(S,)`` (per-state reward,
+                broadcast across actions) or 2D list of shape
+                ``(S, A)`` (per-state-action reward).
+
+        Returns:
+            Dict with keys ``policy`` (list[int], the optimal action
+            per state), ``value`` (list[float], the converged value
+            function), ``iterations`` (int, value-iteration steps
+            taken), ``converged`` (bool, True if the value function
+            stabilized before the 1000-iteration cap).
+
+        Failure mode: returns ``{"error": "causal_solve_pomdp: ..."}``.
+        """
+        if not isinstance(transitions, list):
+            raise ValueError("transitions must be a list")
+        if not isinstance(observations, list):
+            raise ValueError("observations must be a list")
+        if not isinstance(rewards, list):
+            raise ValueError("rewards must be a list")
+        T = np.asarray(transitions, dtype=float)
+        O = np.asarray(observations, dtype=float)
+        R = np.asarray(rewards, dtype=float)
+        if T.size > 0:
+            _ensure_finite(T, "transitions")
+        if O.size > 0:
+            _ensure_finite(O, "observations")
+        if R.size > 0:
+            _ensure_finite(R, "rewards")
+        return _to_py(self.model.solve_pomdp(T, O, R))
+
+    @_error_to_dict
+    def causal_discover_graph(
+        self,
+        data: list[list[float]],
+        var_names: list[str] | None = None,
+    ) -> dict:
+        """Discover a causal graph from observational data (PC-style).
+
+        Adds an edge ``i -> j`` (for ``i < j``) whenever the absolute
+        correlation ``|corr[i, j]`` exceeds the rule threshold
+        (``CausalRules.causal_significance`` default 0.05).
+
+        Args:
+            data: 2D array of shape ``(n_samples, n_vars)``. Must have
+                at least 2 samples (correlation requires 2+ rows).
+            var_names: Optional list of variable names aligned with
+                the columns of ``data``. When omitted, variables are
+                named ``"0"``, ``"1"``, ... by index.
+
+        Returns:
+            Dict with keys ``adjacency`` (2D list of 0/1 floats),
+            ``edges`` (list of ``[i, j]`` pairs), ``n_edges`` (int),
+            ``var_names`` (list[str]).
+
+        Failure mode: returns ``{"error": "causal_discover_graph: ..."}``.
+        """
+        if not isinstance(data, list):
+            raise ValueError("data must be a list")
+        arr = np.asarray(data, dtype=float)
+        if arr.ndim != 2:
+            raise ValueError(f"data must be 2D, got {arr.ndim}D")
+        if arr.shape[0] < 2:
+            raise ValueError("data must have at least 2 samples")
+        _ensure_finite(arr, "data")
+        names = None
+        if var_names is not None:
+            if not isinstance(var_names, list):
+                raise ValueError("var_names must be a list")
+            names = [str(n) for n in var_names]
+        return _to_py(self.model.discover_causal_graph(arr, var_names=names))
+
+    @_error_to_dict
+    def causal_intervene(
+        self,
+        data: list[list[float]],
+        intervention_var: int,
+        intervention_value: float,
+    ) -> dict:
+        """Estimate the effect of ``do(X[intervention_var] = value)``.
+
+        Replaces the ``intervention_var``-th column of ``data`` with
+        ``intervention_value``, recomputes column means, and reports
+        the shift relative to the pre-intervention means.
+
+        Args:
+            data: 2D array of shape ``(n_samples, n_vars)``. Must be
+                non-empty.
+            intervention_var: Column index to intervene on. Must be in
+                ``[0, n_vars)``.
+            intervention_value: The constant value to assign to every
+                row of the intervened column.
+
+        Returns:
+            Dict with keys ``pre_intervention_mean`` (list[float]),
+            ``post_intervention_mean`` (list[float]), ``effect``
+            (list[float], post minus pre), ``surprisal`` (float,
+            free-energy score of the effect vector).
+
+        Failure mode: returns ``{"error": "causal_intervene: ..."}``.
+        """
+        if not isinstance(data, list):
+            raise ValueError("data must be a list")
+        if not isinstance(intervention_var, int) or isinstance(
+            intervention_var, bool
+        ):
+            raise ValueError(
+                f"intervention_var must be an int, got "
+                f"{type(intervention_var).__name__}"
+            )
+        if not isinstance(intervention_value, (int, float)) or isinstance(
+            intervention_value, bool
+        ):
+            raise ValueError(
+                f"intervention_value must be a number, got "
+                f"{type(intervention_value).__name__}"
+            )
+        arr = np.asarray(data, dtype=float)
+        if arr.ndim != 2:
+            raise ValueError(f"data must be 2D, got {arr.ndim}D")
+        if arr.size == 0:
+            raise ValueError("data must be non-empty")
+        _ensure_finite(arr, "data")
+        return _to_py(
+            self.model.intervene(
+                arr, intervention_var, float(intervention_value)
+            )
+        )
+
+    # ------------------------------------------------------------------
     # Registration / public API.
     # ------------------------------------------------------------------
 
@@ -2367,6 +2675,15 @@ class ZeroDataMCPServer:
             "reasoning_abduce": self.reasoning_abduce,
             "reasoning_conclude_defaults": self.reasoning_conclude_defaults,
             "reasoning_trace_causal": self.reasoning_trace_causal,
+            # Phase 7 — Causal (decision-tree / game / counterfactual /
+            # bandit / pomdp / discover-graph / intervene).
+            "causal_fit_decision_tree": self.causal_fit_decision_tree,
+            "causal_analyze_game": self.causal_analyze_game,
+            "causal_counterfactual": self.causal_counterfactual,
+            "causal_select_bandit_arm": self.causal_select_bandit_arm,
+            "causal_solve_pomdp": self.causal_solve_pomdp,
+            "causal_discover_graph": self.causal_discover_graph,
+            "causal_intervene": self.causal_intervene,
         }
 
     def list_tools(self) -> list[str]:

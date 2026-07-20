@@ -900,6 +900,173 @@ def _run_reasoning_causal(args: argparse.Namespace) -> int:
     return _emit_json(result)
 
 
+# ------------------------------------------------------------------ #
+# Phase 7 — Causal CLI handlers.
+# ------------------------------------------------------------------ #
+
+
+def _run_causal_decision_tree(args: argparse.Namespace) -> int:
+    """Fit an ID3-style decision tree to ``(features, labels)``.
+
+    Config schema (JSON):
+        {
+            "features": [[1.0, 2.0], [3.0, 4.0], ...],  // 2D (n_samples, n_features)
+            "labels":   ["a", "b", "a", ...]              // 1D (n_samples,)
+        }
+    """
+    import numpy as np
+
+    config = _load_json_file(args.file)
+    if not isinstance(config, dict):
+        raise ValueError("config must be a JSON object")
+    features = np.asarray(config.get("features", []), dtype=float)
+    labels = np.asarray(config.get("labels", []))
+    model = _build_model()
+    result = model.fit_decision_tree(features, labels)
+    return _emit_json(result)
+
+
+def _run_causal_game(args: argparse.Namespace) -> int:
+    """Analyze a 2-player normal-form game; find pure Nash equilibria.
+
+    Config schema (JSON):
+        {
+            "payoff_a": [[3, 0], [5, 1]],   // 2D (n_rows, n_cols)
+            "payoff_b": [[3, 5], [0, 1]]     // optional, same shape
+        }
+    ``payoff_b`` omitted => zero-sum game (``payoff_b = -payoff_a``).
+    """
+    import numpy as np
+
+    config = _load_json_file(args.file)
+    if not isinstance(config, dict):
+        raise ValueError("config must be a JSON object")
+    payoff_a = np.asarray(config.get("payoff_a", []), dtype=float)
+    payoff_b_raw = config.get("payoff_b")
+    payoff_b = np.asarray(payoff_b_raw, dtype=float) if payoff_b_raw is not None else None
+    model = _build_model()
+    result = model.analyze_game(payoff_a, payoff_b)
+    return _emit_json(result)
+
+
+def _run_causal_counterfactual(args: argparse.Namespace) -> int:
+    """Estimate the counterfactual outcome under ``do(X[index] = value)``.
+
+    Config schema (JSON):
+        {
+            "observed": [1.0, 2.0, 3.0, 4.0],   // 1D
+            "index": 1,                          // int
+            "value": 9.0                         // float
+        }
+    """
+    import numpy as np
+
+    config = _load_json_file(args.file)
+    if not isinstance(config, dict):
+        raise ValueError("config must be a JSON object")
+    observed = np.asarray(config.get("observed", []), dtype=float)
+    intervention = {
+        "index": int(config.get("index", 0)),
+        "value": float(config.get("value", 0.0)),
+    }
+    model = _build_model()
+    result = model.counterfactual(observed, intervention)
+    return _emit_json(result)
+
+
+def _run_causal_bandit(args: argparse.Namespace) -> int:
+    """Select the next bandit arm (epsilon-greedy + UCB1).
+
+    Config schema (JSON):
+        {
+            "rewards_history": [
+                [1.0, 0.5, 0.8],   // rewards observed for arm 0
+                [0.2],              // rewards observed for arm 1
+                []                  // arm 2 never pulled
+            ]
+        }
+    """
+    config = _load_json_file(args.file)
+    if not isinstance(config, dict):
+        raise ValueError("config must be a JSON object")
+    rewards_history = config.get("rewards_history", []) or []
+    if not isinstance(rewards_history, list):
+        raise ValueError("rewards_history must be a list of lists")
+    rewards_history = [list(h) for h in rewards_history]
+    model = _build_model()
+    result = model.select_bandit_arm(rewards_history)
+    return _emit_json(result)
+
+
+def _run_causal_pomdp(args: argparse.Namespace) -> int:
+    """Solve a (PO)MDP via value iteration.
+
+    Config schema (JSON):
+        {
+            "transitions":   [[[...], ...], ...],  // 3D (S, A, S)
+            "observations":  [[...], ...],         // 2D (S, O)
+            "rewards":        [...]                 // 1D (S,) or 2D (S, A)
+        }
+    """
+    import numpy as np
+
+    config = _load_json_file(args.file)
+    if not isinstance(config, dict):
+        raise ValueError("config must be a JSON object")
+    transitions = np.asarray(config.get("transitions", []), dtype=float)
+    observations = np.asarray(config.get("observations", []), dtype=float)
+    rewards = np.asarray(config.get("rewards", []), dtype=float)
+    model = _build_model()
+    result = model.solve_pomdp(transitions, observations, rewards)
+    return _emit_json(result)
+
+
+def _run_causal_discover_graph(args: argparse.Namespace) -> int:
+    """Discover a causal graph from observational data (PC-style).
+
+    Config schema (JSON):
+        {
+            "data": [[...], ...],                 // 2D (n_samples, n_vars)
+            "var_names": ["x", "y", "z"]           // optional, len = n_vars
+        }
+    """
+    import numpy as np
+
+    config = _load_json_file(args.file)
+    if not isinstance(config, dict):
+        raise ValueError("config must be a JSON object")
+    data = np.asarray(config.get("data", []), dtype=float)
+    var_names = config.get("var_names")
+    if var_names is not None:
+        var_names = [str(n) for n in var_names]
+    model = _build_model()
+    result = model.discover_causal_graph(data, var_names=var_names)
+    return _emit_json(result)
+
+
+def _run_causal_intervene(args: argparse.Namespace) -> int:
+    """Estimate the effect of ``do(X[intervention_var] = value)``.
+
+    Config schema (JSON):
+        {
+            "data": [[...], ...],                 // 2D (n_samples, n_vars)
+            "intervention_var": 1,                // int (column index)
+            "intervention_value": 5.0             // float
+        }
+    """
+    import numpy as np
+
+    config = _load_json_file(args.file)
+    if not isinstance(config, dict):
+        raise ValueError("config must be a JSON object")
+    data = np.asarray(config.get("data", []), dtype=float)
+    intervention_var = int(config.get("intervention_var", 0))
+    intervention_value = float(config.get("intervention_value", 0.0))
+    model = _build_model()
+    result = model.intervene(data, intervention_var, intervention_value)
+    return _emit_json(result)
+
+
 def _run_rl_step(args: argparse.Namespace) -> int:
     model = _build_model()
     result = model.step_mdp(int(args.state), int(args.action))
@@ -1514,6 +1681,87 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     r_cau.set_defaults(func=_run_reasoning_causal)
 
+    # ------------------------------------------------------------------ #
+    # Phase 7 — Causal subparser.
+    # ------------------------------------------------------------------ #
+    causal_parser = subparsers.add_parser(
+        "causal",
+        help="Causal/decision capabilities (decision-tree / game / counterfactual / bandit / pomdp / discover-graph / intervene).",
+        description="Decision trees, game theory, counterfactual reasoning, multi-armed bandits, POMDP solving, causal-graph discovery, and intervention analysis.",
+    )
+    causal_sub = causal_parser.add_subparsers(
+        dest="subcommand", required=True, metavar="<subcommand>",
+        help="decision-tree | game | counterfactual | bandit | pomdp | discover-graph | intervene",
+    )
+
+    c_dt = causal_sub.add_parser(
+        "decision-tree",
+        help="Fit an ID3-style decision tree to (features, labels).",
+    )
+    c_dt.add_argument(
+        "file",
+        help="JSON config with `features` (2D) and `labels` (1D).",
+    )
+    c_dt.set_defaults(func=_run_causal_decision_tree)
+
+    c_game = causal_sub.add_parser(
+        "game",
+        help="Find pure-strategy Nash equilibria of a 2-player normal-form game.",
+    )
+    c_game.add_argument(
+        "file",
+        help="JSON config with `payoff_a` (2D) and optional `payoff_b` (2D).",
+    )
+    c_game.set_defaults(func=_run_causal_game)
+
+    c_cf = causal_sub.add_parser(
+        "counterfactual",
+        help="Estimate counterfactual outcome under do(X[index] = value).",
+    )
+    c_cf.add_argument(
+        "file",
+        help="JSON config with `observed`, `index`, and `value`.",
+    )
+    c_cf.set_defaults(func=_run_causal_counterfactual)
+
+    c_band = causal_sub.add_parser(
+        "bandit", help="Select the next bandit arm (epsilon-greedy + UCB1)."
+    )
+    c_band.add_argument(
+        "file",
+        help="JSON config with `rewards_history` (list of lists).",
+    )
+    c_band.set_defaults(func=_run_causal_bandit)
+
+    c_pomdp = causal_sub.add_parser(
+        "pomdp", help="Solve a (PO)MDP via value iteration."
+    )
+    c_pomdp.add_argument(
+        "file",
+        help="JSON config with `transitions` (3D), `observations` (2D), `rewards`.",
+    )
+    c_pomdp.set_defaults(func=_run_causal_pomdp)
+
+    c_disc = causal_sub.add_parser(
+        "discover-graph",
+        help="Discover a causal graph from observational data (PC-style).",
+    )
+    c_disc.add_argument(
+        "file",
+        help="JSON config with `data` (2D) and optional `var_names`.",
+    )
+    c_disc.set_defaults(func=_run_causal_discover_graph)
+
+    c_int = causal_sub.add_parser(
+        "intervene",
+        help="Estimate the effect of do(X[intervention_var] = value).",
+    )
+    c_int.add_argument(
+        "file",
+        help="JSON config with `data` (2D), `intervention_var`, `intervention_value`.",
+    )
+    c_int.set_defaults(func=_run_causal_intervene)
+
     return parser
 
 
@@ -1528,7 +1776,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if getattr(args, "command", None) in (
         "emergence", "memory", "planning", "multimodal", "rl",
-        "audio", "graph", "robotics", "time", "code", "reasoning",
+        "audio", "graph", "robotics", "time", "code", "reasoning", "causal",
     ):
         # ``func`` is set via ``set_defaults`` on each subparser.
         try:
