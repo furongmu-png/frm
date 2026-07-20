@@ -188,11 +188,25 @@ class DifferentialGenerator:
                         diff = q[k] - obs
                         d = float(np.linalg.norm(diff))
                         if d < obstacle_margin:
-                            # Project to the safety boundary along
-                            # the radial direction. Use a tiny epsilon
-                            # to avoid division-by-zero when q[k] == obs.
-                            scale = obstacle_margin / (d + 1e-12)
-                            q[k] = obs + diff * scale
+                            if d < 1e-12:
+                                # V4-NEW-L008 (v4.2): q[k] sits exactly on
+                                # the obstacle center — radial projection is
+                                # undefined (diff = 0 -> scale * 0 = 0).
+                                # Pick a deterministic arbitrary direction
+                                # (unit vector along the first axis with
+                                # fallback to a fixed reference) so the
+                                # trajectory is still pushed out of margin.
+                                direction = np.zeros_like(q[k])
+                                if dim >= 1:
+                                    direction[0] = 1.0
+                                else:
+                                    direction = np.array([1.0])
+                                q[k] = obs + direction * obstacle_margin
+                            else:
+                                # Project to the safety boundary along
+                                # the radial direction.
+                                scale = obstacle_margin / d
+                                q[k] = obs + diff * scale
                             obstacle_violations += 1
             if max_delta < tol:
                 converged = True

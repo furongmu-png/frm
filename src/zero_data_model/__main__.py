@@ -99,11 +99,13 @@ def _build_model():
 
 
 def _load_observation(path: str):
-    """Load a 2D ndarray observation from .npz / .npy / .csv.
+    """Load a 2D ndarray observation from .json / .npz / .npy / .csv.
 
     For ``.npz`` archives with multiple arrays, the alphabetically-first
     key is loaded. 1D inputs (e.g. a single-row CSV) are returned as-is;
     downstream engine methods decide whether to accept them.
+
+    V4-NEW-L007 (v4.2): added ``.json`` support to match ``_load_vector``.
     """
     import numpy as np
 
@@ -120,10 +122,13 @@ def _load_observation(path: str):
         arr = np.load(path)
     elif path.endswith(".csv"):
         arr = np.loadtxt(path, delimiter=",")
+    elif path.endswith(".json"):
+        with open(path) as f:
+            arr = np.asarray(json.load(f), dtype=float)
     else:
         raise ValueError(
             f"unsupported observation format: {path} "
-            "(expected .npz / .npy / .csv)"
+            "(expected .json / .npz / .npy / .csv)"
         )
     return np.ascontiguousarray(arr, dtype=float)
 
@@ -243,7 +248,10 @@ def _run_emergence_trajectory(args: argparse.Namespace) -> int:
     constraints: dict | None = None
     if args.obstacles:
         obstacles = _load_observation(args.obstacles)
-        constraints = {"obstacles": obstacles, "margin": 0.1}
+        # V4-NEW-L001 (v4.2): respect --margin instead of hardcoding 0.1.
+        constraints = {"obstacles": obstacles}
+        if args.margin is not None:
+            constraints["margin"] = args.margin
     model = _build_model()
     result = model.generate_trajectory(
         start, end, n_steps=args.steps, constraints=constraints
@@ -253,8 +261,12 @@ def _run_emergence_trajectory(args: argparse.Namespace) -> int:
         "action": result.get("action", 0.0),
         "converged": result.get("converged", False),
         "iterations": result.get("iterations", 0),
-        "obstacle_violations": result.get("obstacle_violations", 0),
     }
+    # V4-NEW-L002 (v4.2): only include obstacle_violations when obstacles
+    # were active, matching the engine's backward-compat contract (the key
+    # is absent from the result dict when constraints is None / {}).
+    if "obstacle_violations" in result:
+        payload["obstacle_violations"] = result["obstacle_violations"]
     return _emit_json(payload)
 
 
@@ -364,8 +376,15 @@ def _build_parser() -> argparse.ArgumentParser:
     trajectory_parser.add_argument(
         "--obstacles",
         default=None,
-        help="Optional obstacles file (.npz / .npy / .csv), shape (K, dim). "
-        "Sets constraints={'obstacles': <array>, 'margin': 0.1}.",
+        help="Optional obstacles file (.json / .npz / .npy / .csv), shape "
+        "(K, dim). Activates constraints avoidance.",
+    )
+    trajectory_parser.add_argument(
+        "--margin",
+        type=float,
+        default=None,
+        help="Safety margin around obstacles (V4-NEW-L001). If omitted, the "
+        "engine uses rules.differential_obstacle_margin (default 1e-3).",
     )
     trajectory_parser.set_defaults(func=_run_emergence_trajectory)
 

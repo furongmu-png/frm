@@ -49,6 +49,20 @@ def _to_py(obj: Any) -> Any:
     return obj
 
 
+def _ensure_finite(arr: np.ndarray, name: str) -> None:
+    """Raise ValueError if ``arr`` contains NaN or Inf.
+
+    Mirrors ``api._ensure_finite`` but raises plain ValueError (the
+    ``@_error_to_dict`` wrapper converts it to ``{"error": ...}`` for
+    MCP clients). V4-NEW-L006 (v4.2): MCP tool inputs previously did
+    only ``np.asarray(dtype=float)`` without finiteness checking, so
+    NaN/Inf silently entered the engine and surfaced as opaque
+    RuntimeWarnings. Now they return a clean error dict instead.
+    """
+    if not np.all(np.isfinite(arr)):
+        raise ValueError(f"{name} must be finite (no NaN or Inf)")
+
+
 def _error_to_dict(fn: Callable[..., dict]) -> Callable[..., dict]:
     """Wrap a tool so any exception is surfaced as ``{"error": str}``.
 
@@ -285,6 +299,7 @@ class ZeroDataMCPServer:
             raise ValueError(
                 f"data must be 2D with shape (n>=2, d>=2), got {arr.shape}"
             )
+        _ensure_finite(arr, "data")  # V4-NEW-L006
         result = self.model.perceive_topology(arr, max_dim=max_dim)
         return _to_py({
             "betti_numbers": result["betti_numbers"],
@@ -331,6 +346,7 @@ class ZeroDataMCPServer:
             raise ValueError(
                 f"data must be 2D with shape (n>=2, d>=2), got {arr.shape}"
             )
+        _ensure_finite(arr, "data")  # V4-NEW-L006
         result = self.model.discover_causal_dynamics(
             arr, var_names=var_names, method=method
         )
@@ -386,11 +402,15 @@ class ZeroDataMCPServer:
             raise ValueError(
                 f"start_state shape {start.shape} != end_state shape {end.shape}"
             )
+        _ensure_finite(start, "start_state")  # V4-NEW-L006
+        _ensure_finite(end, "end_state")  # V4-NEW-L006
         constraints: dict | None = None
         if obstacles is not None or margin is not None:
             constraints = {}
             if obstacles is not None:
-                constraints["obstacles"] = obstacles
+                obs_arr = np.asarray(obstacles, dtype=float)
+                _ensure_finite(obs_arr, "obstacles")  # V4-NEW-L006
+                constraints["obstacles"] = obs_arr
             if margin is not None:
                 constraints["margin"] = float(margin)
         result = self.model.generate_trajectory(
@@ -426,9 +446,12 @@ class ZeroDataMCPServer:
         mean_arr = np.asarray(mean, dtype=float)
         if mean_arr.ndim != 1:
             raise ValueError(f"mean must be 1D, got shape {mean_arr.shape}")
+        _ensure_finite(mean_arr, "mean")  # V4-NEW-L006
         std_f = float(std)
         if std_f <= 0.0:
             raise ValueError(f"std must be > 0, got {std_f}")
+        if not math.isfinite(std_f):
+            raise ValueError("std must be finite (no NaN or Inf)")  # V4-NEW-L006
         n_s = int(n_samples)
         if n_s < 1:
             raise ValueError(f"n_samples must be >= 1, got {n_s}")
@@ -477,6 +500,7 @@ class ZeroDataMCPServer:
         query_arr = np.asarray(query, dtype=float)
         if query_arr.ndim != 1:
             raise ValueError(f"query must be 1D, got shape {query_arr.shape}")
+        _ensure_finite(query_arr, "query")  # V4-NEW-L006
         result = self.model.recall_memory(query_arr, n_steps=int(n_steps))
         return _to_py(result)
 
@@ -509,6 +533,7 @@ class ZeroDataMCPServer:
             raise ValueError(
                 f"observation must be 2D with shape (n>=2, d>=2), got {arr.shape}"
             )
+        _ensure_finite(arr, "observation")  # V4-NEW-L006
         result = self.model.emergence_cycle(arr)
         return _to_py(result)
 

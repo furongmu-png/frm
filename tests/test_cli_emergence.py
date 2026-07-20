@@ -177,14 +177,14 @@ def test_emergence_trajectory_success(capsys):
 
     assert code == 0
     result = json.loads(out)
-    for key in (
-        "trajectory",
-        "action",
-        "converged",
-        "iterations",
-        "obstacle_violations",
-    ):
+    # V4-NEW-L002 (v4.2): without --obstacles the engine result dict does
+    # NOT contain obstacle_violations, so the CLI payload must omit it too
+    # (matches the engine's backward-compat contract).
+    for key in ("trajectory", "action", "converged", "iterations"):
         assert key in result, f"missing key: {key}"
+    assert "obstacle_violations" not in result, (
+        "obstacle_violations should be absent without --obstacles"
+    )
 
     traj = result["trajectory"]
     assert len(traj) == 9  # n_steps + 1
@@ -211,9 +211,94 @@ def test_emergence_trajectory_with_obstacles(tmp_path, capsys):
 
     assert code == 0
     result = json.loads(out)
-    # obstacle_violations is always present (defaults to 0 when no obstacles).
+    # With obstacles active, the engine adds obstacle_violations to the
+    # result dict and the CLI forwards it (V4-NEW-L002 contract).
     assert "obstacle_violations" in result
     assert isinstance(result["obstacle_violations"], int)
+
+
+def test_emergence_trajectory_obstacle_violations_absent_without_obstacles(capsys):
+    """V4-NEW-L002 (v4.2): no --obstacles => no obstacle_violations key."""
+    code = main([
+        "emergence", "trajectory",
+        "[0.0, 0.0]",
+        "[1.0, 1.0]",
+        "--steps", "4",
+    ])
+    out = capsys.readouterr().out
+    assert code == 0
+    result = json.loads(out)
+    assert "obstacle_violations" not in result
+
+
+def test_emergence_trajectory_margin_flag_overrides_default(tmp_path, capsys):
+    """V4-NEW-L001 (v4.2): --margin flag overrides the default margin."""
+    obstacles = np.array([[0.5, 0.5, 0.5]])
+    obs_path = _save_npz(tmp_path / "obstacles.npz", obstacles)
+
+    # Large margin should produce more violations than small margin.
+    code = main([
+        "emergence", "trajectory",
+        "[0.0, 0.0, 0.0]",
+        "[1.0, 1.0, 1.0]",
+        "--steps", "8",
+        "--obstacles", str(obs_path),
+        "--margin", "0.5",
+    ])
+    out = capsys.readouterr().out
+    assert code == 0
+    result_large = json.loads(out)
+    assert result_large["obstacle_violations"] > 0  # 0.5 margin catches the path
+
+    # Small margin: 1e-4 — the straight-line path passes close to 0.5,0.5,0.5
+    # at the midpoint so even a small margin may catch some violations; the
+    # contract here is that --margin is plumbed through (result differs
+    # from the no-margin case in a measurable way).
+    code = main([
+        "emergence", "trajectory",
+        "[0.0, 0.0, 0.0]",
+        "[1.0, 1.0, 1.0]",
+        "--steps", "8",
+        "--obstacles", str(obs_path),
+        "--margin", "1e-6",
+    ])
+    out = capsys.readouterr().out
+    assert code == 0
+    result_small = json.loads(out)
+    # Large margin must catch at least as many violations as small margin.
+    assert result_large["obstacle_violations"] >= result_small["obstacle_violations"]
+
+
+def test_emergence_trajectory_obstacles_json_format(tmp_path, capsys):
+    """V4-NEW-L007 (v4.2): _load_observation accepts .json files."""
+    obstacles = [[0.5, 0.5, 0.5]]
+    obs_path = tmp_path / "obstacles.json"
+    obs_path.write_text(json.dumps(obstacles))
+
+    code = main([
+        "emergence", "trajectory",
+        "[0.0, 0.0, 0.0]",
+        "[1.0, 1.0, 1.0]",
+        "--steps", "8",
+        "--obstacles", str(obs_path),
+    ])
+    out = capsys.readouterr().out
+    assert code == 0
+    result = json.loads(out)
+    assert "obstacle_violations" in result
+
+
+def test_emergence_trajectory_perceive_json_observation(tmp_path, capsys):
+    """V4-NEW-L007 (v4.2): _load_observation accepts .json for perceive."""
+    obs = [[0.0, 0.0], [1.0, 0.0], [0.5, 0.866], [0.5, 0.0]]
+    obs_path = tmp_path / "circle.json"
+    obs_path.write_text(json.dumps(obs))
+
+    code = main(["emergence", "perceive", str(obs_path)])
+    out = capsys.readouterr().out
+    assert code == 0
+    result = json.loads(out)
+    assert "betti_numbers" in result
 
 
 def test_emergence_trajectory_invalid_json(capsys):

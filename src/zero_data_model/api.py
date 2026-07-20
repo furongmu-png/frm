@@ -583,6 +583,9 @@ class EmergenceSampleResponse(BaseModel):
     accept_rate: float
     ess: float
     converged: bool
+    # V4-NEW-L004 (v4.2): expose raw samples to match MCP output contract.
+    # May be empty when n_samples=0 (engine returns shape (0, dim)).
+    samples: list[list[float]] = Field(default_factory=list)
 
 
 class EmergenceRecallRequest(BaseModel):
@@ -597,6 +600,10 @@ class EmergenceRecallResponse(BaseModel):
     trajectory: list[list[float]]
     converged: bool
     divergence: float
+    # V4-NEW-L003 (v4.2): expose nearest_pattern to match MCP output contract.
+    # None when memory is empty, query is non-finite, or engine-level
+    # degradation kicks in (spec §7.3).
+    nearest_pattern: list[float] | None = None
 
 
 class EmergenceCycleRequest(BaseModel):
@@ -1505,6 +1512,10 @@ def create_app() -> FastAPI:
             accept_rate=float(result["accept_rate"]),
             ess=float(result["ess"]),
             converged=bool(result["converged"]),
+            samples=[
+                [float(x) for x in row]
+                for row in np.asarray(result["samples"]).tolist()
+            ],  # V4-NEW-L004
         )
 
     @app.post(
@@ -1535,6 +1546,11 @@ def create_app() -> FastAPI:
             trajectory=[[float(x) for x in row] for row in traj.tolist()],
             converged=bool(result["converged"]),
             divergence=float(result["divergence"]),
+            nearest_pattern=(
+                [float(x) for x in np.asarray(result["nearest_pattern"]).tolist()]
+                if result.get("nearest_pattern") is not None
+                else None
+            ),  # V4-NEW-L003
         )
 
     @app.post(

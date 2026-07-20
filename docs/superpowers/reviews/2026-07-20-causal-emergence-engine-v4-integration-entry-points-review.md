@@ -52,7 +52,7 @@
 
 ### V4-NEW-M001 [MEDIUM] — API `/emergence/trajectory` obstacles 维度不匹配返回 500 而非 400
 
-- **状态:** 未修复
+- **状态:** 已修复（v4.1，commit 9141cd4）
 - **严重度:** MEDIUM
 - **位置:** `src/zero_data_model/api.py:1413-1461`（`generate_emergence_trajectory` 端点）
 - **问题描述:**
@@ -95,7 +95,7 @@
 
 ### V4-NEW-M002 [MEDIUM] — MCP `_to_py()` 不将 NaN/Inf 转为 None，与 API/CLI `_to_jsonable` 不一致
 
-- **状态:** 未修复
+- **状态:** 已修复（v4.1，commit 9141cd4）
 - **严重度:** MEDIUM
 - **位置:** `src/zero_data_model/mcp_server.py:24-38`（`_to_py` 函数）
 - **问题描述:**
@@ -146,7 +146,7 @@
 
 ### V4-NEW-L001 [LOW] — CLI `--obstacles` 的 margin 硬编码为 0.1，未暴露 `--margin` 标志
 
-- **状态:** 未修复
+- **状态:** 已修复（v4.2）
 - **严重度:** LOW
 - **位置:** `src/zero_data_model/__main__.py:244-246`
 - **问题描述:**
@@ -173,7 +173,7 @@
 
 ### V4-NEW-L002 [LOW] — CLI `emergence trajectory` 输出始终含 `obstacle_violations` 键，违反引擎向后兼容契约
 
-- **状态:** 未修复
+- **状态:** 已修复（v4.2）
 - **严重度:** LOW
 - **位置:** `src/zero_data_model/__main__.py:251-258`
 - **问题描述:**
@@ -215,7 +215,7 @@
 
 ### V4-NEW-L003 [LOW] — API `EmergenceRecallResponse` 丢弃 `nearest_pattern` 字段
 
-- **状态:** 未修复
+- **状态:** 已修复（v4.2）
 - **严重度:** LOW
 - **位置:** `src/zero_data_model/api.py:593-599`（`EmergenceRecallResponse` schema）vs `api.py:1504-1526`（`recall_memory` 端点）
 - **问题描述:**
@@ -249,7 +249,7 @@
 
 ### V4-NEW-L004 [LOW] — API `EmergenceSampleResponse` 丢弃 `samples` 字段
 
-- **状态:** 未修复
+- **状态:** 已修复（v4.2）
 - **严重度:** LOW
 - **位置:** `src/zero_data_model/api.py:580-586`（`EmergenceSampleResponse` schema）vs `api.py:1469-1496`（`sample_posterior` 端点）
 - **问题描述:**
@@ -266,7 +266,7 @@
 
 ### V4-NEW-L005 [LOW] — Spec 头部"测试总数从 241 增至 352"与 §13"306 tests"口径不一致
 
-- **状态:** 未修复
+- **状态:** 已修复（v4.1，commit 9141cd4）
 - **严重度:** LOW
 - **位置:** `docs/superpowers/specs/2026-07-19-causal-emergence-engine-design.md:9`（头部）vs `:841-852`（§13）vs `:775`（§10.3）
 - **问题描述:**
@@ -290,7 +290,7 @@
 
 ### V4-NEW-L006 [LOW] — MCP 工具未调用 `_ensure_finite`，与 API 输入清洗不一致
 
-- **状态:** 未修复
+- **状态:** 已修复（v4.2）
 - **严重度:** LOW
 - **位置:** `src/zero_data_model/mcp_server.py`（所有 emergence 工具）
 - **问题描述:**
@@ -327,7 +327,7 @@
 
 ### V4-NEW-L007 [LOW] — CLI `_load_observation` 不支持 `.json` 文件，与 `_load_vector` 不一致
 
-- **状态:** 未修复
+- **状态:** 已修复（v4.2）
 - **严重度:** LOW
 - **位置:** `src/zero_data_model/__main__.py:101-128`（`_load_observation`）vs `:131-166`（`_load_vector`）
 - **问题描述:**
@@ -348,7 +348,7 @@
 
 ### V4-NEW-L008 [LOW] — 投影公式在 `q[k] == obs` 精确相等时失效（理论边界情况）
 
-- **状态:** 未修复（理论边界情况，实际罕见）
+- **状态:** 已修复（v4.2）（理论边界情况，实际罕见）
 - **严重度:** LOW
 - **位置:** `src/zero_data_model/causal_emergence/differential.py:194-195`
 - **问题描述:**

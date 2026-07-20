@@ -249,6 +249,13 @@ def test_emergence_sample_success(client):
     assert 0.0 <= body["accept_rate"] <= 1.0
     assert isinstance(body["ess"], float)
     assert isinstance(body["converged"], bool)
+    # V4-NEW-L004 (v4.2): raw samples are now exposed (shape (n_samples, dim)).
+    assert isinstance(body["samples"], list)
+    assert len(body["samples"]) == 50
+    assert len(body["samples"][0]) == 3
+    assert all(
+        isinstance(x, float) for row in body["samples"] for x in row
+    )
 
 
 def test_emergence_sample_zero_n_samples_returns_422(client):
@@ -286,6 +293,10 @@ def test_emergence_recall_success(client):
     )
     assert isinstance(body["converged"], bool)
     assert isinstance(body["divergence"], float)
+    # V4-NEW-L003 (v4.2): nearest_pattern is now exposed.
+    # None when memory is empty (which it is here — no encode() called).
+    assert "nearest_pattern" in body
+    assert body["nearest_pattern"] is None
 
 
 def test_emergence_recall_empty_query_returns_422(client):

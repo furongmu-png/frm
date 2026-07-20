@@ -691,3 +691,37 @@ def test_strict_tolerance_requires_more_iterations():
     r_loose = gen_loose.generate(start, end, n_steps=32)
     r_strict = gen_strict.generate(start, end, n_steps=32)
     assert r_strict["iterations"] >= r_loose["iterations"]
+
+
+# ----------------------------------------------------------------------
+# Phase 5 — V4-NEW-L008: d=0 projection edge case
+# ----------------------------------------------------------------------
+
+def test_constraints_obstacle_at_interior_point_exact_center():
+    """V4-NEW-L008 (v4.2): q[k] == obs exactly should still be pushed out.
+
+    Construct a case where the linear interpolation initial guess places
+    an interior point exactly on the obstacle center. In dim=1 with
+    start=0, end=1, obstacle=0.5, n_steps=2, the midpoint q[1] is 0.5
+    exactly on the first iteration. Without the d=0 guard, the old
+    projection formula ``q[k] = obs + diff * scale`` left q[k] unchanged
+    (because diff == 0). The fix projects along a deterministic fallback
+    direction (the first axis) so the trajectory is pushed outside the
+    safety margin and obstacle_violations is incremented.
+    """
+    gen = DifferentialGenerator(rules=EmergenceRules())
+    start = np.array([0.0])
+    end = np.array([1.0])
+    obstacles = np.array([[0.5]])
+    r = gen.generate(
+        start, end, n_steps=2,
+        constraints={"obstacles": obstacles, "margin": 0.1},
+    )
+    # Violations must be > 0 (the d=0 guard ensures the projection fires).
+    assert r["obstacle_violations"] > 0
+    # After projection, the interior point must NOT equal the obstacle
+    # center — it should have been pushed margin away along axis 0.
+    interior = r["trajectory"][1]
+    assert abs(interior[0] - 0.5) >= 0.1 - 1e-9, (
+        f"interior point {interior} not pushed out of margin 0.1"
+    )

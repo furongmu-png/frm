@@ -481,3 +481,97 @@ def test_to_py_converts_non_finite_inside_nested_structures():
     assert out["stats"]["mean"] == 0.42
     # Round-trip through strict JSON now succeeds.
     json.dumps(out)
+
+
+# ----------------------------------------------------------------------
+# V4-NEW-L006: MCP tools reject non-finite inputs with a clean error dict
+# ----------------------------------------------------------------------
+
+def test_perceive_topology_nan_input_returns_error():
+    """V4-NEW-L006: NaN in data returns error dict, not silent NaN propagation."""
+    server = _make_server()
+    result = server.call_tool(
+        "perceive_topology", data=[[0.0, 0.0], [float("nan"), 1.0]]
+    )
+    assert "error" in result
+    assert "finite" in result["error"]
+
+
+def test_discover_causal_dynamics_inf_input_returns_error():
+    """V4-NEW-L006: Inf in data returns error dict."""
+    server = _make_server()
+    result = server.call_tool(
+        "discover_causal_dynamics",
+        data=[[0.0, 0.0], [1.0, float("inf")]],
+    )
+    assert "error" in result
+    assert "finite" in result["error"]
+
+
+def test_generate_trajectory_nan_start_returns_error():
+    """V4-NEW-L006: NaN start_state returns error dict."""
+    server = _make_server()
+    result = server.call_tool(
+        "generate_trajectory",
+        start_state=[float("nan"), 0.0],
+        end_state=[1.0, 1.0],
+        n_steps=4,
+    )
+    assert "error" in result
+    assert "finite" in result["error"]
+
+
+def test_generate_trajectory_nan_obstacles_returns_error():
+    """V4-NEW-L006: NaN obstacles return error dict."""
+    server = _make_server()
+    result = server.call_tool(
+        "generate_trajectory",
+        start_state=[0.0, 0.0],
+        end_state=[1.0, 1.0],
+        n_steps=4,
+        obstacles=[[float("nan"), 0.5]],
+        margin=0.1,
+    )
+    assert "error" in result
+    assert "finite" in result["error"]
+
+
+def test_sample_posterior_nan_mean_returns_error():
+    """V4-NEW-L006: NaN mean returns error dict."""
+    server = _make_server()
+    result = server.call_tool(
+        "sample_posterior", mean=[float("nan"), 0.0], std=1.0, n_samples=10
+    )
+    assert "error" in result
+    assert "finite" in result["error"]
+
+
+def test_sample_posterior_inf_std_returns_error():
+    """V4-NEW-L006: Inf std returns error dict (covers std_f branch)."""
+    server = _make_server()
+    result = server.call_tool(
+        "sample_posterior", mean=[0.0, 0.0], std=float("inf"), n_samples=10
+    )
+    assert "error" in result
+    assert "finite" in result["error"]
+
+
+def test_recall_memory_nan_query_returns_error():
+    """V4-NEW-L006: NaN query returns error dict."""
+    server = _make_server()
+    result = server.call_tool(
+        "recall_memory", query=[float("nan"), 0.1], n_steps=5
+    )
+    assert "error" in result
+    assert "finite" in result["error"]
+
+
+def test_emergence_cycle_nan_observation_returns_error():
+    """V4-NEW-L006: NaN observation returns error dict."""
+    server = _make_server()
+    result = server.call_tool(
+        "emergence_cycle",
+        observation=[[0.0, 0.0], [1.0, float("nan")]],
+    )
+    assert "error" in result
+    assert "finite" in result["error"]
