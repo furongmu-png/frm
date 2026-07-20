@@ -454,14 +454,15 @@ class TestAPIPhase6:
 
 class TestMCPPhase6:
     def test_total_tool_count(self, mcp_server):
-        """Server should now have at least 57 tools (16 base + 6 emergence +
-        12 Phase 6 + 6 Audio + 7 Graph + 10 Robotics + future Phase 7
-        domains). Each Phase 7 domain adds its own tools; this assertion
-        only verifies the floor — see TestMCPPhase6::test_phase6_tools_registered
-        for the strict Phase 6 invariant.
+        """Server should now have at least 64 tools (16 base + 6 emergence +
+        12 Phase 6 + 6 Audio + 7 Graph + 10 Robotics + 7 Time + future
+        Phase 7 domains). Each Phase 7 domain adds its own tools; this
+        assertion only verifies the floor — see
+        TestMCPPhase6::test_phase6_tools_registered for the strict
+        Phase 6 invariant.
         """
         tools = mcp_server.list_tools()
-        assert len(tools) >= 57
+        assert len(tools) >= 64
 
     def test_phase6_tools_registered(self, mcp_server):
         tools = set(mcp_server.list_tools())

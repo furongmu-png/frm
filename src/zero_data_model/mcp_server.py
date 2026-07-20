@@ -1622,6 +1622,189 @@ class ZeroDataMCPServer:
         return _to_py(self.model.control_mpc(current, target, obstacles=obs))
 
     # ------------------------------------------------------------------
+    # Phase 7 — Time tools.
+    # ------------------------------------------------------------------
+
+    @_error_to_dict
+    def time_encode(self, series: list[float]) -> dict:
+        """Encode a 1D time series into a dim-length L2-normalized vector.
+
+        Args:
+            series: 1D time series (must be non-empty). 2D input is
+                flattened internally.
+
+        Returns:
+            Dict with key ``embedding`` (list[float] of length ``dim``).
+            Empty input returns a zero vector of length ``dim``.
+
+        Failure mode: returns ``{"error": "time_encode: ..."}``.
+        """
+        arr = np.asarray(series, dtype=float)
+        if arr.ndim != 1 or arr.size < 1:
+            raise ValueError(
+                f"series must be 1D with len>=1, got shape {arr.shape}"
+            )
+        _ensure_finite(arr, "series")
+        emb = self.model.encode_time_series(arr)
+        return {"embedding": _to_py(emb)}
+
+    @_error_to_dict
+    def time_detect_seasonality(self, series: list[float]) -> dict:
+        """Detect seasonal periods via autocorrelation peaks.
+
+        Args:
+            series: 1D time series (must be non-empty).
+
+        Returns:
+            Dict with keys ``periods`` (list[int]), ``strengths``
+            (list[float]), ``dominant_period`` (int, 0 if none found).
+            ``n < 4`` returns empty lists and ``dominant_period=0``.
+
+        Failure mode: returns ``{"error": "time_detect_seasonality: ..."}``.
+        """
+        arr = np.asarray(series, dtype=float)
+        if arr.ndim != 1 or arr.size < 1:
+            raise ValueError(
+                f"series must be 1D with len>=1, got shape {arr.shape}"
+            )
+        _ensure_finite(arr, "series")
+        return _to_py(self.model.detect_seasonality(arr))
+
+    @_error_to_dict
+    def time_analyze_frequency(self, series: list[float]) -> dict:
+        """Analyze FFT frequency content + spectral entropy.
+
+        Args:
+            series: 1D time series (must be non-empty).
+
+        Returns:
+            Dict with keys ``frequencies`` (list[float]),
+            ``power`` (list[float]), ``dominant_freq`` (float),
+            ``spectral_entropy`` (float in [0, 1]). ``n < 2`` returns
+            empty arrays and zeroed scalars.
+
+        Failure mode: returns ``{"error": "time_analyze_frequency: ..."}``.
+        """
+        arr = np.asarray(series, dtype=float)
+        if arr.ndim != 1 or arr.size < 1:
+            raise ValueError(
+                f"series must be 1D with len>=1, got shape {arr.shape}"
+            )
+        _ensure_finite(arr, "series")
+        return _to_py(self.model.analyze_frequency(arr))
+
+    @_error_to_dict
+    def time_analyze_event_timestamps(self, series: list[float]) -> dict:
+        """Analyze event timing: inter-arrival, rate, burstiness.
+
+        Args:
+            series: 1D event timestamps (must be non-empty). Timestamps
+            are sorted internally, so unsorted input is OK.
+
+        Returns:
+            Dict with keys ``inter_arrival`` (list[float] of length
+            ``n-1``), ``rate`` (float, events per time unit),
+            ``burstiness`` (float in [-1, 1]), ``total_events`` (int).
+            ``n < 2`` returns empty inter_arrival and zeroed scalars.
+
+        Failure mode: returns ``{"error": "time_analyze_event_timestamps: ..."}``.
+        """
+        arr = np.asarray(series, dtype=float)
+        if arr.ndim != 1 or arr.size < 1:
+            raise ValueError(
+                f"series must be 1D with len>=1, got shape {arr.shape}"
+            )
+        _ensure_finite(arr, "series")
+        return _to_py(self.model.analyze_event_timestamps(arr))
+
+    @_error_to_dict
+    def time_detect_anomalous_timing(self, series: list[float]) -> dict:
+        """Detect anomalous inter-arrival gaps via z-score.
+
+        Args:
+            series: 1D event timestamps (must be non-empty).
+
+        Returns:
+            Dict with keys ``anomalies`` (list[bool] of length
+            ``max(0, n-1)``), ``scores`` (list[float] = |z-score|),
+            ``threshold`` (float, ``event_threshold_std`` default 2.0).
+            ``ts.size < 3`` returns zeroed arrays of shape
+            ``(max(0, n-1),)``.
+
+        Failure mode: returns ``{"error": "time_detect_anomalous_timing: ..."}``.
+        """
+        arr = np.asarray(series, dtype=float)
+        if arr.ndim != 1 or arr.size < 1:
+            raise ValueError(
+                f"series must be 1D with len>=1, got shape {arr.shape}"
+            )
+        _ensure_finite(arr, "series")
+        return _to_py(self.model.detect_anomalous_timing(arr))
+
+    @_error_to_dict
+    def time_track_cycle_phase(
+        self, series: list[float], period: int | None = None
+    ) -> dict:
+        """Track phase within a periodic cycle.
+
+        Args:
+            series: 1D time series (must be non-empty).
+            period: Optional explicit cycle period. When omitted or
+                ``<= 0``, the period is auto-detected via the
+                ``SeasonalityDetector``; if detection fails, falls back
+                to ``max(2, n // 2)``.
+
+        Returns:
+            Dict with keys ``phases`` (list[float] of length ``n``, in
+            ``[0, 1)``), ``period`` (int, the period used),
+            ``phase_coherence`` (float in [0, 1]). ``n < 4`` returns
+            zero phases, ``period=0``, ``coherence=0.0``.
+
+        Failure mode: returns ``{"error": "time_track_cycle_phase: ..."}``.
+        """
+        arr = np.asarray(series, dtype=float)
+        if arr.ndim != 1 or arr.size < 1:
+            raise ValueError(
+                f"series must be 1D with len>=1, got shape {arr.shape}"
+            )
+        _ensure_finite(arr, "series")
+        p: int | None = None
+        if period is not None:
+            p_int = int(period)
+            if p_int < 0:
+                raise ValueError(f"period must be >= 0, got {p_int}")
+            p = p_int
+        return _to_py(self.model.track_cycle_phase(arr, period=p))
+
+    @_error_to_dict
+    def time_score_forecastability(self, series: list[float]) -> dict:
+        """Score how forecastable a series is.
+
+        Blends three signals into a [0, 1] score: normalized Shannon
+        entropy (sample), stationarity (mean-stability across halves),
+        and autocorrelation strength (max autocorr at non-zero lag).
+
+        Args:
+            series: 1D time series (must be non-empty).
+
+        Returns:
+            Dict with keys ``forecastability`` (float in [0, 1]),
+            ``entropy`` (float in [0, 1]), ``stationarity`` (float in
+            [0, 1]), ``autocorr_strength`` (float in [0, 1]).
+            ``n < forecast_min_samples`` (default 8) returns
+            ``{0.0, 1.0, 0.0, 0.0}``.
+
+        Failure mode: returns ``{"error": "time_score_forecastability: ..."}``.
+        """
+        arr = np.asarray(series, dtype=float)
+        if arr.ndim != 1 or arr.size < 1:
+            raise ValueError(
+                f"series must be 1D with len>=1, got shape {arr.shape}"
+            )
+        _ensure_finite(arr, "series")
+        return _to_py(self.model.score_forecastability(arr))
+
+    # ------------------------------------------------------------------
     # Registration / public API.
     # ------------------------------------------------------------------
 
@@ -1692,6 +1875,15 @@ class ZeroDataMCPServer:
             "robotics_check_collision": self.robotics_check_collision,
             "robotics_check_path_collision": self.robotics_check_path_collision,
             "robotics_control_mpc": self.robotics_control_mpc,
+            # Phase 7 — Time (encode / seasonality / frequency /
+            # events / anomaly / cycle / forecast).
+            "time_encode": self.time_encode,
+            "time_detect_seasonality": self.time_detect_seasonality,
+            "time_analyze_frequency": self.time_analyze_frequency,
+            "time_analyze_event_timestamps": self.time_analyze_event_timestamps,
+            "time_detect_anomalous_timing": self.time_detect_anomalous_timing,
+            "time_track_cycle_phase": self.time_track_cycle_phase,
+            "time_score_forecastability": self.time_score_forecastability,
         }
 
     def list_tools(self) -> list[str]:

@@ -600,6 +600,61 @@ def _run_robotics_mpc(args: argparse.Namespace) -> int:
     return _emit_json(result)
 
 
+# ------------------------------------------------------------------ #
+# Phase 7 — Time CLI handlers.
+# ------------------------------------------------------------------ #
+
+
+def _run_time_encode(args: argparse.Namespace) -> int:
+    series = _load_observation(args.file)
+    model = _build_model()
+    result = model.encode_time_series(series)
+    return _emit_json({"embedding": result})
+
+
+def _run_time_seasonality(args: argparse.Namespace) -> int:
+    series = _load_observation(args.file)
+    model = _build_model()
+    result = model.detect_seasonality(series)
+    return _emit_json(result)
+
+
+def _run_time_frequency(args: argparse.Namespace) -> int:
+    series = _load_observation(args.file)
+    model = _build_model()
+    result = model.analyze_frequency(series)
+    return _emit_json(result)
+
+
+def _run_time_events(args: argparse.Namespace) -> int:
+    timestamps = _load_observation(args.file)
+    model = _build_model()
+    result = model.analyze_event_timestamps(timestamps)
+    return _emit_json(result)
+
+
+def _run_time_anomaly(args: argparse.Namespace) -> int:
+    timestamps = _load_observation(args.file)
+    model = _build_model()
+    result = model.detect_anomalous_timing(timestamps)
+    return _emit_json(result)
+
+
+def _run_time_cycle(args: argparse.Namespace) -> int:
+    series = _load_observation(args.file)
+    period = int(args.period) if args.period is not None else None
+    model = _build_model()
+    result = model.track_cycle_phase(series, period=period)
+    return _emit_json(result)
+
+
+def _run_time_forecast(args: argparse.Namespace) -> int:
+    series = _load_observation(args.file)
+    model = _build_model()
+    result = model.score_forecastability(series)
+    return _emit_json(result)
+
+
 def _run_rl_step(args: argparse.Namespace) -> int:
     model = _build_model()
     result = model.step_mdp(int(args.state), int(args.action))
@@ -1021,6 +1076,64 @@ def _build_parser() -> argparse.ArgumentParser:
     rl_mcts.add_argument("--depth", type=int, default=10)
     rl_mcts.set_defaults(func=_run_rl_search_mcts)
 
+    # ------------------------------------------------------------------ #
+    # Phase 7 — Time subparser.
+    # ------------------------------------------------------------------ #
+    time_parser = subparsers.add_parser(
+        "time",
+        help="Time-series capabilities (encode / seasonality / frequency / events / anomaly / cycle / forecast).",
+        description="Time-series encoder + seasonality + FFT + event timing + anomaly + cycle phase + forecastability facade.",
+    )
+    time_sub = time_parser.add_subparsers(
+        dest="subcommand", required=True, metavar="<subcommand>",
+        help="encode | seasonality | frequency | events | anomaly | cycle | forecast",
+    )
+    t_enc = time_sub.add_parser(
+        "encode", help="Encode a 1D time series into a dim-length L2-normalized vector."
+    )
+    t_enc.add_argument("file", help="Time-series file (1D).")
+    t_enc.set_defaults(func=_run_time_encode)
+
+    t_seas = time_sub.add_parser(
+        "seasonality", help="Detect seasonal periods via autocorrelation peaks."
+    )
+    t_seas.add_argument("file", help="Time-series file (1D).")
+    t_seas.set_defaults(func=_run_time_seasonality)
+
+    t_freq = time_sub.add_parser(
+        "frequency", help="FFT frequency analysis + spectral entropy."
+    )
+    t_freq.add_argument("file", help="Time-series file (1D).")
+    t_freq.set_defaults(func=_run_time_frequency)
+
+    t_evt = time_sub.add_parser(
+        "events", help="Analyze event timestamps (inter-arrival, rate, burstiness)."
+    )
+    t_evt.add_argument("file", help="Event timestamps file (1D).")
+    t_evt.set_defaults(func=_run_time_events)
+
+    t_anom = time_sub.add_parser(
+        "anomaly", help="Detect anomalous inter-arrival gaps via z-score."
+    )
+    t_anom.add_argument("file", help="Event timestamps file (1D).")
+    t_anom.set_defaults(func=_run_time_anomaly)
+
+    t_cyc = time_sub.add_parser(
+        "cycle", help="Track phase within a periodic cycle."
+    )
+    t_cyc.add_argument("file", help="Time-series file (1D).")
+    t_cyc.add_argument(
+        "--period", type=int, default=None,
+        help="Explicit cycle period; auto-detected when omitted.",
+    )
+    t_cyc.set_defaults(func=_run_time_cycle)
+
+    t_fc = time_sub.add_parser(
+        "forecast", help="Score forecastability (entropy + stationarity + autocorr)."
+    )
+    t_fc.add_argument("file", help="Time-series file (1D).")
+    t_fc.set_defaults(func=_run_time_forecast)
+
     return parser
 
 
@@ -1035,7 +1148,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if getattr(args, "command", None) in (
         "emergence", "memory", "planning", "multimodal", "rl",
-        "audio", "graph", "robotics",
+        "audio", "graph", "robotics", "time",
     ):
         # ``func`` is set via ``set_defaults`` on each subparser.
         try:

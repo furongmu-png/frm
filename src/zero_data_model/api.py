@@ -819,6 +819,22 @@ class RoboticsMPCRequest(BaseModel):
 
 
 # --------------------------------------------------------------------------- #
+# Phase 7 — Time request schemas.
+# --------------------------------------------------------------------------- #
+
+
+class TimeSeriesRequest(BaseModel):
+    """Shared schema for all Time endpoints that consume a single 1D series."""
+    series: list[float] = Field(..., min_length=1, max_length=65536)
+
+
+class TimeCyclePhaseRequest(BaseModel):
+    """Cycle phase tracker accepts an optional explicit period."""
+    series: list[float] = Field(..., min_length=1, max_length=65536)
+    period: int | None = Field(None, ge=0, le=65536)
+
+
+# --------------------------------------------------------------------------- #
 # Request tracing middleware (X-Request-ID, structured access log)
 # --------------------------------------------------------------------------- #
 
@@ -2397,6 +2413,114 @@ def create_app() -> FastAPI:
         model = get_model()
         with model._lock:
             result = model.control_mpc(current, target, obstacles=obstacles)
+        return _to_jsonable(result)
+
+    # ------------------------------------------------------------------
+    # Phase 7 — Time endpoints.
+    # ------------------------------------------------------------------
+    @app.post("/time/encode", tags=["time"])
+    @_limit("60/minute")
+    async def time_encode(  # noqa: ANN202
+        request: Request,
+        req: TimeSeriesRequest,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Encode a 1D time series into a dim-length L2-normalized vector."""
+        series = np.asarray(req.series, dtype=float)
+        _ensure_finite(series, "series")
+        model = get_model()
+        with model._lock:
+            emb = model.encode_time_series(series)
+        return {"embedding": _to_jsonable(emb)}
+
+    @app.post("/time/seasonality", tags=["time"])
+    @_limit("60/minute")
+    async def time_seasonality(  # noqa: ANN202
+        request: Request,
+        req: TimeSeriesRequest,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Detect seasonal periods via autocorrelation peaks."""
+        series = np.asarray(req.series, dtype=float)
+        _ensure_finite(series, "series")
+        model = get_model()
+        with model._lock:
+            result = model.detect_seasonality(series)
+        return _to_jsonable(result)
+
+    @app.post("/time/frequency", tags=["time"])
+    @_limit("60/minute")
+    async def time_frequency(  # noqa: ANN202
+        request: Request,
+        req: TimeSeriesRequest,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Analyze FFT frequency content + spectral entropy."""
+        series = np.asarray(req.series, dtype=float)
+        _ensure_finite(series, "series")
+        model = get_model()
+        with model._lock:
+            result = model.analyze_frequency(series)
+        return _to_jsonable(result)
+
+    @app.post("/time/events", tags=["time"])
+    @_limit("60/minute")
+    async def time_events(  # noqa: ANN202
+        request: Request,
+        req: TimeSeriesRequest,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Analyze event timestamps: inter-arrival, rate, burstiness."""
+        ts = np.asarray(req.series, dtype=float)
+        _ensure_finite(ts, "series")
+        model = get_model()
+        with model._lock:
+            result = model.analyze_event_timestamps(ts)
+        return _to_jsonable(result)
+
+    @app.post("/time/anomaly", tags=["time"])
+    @_limit("60/minute")
+    async def time_anomaly(  # noqa: ANN202
+        request: Request,
+        req: TimeSeriesRequest,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Detect anomalous inter-arrival gaps via z-score."""
+        ts = np.asarray(req.series, dtype=float)
+        _ensure_finite(ts, "series")
+        model = get_model()
+        with model._lock:
+            result = model.detect_anomalous_timing(ts)
+        return _to_jsonable(result)
+
+    @app.post("/time/cycle", tags=["time"])
+    @_limit("60/minute")
+    async def time_cycle(  # noqa: ANN202
+        request: Request,
+        req: TimeCyclePhaseRequest,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Track phase within a periodic cycle."""
+        series = np.asarray(req.series, dtype=float)
+        _ensure_finite(series, "series")
+        model = get_model()
+        with model._lock:
+            result = model.track_cycle_phase(series, period=req.period)
+        return _to_jsonable(result)
+
+    @app.post("/time/forecast", tags=["time"])
+    @_limit("60/minute")
+    async def time_forecast(  # noqa: ANN202
+        request: Request,
+        req: TimeSeriesRequest,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Score forecastability: entropy + stationarity + autocorr."""
+        series = np.asarray(req.series, dtype=float)
+        _ensure_finite(series, "series")
+        model = get_model()
+        with model._lock:
+            result = model.score_forecastability(series)
         return _to_jsonable(result)
 
     return app
