@@ -655,6 +655,73 @@ def _run_time_forecast(args: argparse.Namespace) -> int:
     return _emit_json(result)
 
 
+# ------------------------------------------------------------------ #
+# Phase 7 — Code CLI handlers.
+# ------------------------------------------------------------------ #
+
+
+def _load_source(path: str) -> str:
+    """Read a Python source file as text.
+
+    Accepts any text file (typically ``.py``); raises ``FileNotFoundError``
+    if the path does not exist.
+    """
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"source file not found: {path}")
+    with open(path, "r", encoding="utf-8") as f:
+        return f.read()
+
+
+def _run_code_encode(args: argparse.Namespace) -> int:
+    source = _load_source(args.file)
+    model = _build_model()
+    emb = model.encode_code(source)
+    return _emit_json({"embedding": emb})
+
+
+def _run_code_ast(args: argparse.Namespace) -> int:
+    source = _load_source(args.file)
+    model = _build_model()
+    result = model.analyze_ast(source)
+    return _emit_json(result)
+
+
+def _run_code_compare(args: argparse.Namespace) -> int:
+    source_a = _load_source(args.file_a)
+    source_b = _load_source(args.file_b)
+    model = _build_model()
+    result = model.compare_code(source_a, source_b)
+    return _emit_json(result)
+
+
+def _run_code_defects(args: argparse.Namespace) -> int:
+    source = _load_source(args.file)
+    model = _build_model()
+    result = model.detect_code_defects(source)
+    return _emit_json(result)
+
+
+def _run_code_control_flow(args: argparse.Namespace) -> int:
+    source = _load_source(args.file)
+    model = _build_model()
+    result = model.analyze_control_flow(source)
+    return _emit_json(result)
+
+
+def _run_code_style(args: argparse.Namespace) -> int:
+    source = _load_source(args.file)
+    model = _build_model()
+    result = model.analyze_code_style(source)
+    return _emit_json(result)
+
+
+def _run_code_dependencies(args: argparse.Namespace) -> int:
+    source = _load_source(args.file)
+    model = _build_model()
+    result = model.build_dependency_graph(source)
+    return _emit_json(result)
+
+
 def _run_rl_step(args: argparse.Namespace) -> int:
     model = _build_model()
     result = model.step_mdp(int(args.state), int(args.action))
@@ -1134,6 +1201,61 @@ def _build_parser() -> argparse.ArgumentParser:
     t_fc.add_argument("file", help="Time-series file (1D).")
     t_fc.set_defaults(func=_run_time_forecast)
 
+    # ------------------------------------------------------------------ #
+    # Phase 7 — Code subparser.
+    # ------------------------------------------------------------------ #
+    code_parser = subparsers.add_parser(
+        "code",
+        help="Code-analysis capabilities (encode / ast / compare / defects / control-flow / style / dependencies).",
+        description="Python source encoder + AST analyzer + similarity + defects + control flow + style + dependency graph facade.",
+    )
+    code_sub = code_parser.add_subparsers(
+        dest="subcommand", required=True, metavar="<subcommand>",
+        help="encode | ast | compare | defects | control-flow | style | dependencies",
+    )
+    c_enc = code_sub.add_parser(
+        "encode", help="Encode Python source into a dim-length L2-normalized vector."
+    )
+    c_enc.add_argument("file", help="Python source file (.py).")
+    c_enc.set_defaults(func=_run_code_encode)
+
+    c_ast = code_sub.add_parser(
+        "ast", help="Analyze AST (functions / classes / imports / complexity / depth)."
+    )
+    c_ast.add_argument("file", help="Python source file (.py).")
+    c_ast.set_defaults(func=_run_code_ast)
+
+    c_cmp = code_sub.add_parser(
+        "compare", help="Compare two code snippets via token + structure similarity."
+    )
+    c_cmp.add_argument("file_a", help="First Python source file (.py).")
+    c_cmp.add_argument("file_b", help="Second Python source file (.py).")
+    c_cmp.set_defaults(func=_run_code_compare)
+
+    c_def = code_sub.add_parser(
+        "defects", help="Detect defect patterns (mutable_default / bare_except / equals_none)."
+    )
+    c_def.add_argument("file", help="Python source file (.py).")
+    c_def.set_defaults(func=_run_code_defects)
+
+    c_cf = code_sub.add_parser(
+        "control-flow", help="Analyze per-function cyclomatic complexity and basic blocks."
+    )
+    c_cf.add_argument("file", help="Python source file (.py).")
+    c_cf.set_defaults(func=_run_code_control_flow)
+
+    c_st = code_sub.add_parser(
+        "style", help="Run rule-based style checks (line length / naming / whitespace)."
+    )
+    c_st.add_argument("file", help="Python source file (.py).")
+    c_st.set_defaults(func=_run_code_style)
+
+    c_dep = code_sub.add_parser(
+        "dependencies", help="Build a module-level import dependency graph."
+    )
+    c_dep.add_argument("file", help="Python source file (.py).")
+    c_dep.set_defaults(func=_run_code_dependencies)
+
     return parser
 
 
@@ -1148,7 +1270,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if getattr(args, "command", None) in (
         "emergence", "memory", "planning", "multimodal", "rl",
-        "audio", "graph", "robotics", "time",
+        "audio", "graph", "robotics", "time", "code",
     ):
         # ``func`` is set via ``set_defaults`` on each subparser.
         try:

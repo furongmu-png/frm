@@ -835,6 +835,22 @@ class TimeCyclePhaseRequest(BaseModel):
 
 
 # --------------------------------------------------------------------------- #
+# Phase 7 — Code request schemas.
+# --------------------------------------------------------------------------- #
+
+
+class CodeSourceRequest(BaseModel):
+    """Shared schema for all Code endpoints that consume a single source."""
+    source: str = Field(..., min_length=1, max_length=1048576)
+
+
+class CodeCompareRequest(BaseModel):
+    """Compare takes two source strings."""
+    source_a: str = Field(..., min_length=1, max_length=1048576)
+    source_b: str = Field(..., min_length=1, max_length=1048576)
+
+
+# --------------------------------------------------------------------------- #
 # Request tracing middleware (X-Request-ID, structured access log)
 # --------------------------------------------------------------------------- #
 
@@ -2521,6 +2537,100 @@ def create_app() -> FastAPI:
         model = get_model()
         with model._lock:
             result = model.score_forecastability(series)
+        return _to_jsonable(result)
+
+    # ------------------------------------------------------------------
+    # Phase 7 — Code endpoints.
+    # ------------------------------------------------------------------
+    @app.post("/code/encode", tags=["code"])
+    @_limit("60/minute")
+    async def code_encode(  # noqa: ANN202
+        request: Request,
+        req: CodeSourceRequest,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Encode Python source into a dim-length L2-normalized vector."""
+        model = get_model()
+        with model._lock:
+            emb = model.encode_code(req.source)
+        return {"embedding": _to_jsonable(emb)}
+
+    @app.post("/code/ast", tags=["code"])
+    @_limit("60/minute")
+    async def code_ast(  # noqa: ANN202
+        request: Request,
+        req: CodeSourceRequest,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Analyze AST: functions, classes, imports, complexity, depth."""
+        model = get_model()
+        with model._lock:
+            result = model.analyze_ast(req.source)
+        return _to_jsonable(result)
+
+    @app.post("/code/compare", tags=["code"])
+    @_limit("60/minute")
+    async def code_compare(  # noqa: ANN202
+        request: Request,
+        req: CodeCompareRequest,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Compare two code snippets via token + structure similarity."""
+        model = get_model()
+        with model._lock:
+            result = model.compare_code(req.source_a, req.source_b)
+        return _to_jsonable(result)
+
+    @app.post("/code/defects", tags=["code"])
+    @_limit("60/minute")
+    async def code_defects(  # noqa: ANN202
+        request: Request,
+        req: CodeSourceRequest,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Detect defect patterns (mutable_default / bare_except / equals_none)."""
+        model = get_model()
+        with model._lock:
+            result = model.detect_code_defects(req.source)
+        return _to_jsonable(result)
+
+    @app.post("/code/control-flow", tags=["code"])
+    @_limit("60/minute")
+    async def code_control_flow(  # noqa: ANN202
+        request: Request,
+        req: CodeSourceRequest,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Analyze per-function cyclomatic complexity and basic blocks."""
+        model = get_model()
+        with model._lock:
+            result = model.analyze_control_flow(req.source)
+        return _to_jsonable(result)
+
+    @app.post("/code/style", tags=["code"])
+    @_limit("60/minute")
+    async def code_style(  # noqa: ANN202
+        request: Request,
+        req: CodeSourceRequest,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Run rule-based style checks (line length / naming / whitespace)."""
+        model = get_model()
+        with model._lock:
+            result = model.analyze_code_style(req.source)
+        return _to_jsonable(result)
+
+    @app.post("/code/dependencies", tags=["code"])
+    @_limit("60/minute")
+    async def code_dependencies(  # noqa: ANN202
+        request: Request,
+        req: CodeSourceRequest,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Build a module-level import dependency graph."""
+        model = get_model()
+        with model._lock:
+            result = model.build_dependency_graph(req.source)
         return _to_jsonable(result)
 
     return app

@@ -1805,6 +1805,182 @@ class ZeroDataMCPServer:
         return _to_py(self.model.score_forecastability(arr))
 
     # ------------------------------------------------------------------
+    # Phase 7 — Code tools.
+    # ------------------------------------------------------------------
+
+    @_error_to_dict
+    def code_encode(self, source: str) -> dict:
+        """Encode Python source code into a dim-length L2-normalized vector.
+
+        Args:
+            source: Python source string (must be non-empty). Syntax
+                errors are swallowed — AST-based features produce zero
+                contribution, but regex-based features (lines, tokens,
+                keyword density) still produce a non-trivial vector.
+
+        Returns:
+            Dict with key ``embedding`` (list[float] of length ``dim``).
+            Empty source returns a zero vector of length ``dim``.
+
+        Failure mode: returns ``{"error": "code_encode: ..."}``.
+        """
+        if not isinstance(source, str):
+            raise ValueError("source must be a string")
+        if not source:
+            raise ValueError("source must be non-empty")
+        emb = self.model.encode_code(source)
+        return {"embedding": _to_py(emb)}
+
+    @_error_to_dict
+    def code_analyze_ast(self, source: str) -> dict:
+        """Analyze AST structure: functions, classes, imports, complexity.
+
+        Args:
+            source: Python source string (must be non-empty).
+
+        Returns:
+            Dict with keys ``functions`` (list[str]), ``classes``
+            (list[str]), ``imports`` (list[str]), ``complexity`` (int,
+            starting at 1), ``max_depth`` (int), ``node_count`` (int).
+            Empty source or SyntaxError returns all-zero values.
+
+        Failure mode: returns ``{"error": "code_analyze_ast: ..."}``.
+        """
+        if not isinstance(source, str):
+            raise ValueError("source must be a string")
+        if not source:
+            raise ValueError("source must be non-empty")
+        return _to_py(self.model.analyze_ast(source))
+
+    @_error_to_dict
+    def code_compare(self, source_a: str, source_b: str) -> dict:
+        """Compare two code snippets via token + structure similarity.
+
+        Overall similarity is ``0.5 * token_overlap + 0.5 *
+        structure_similarity``.
+
+        Args:
+            source_a: First Python source string (must be non-empty).
+            source_b: Second Python source string (must be non-empty).
+
+        Returns:
+            Dict with keys ``similarity`` (float in [0, 1]),
+            ``token_overlap`` (float in [0, 1], Jaccard index of token
+            sets), ``structure_similarity`` (float in [0, 1], cosine
+            similarity of AST node-type Counter vectors).
+
+        Failure mode: returns ``{"error": "code_compare: ..."}``.
+        """
+        if not isinstance(source_a, str) or not isinstance(source_b, str):
+            raise ValueError("source_a and source_b must be strings")
+        if not source_a or not source_b:
+            raise ValueError("source_a and source_b must be non-empty")
+        return _to_py(self.model.compare_code(source_a, source_b))
+
+    @_error_to_dict
+    def code_detect_defects(self, source: str) -> dict:
+        """Detect rule-based defect patterns.
+
+        Scans the AST for three patterns:
+        - ``mutable_default``: function default arg is a mutable literal
+          (list/dict/set/listcomp).
+        - ``bare_except``: ``except:`` clause with no exception type.
+        - ``equals_none``: ``x == None`` (should be ``x is None``).
+
+        Args:
+            source: Python source string (must be non-empty).
+
+        Returns:
+            Dict with keys ``defects`` (list of dicts each with
+            ``pattern`` (str), ``line`` (int), ``col`` (int),
+            ``snippet`` (str)), and ``total`` (int == len(defects)).
+            Empty source or SyntaxError returns ``{"defects": [], "total": 0}``.
+
+        Failure mode: returns ``{"error": "code_detect_defects: ..."}``.
+        """
+        if not isinstance(source, str):
+            raise ValueError("source must be a string")
+        if not source:
+            raise ValueError("source must be non-empty")
+        return _to_py(self.model.detect_code_defects(source))
+
+    @_error_to_dict
+    def code_analyze_control_flow(self, source: str) -> dict:
+        """Analyze per-function cyclomatic complexity and basic blocks.
+
+        Args:
+            source: Python source string (must be non-empty).
+
+        Returns:
+            Dict with keys ``functions`` (list of dicts each with
+            ``name`` (str), ``complexity`` (int), ``lines`` (int),
+            ``basic_blocks`` (int = complexity + 1)),
+            ``avg_complexity`` (float), ``max_complexity`` (int),
+            ``total_functions`` (int). Empty / SyntaxError / no-functions
+            returns zero-state.
+
+        Failure mode: returns ``{"error": "code_analyze_control_flow: ..."}``.
+        """
+        if not isinstance(source, str):
+            raise ValueError("source must be a string")
+        if not source:
+            raise ValueError("source must be non-empty")
+        return _to_py(self.model.analyze_control_flow(source))
+
+    @_error_to_dict
+    def code_analyze_style(self, source: str) -> dict:
+        """Run rule-based style checks.
+
+        Checks line length (default 100 chars), trailing whitespace,
+        mixed indentation (tabs + spaces), and function naming
+        (snake_case required).
+
+        Args:
+            source: Python source string (must be non-empty).
+
+        Returns:
+            Dict with keys ``violations`` (list of dicts each with
+            ``rule`` (str), ``line`` (int, 1-indexed), ``message``
+            (str)), ``total`` (int == len(violations)), ``score``
+            (float in [0, 1], 1.0 = no violations).
+
+        Failure mode: returns ``{"error": "code_analyze_style: ..."}``.
+        """
+        if not isinstance(source, str):
+            raise ValueError("source must be a string")
+        if not source:
+            raise ValueError("source must be non-empty")
+        return _to_py(self.model.analyze_code_style(source))
+
+    @_error_to_dict
+    def code_build_dependency_graph(self, source: str) -> dict:
+        """Build a module-level import dependency graph.
+
+        The source file is treated as a central ``__main__`` node that
+        imports each imported module.
+
+        Args:
+            source: Python source string (must be non-empty).
+
+        Returns:
+            Dict with keys ``nodes`` (list[str], includes ``__main__``
+            at index 0 plus sorted unique imports), ``edges`` (list of
+            ``[source, target]`` pairs from ``__main__`` to each import;
+            duplicates possible if an import is repeated), ``adjacency``
+            (2D list of floats, shape ``n_nodes x n_nodes``), and
+            ``n_modules`` (int == len(nodes), including ``__main__``).
+            Empty / SyntaxError / no-imports returns empty-state with
+            ``adjacency`` shape ``(0, 0)``.
+
+        Failure mode: returns ``{"error": "code_build_dependency_graph: ..."}``.
+        """
+        if not isinstance(source, str):
+            raise ValueError("source must be a string")
+        if not source:
+            raise ValueError("source must be non-empty")
+        return _to_py(self.model.build_dependency_graph(source))
+
+    # ------------------------------------------------------------------
     # Registration / public API.
     # ------------------------------------------------------------------
 
@@ -1884,6 +2060,15 @@ class ZeroDataMCPServer:
             "time_detect_anomalous_timing": self.time_detect_anomalous_timing,
             "time_track_cycle_phase": self.time_track_cycle_phase,
             "time_score_forecastability": self.time_score_forecastability,
+            # Phase 7 — Code (encode / ast / compare / defects /
+            # control-flow / style / dependencies).
+            "code_encode": self.code_encode,
+            "code_analyze_ast": self.code_analyze_ast,
+            "code_compare": self.code_compare,
+            "code_detect_defects": self.code_detect_defects,
+            "code_analyze_control_flow": self.code_analyze_control_flow,
+            "code_analyze_style": self.code_analyze_style,
+            "code_build_dependency_graph": self.code_build_dependency_graph,
         }
 
     def list_tools(self) -> list[str]:
