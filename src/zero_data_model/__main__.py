@@ -400,6 +400,73 @@ def _run_audio_analyze_music(args: argparse.Namespace) -> int:
     return _emit_json(result)
 
 
+# ------------------------------------------------------------------ #
+# Phase 7 — Graph CLI handlers.
+# ------------------------------------------------------------------ #
+
+
+def _run_graph_encode(args: argparse.Namespace) -> int:
+    adjacency = _load_observation(args.file)
+    model = _build_model()
+    node_features = _load_observation(args.features) if args.features else None
+    result = model.encode_graph(adjacency, node_features=node_features)
+    return _emit_json({"embedding": result})
+
+
+def _run_graph_communities(args: argparse.Namespace) -> int:
+    adjacency = _load_observation(args.file)
+    model = _build_model()
+    result = model.detect_communities(adjacency)
+    return _emit_json(result)
+
+
+def _run_graph_path(args: argparse.Namespace) -> int:
+    adjacency = _load_observation(args.file)
+    model = _build_model()
+    result = model.find_path(adjacency, int(args.source), int(args.target))
+    return _emit_json(result)
+
+
+def _run_graph_centrality(args: argparse.Namespace) -> int:
+    adjacency = _load_observation(args.file)
+    model = _build_model()
+    result = model.analyze_centrality(adjacency)
+    return _emit_json(result)
+
+
+def _run_graph_isomorphism(args: argparse.Namespace) -> int:
+    adj_a = _load_observation(args.file_a)
+    adj_b = _load_observation(args.file_b)
+    model = _build_model()
+    result = model.check_isomorphism(adj_a, adj_b)
+    return _emit_json(result)
+
+
+def _run_graph_track_dynamic(args: argparse.Namespace) -> int:
+    """Track community drift across graph snapshots.
+
+    Each snapshot is loaded from a separate file listed via positional args
+    or via --files (comma-separated). For simplicity, we accept multiple
+    positional paths after the command.
+    """
+    # Reuse argparse REMAINDER for snapshot files.
+    files = args.files
+    if not files:
+        print("error: at least two snapshot files are required", file=sys.stderr)
+        return 1
+    snapshots = [_load_observation(f) for f in files]
+    model = _build_model()
+    result = model.track_dynamic_graph(snapshots)
+    return _emit_json(result)
+
+
+def _run_graph_spanning(args: argparse.Namespace) -> int:
+    adjacency = _load_observation(args.file)
+    model = _build_model()
+    result = model.extract_spanning_tree(adjacency)
+    return _emit_json(result)
+
+
 def _run_rl_step(args: argparse.Namespace) -> int:
     model = _build_model()
     result = model.step_mdp(int(args.state), int(args.action))
@@ -654,6 +721,44 @@ def _build_parser() -> argparse.ArgumentParser:
     au_music.add_argument("--sample-rate", type=int, default=16000)
     au_music.set_defaults(func=_run_audio_analyze_music)
 
+    # ------------------------------------------------------------------
+    # Phase 7 — Graph subparsers.
+    # ------------------------------------------------------------------
+    graph_parser = subparsers.add_parser(
+        "graph",
+        help="Graph capabilities (encode / communities / path / centrality / isomorphism / track / spanning).",
+        description="Graph encoder + community detection + path + centrality + isomorphism + dynamic tracking + MST.",
+    )
+    graph_sub = graph_parser.add_subparsers(
+        dest="subcommand", required=True, metavar="<subcommand>",
+        help="encode | communities | path | centrality | isomorphism | track | spanning",
+    )
+    gr_enc = graph_sub.add_parser("encode", help="Encode a graph into a dim-length vector.")
+    gr_enc.add_argument("file", help="Adjacency matrix file (.npz / .npy / .csv / .json).")
+    gr_enc.add_argument("--features", default=None, help="Optional node features file.")
+    gr_enc.set_defaults(func=_run_graph_encode)
+    gr_com = graph_sub.add_parser("communities", help="Detect communities via modularity.")
+    gr_com.add_argument("file", help="Adjacency matrix file.")
+    gr_com.set_defaults(func=_run_graph_communities)
+    gr_path = graph_sub.add_parser("path", help="Find shortest path via Dijkstra.")
+    gr_path.add_argument("file", help="Adjacency matrix file.")
+    gr_path.add_argument("source", type=int, help="Source node index.")
+    gr_path.add_argument("target", type=int, help="Target node index.")
+    gr_path.set_defaults(func=_run_graph_path)
+    gr_cent = graph_sub.add_parser("centrality", help="Analyze degree / betweenness / closeness centrality.")
+    gr_cent.add_argument("file", help="Adjacency matrix file.")
+    gr_cent.set_defaults(func=_run_graph_centrality)
+    gr_iso = graph_sub.add_parser("isomorphism", help="Check if two graphs are isomorphic (WL hash).")
+    gr_iso.add_argument("file_a", help="First adjacency matrix file.")
+    gr_iso.add_argument("file_b", help="Second adjacency matrix file.")
+    gr_iso.set_defaults(func=_run_graph_isomorphism)
+    gr_track = graph_sub.add_parser("track", help="Track community drift across graph snapshots.")
+    gr_track.add_argument("files", nargs="+", help="Two or more snapshot adjacency files.")
+    gr_track.set_defaults(func=_run_graph_track_dynamic)
+    gr_span = graph_sub.add_parser("spanning", help="Extract minimum spanning tree via Kruskal.")
+    gr_span.add_argument("file", help="Adjacency matrix file.")
+    gr_span.set_defaults(func=_run_graph_spanning)
+
     rl_parser = subparsers.add_parser(
         "rl",
         help="Reinforcement learning capabilities (step / train-q / search-mcts).",
@@ -690,7 +795,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _run_mcp()
 
     if getattr(args, "command", None) in (
-        "emergence", "memory", "planning", "multimodal", "rl", "audio"
+        "emergence", "memory", "planning", "multimodal", "rl", "audio", "graph"
     ):
         # ``func`` is set via ``set_defaults`` on each subparser.
         try:

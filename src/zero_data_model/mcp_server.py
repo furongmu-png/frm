@@ -1072,6 +1072,197 @@ class ZeroDataMCPServer:
         )
 
     # ------------------------------------------------------------------
+    # Phase 7 — Graph tools.
+    # ------------------------------------------------------------------
+
+    @_error_to_dict
+    def graph_encode(
+        self,
+        adjacency: list[list[float]],
+        node_features: list[list[float]] | None = None,
+    ) -> dict:
+        """Encode a graph into a ``dim``-length L2-normalized vector.
+
+        Args:
+            adjacency: 2D adjacency matrix (square, non-empty, finite).
+            node_features: Optional 2D node feature matrix aligned with
+                ``adjacency`` rows (n_nodes x n_features).
+
+        Returns:
+            Dict with key ``embedding`` (list[float] of length ``dim``).
+
+        Failure mode: returns ``{"error": "graph_encode: ..."}``.
+        """
+        adj = np.asarray(adjacency, dtype=float)
+        if adj.ndim != 2 or adj.shape[0] != adj.shape[1] or adj.shape[0] < 1:
+            raise ValueError(
+                f"adjacency must be a non-empty 2D square matrix, got {adj.shape}"
+            )
+        _ensure_finite(adj, "adjacency")
+        feats = None
+        if node_features is not None:
+            feats = np.asarray(node_features, dtype=float)
+            if feats.ndim != 2 or feats.shape[0] != adj.shape[0]:
+                raise ValueError(
+                    f"node_features must be 2D with {adj.shape[0]} rows, got {feats.shape}"
+                )
+            _ensure_finite(feats, "node_features")
+        result = self.model.encode_graph(adj, node_features=feats)
+        return {"embedding": _to_py(result)}
+
+    @_error_to_dict
+    def graph_detect_communities(self, adjacency: list[list[float]]) -> dict:
+        """Detect communities via modularity optimization.
+
+        Args:
+            adjacency: 2D adjacency matrix (square, non-empty, finite).
+
+        Returns:
+            Dict with keys ``communities`` (list of node lists),
+            ``modularity`` (float), ``n_communities`` (int).
+
+        Failure mode: returns ``{"error": "graph_detect_communities: ..."}``.
+        """
+        adj = np.asarray(adjacency, dtype=float)
+        if adj.ndim != 2 or adj.shape[0] != adj.shape[1] or adj.shape[0] < 1:
+            raise ValueError(
+                f"adjacency must be a non-empty 2D square matrix, got {adj.shape}"
+            )
+        _ensure_finite(adj, "adjacency")
+        return _to_py(self.model.detect_communities(adj))
+
+    @_error_to_dict
+    def graph_find_path(
+        self,
+        adjacency: list[list[float]],
+        source: int,
+        target: int,
+    ) -> dict:
+        """Find the shortest path via Dijkstra.
+
+        Args:
+            adjacency: 2D adjacency matrix (square, non-empty, finite).
+            source: Source node index (must be in [0, n_nodes)).
+            target: Target node index (must be in [0, n_nodes)).
+
+        Returns:
+            Dict with keys ``path`` (list of node indices),
+            ``distance`` (float), ``visited`` (int).
+
+        Failure mode: returns ``{"error": "graph_find_path: ..."}``.
+        """
+        adj = np.asarray(adjacency, dtype=float)
+        if adj.ndim != 2 or adj.shape[0] != adj.shape[1] or adj.shape[0] < 1:
+            raise ValueError(
+                f"adjacency must be a non-empty 2D square matrix, got {adj.shape}"
+            )
+        _ensure_finite(adj, "adjacency")
+        n = adj.shape[0]
+        if not (0 <= int(source) < n):
+            raise ValueError(f"source {source} out of range [0, {n})")
+        if not (0 <= int(target) < n):
+            raise ValueError(f"target {target} out of range [0, {n})")
+        return _to_py(self.model.find_path(adj, int(source), int(target)))
+
+    @_error_to_dict
+    def graph_analyze_centrality(self, adjacency: list[list[float]]) -> dict:
+        """Analyze degree / betweenness / closeness centrality.
+
+        Args:
+            adjacency: 2D adjacency matrix (square, non-empty, finite).
+
+        Returns:
+            Dict with keys ``degree``, ``betweenness``, ``closeness``,
+            ``most_central`` (int node index).
+
+        Failure mode: returns ``{"error": "graph_analyze_centrality: ..."}``.
+        """
+        adj = np.asarray(adjacency, dtype=float)
+        if adj.ndim != 2 or adj.shape[0] != adj.shape[1] or adj.shape[0] < 1:
+            raise ValueError(
+                f"adjacency must be a non-empty 2D square matrix, got {adj.shape}"
+            )
+        _ensure_finite(adj, "adjacency")
+        return _to_py(self.model.analyze_centrality(adj))
+
+    @_error_to_dict
+    def graph_check_isomorphism(
+        self,
+        adjacency_a: list[list[float]],
+        adjacency_b: list[list[float]],
+    ) -> dict:
+        """Check if two graphs are likely isomorphic (Weisfeiler-Lehman).
+
+        Args:
+            adjacency_a: First 2D adjacency matrix.
+            adjacency_b: Second 2D adjacency matrix.
+
+        Returns:
+            Dict with keys ``isomorphic`` (bool), ``confidence`` (float),
+            ``wl_hash_a`` (str), ``wl_hash_b`` (str).
+
+        Failure mode: returns ``{"error": "graph_check_isomorphism: ..."}``.
+        """
+        adj_a = np.asarray(adjacency_a, dtype=float)
+        adj_b = np.asarray(adjacency_b, dtype=float)
+        for name, arr in (("adjacency_a", adj_a), ("adjacency_b", adj_b)):
+            if arr.ndim != 2 or arr.shape[0] != arr.shape[1] or arr.shape[0] < 1:
+                raise ValueError(
+                    f"{name} must be a non-empty 2D square matrix, got {arr.shape}"
+                )
+            _ensure_finite(arr, name)
+        return _to_py(self.model.check_isomorphism(adj_a, adj_b))
+
+    @_error_to_dict
+    def graph_track_dynamic(self, snapshots: list[list[list[float]]]) -> dict:
+        """Track community drift across graph snapshots.
+
+        Args:
+            snapshots: List of 2D adjacency matrices (>= 2 snapshots).
+
+        Returns:
+            Dict with keys ``community_drift``, ``node_migrations``,
+            ``stability`` (float).
+
+        Failure mode: returns ``{"error": "graph_track_dynamic: ..."}``.
+        """
+        if not isinstance(snapshots, list) or len(snapshots) < 2:
+            raise ValueError(
+                f"snapshots must be a list of >= 2 adjacency matrices, got len={len(snapshots) if hasattr(snapshots, '__len__') else 'N/A'}"
+            )
+        snap_arrs = []
+        for i, s in enumerate(snapshots):
+            arr = np.asarray(s, dtype=float)
+            if arr.ndim != 2 or arr.shape[0] != arr.shape[1] or arr.shape[0] < 1:
+                raise ValueError(
+                    f"snapshots[{i}] must be a non-empty 2D square matrix, got {arr.shape}"
+                )
+            _ensure_finite(arr, f"snapshots[{i}]")
+            snap_arrs.append(arr)
+        return _to_py(self.model.track_dynamic_graph(snap_arrs))
+
+    @_error_to_dict
+    def graph_extract_spanning_tree(self, adjacency: list[list[float]]) -> dict:
+        """Extract the minimum spanning tree via Kruskal.
+
+        Args:
+            adjacency: 2D adjacency matrix (square, non-empty, finite).
+
+        Returns:
+            Dict with keys ``mst_edges`` (list of [u, v, w]),
+            ``total_weight`` (float), ``mst_adjacency`` (2D list).
+
+        Failure mode: returns ``{"error": "graph_extract_spanning_tree: ..."}``.
+        """
+        adj = np.asarray(adjacency, dtype=float)
+        if adj.ndim != 2 or adj.shape[0] != adj.shape[1] or adj.shape[0] < 1:
+            raise ValueError(
+                f"adjacency must be a non-empty 2D square matrix, got {adj.shape}"
+            )
+        _ensure_finite(adj, "adjacency")
+        return _to_py(self.model.extract_spanning_tree(adj))
+
+    # ------------------------------------------------------------------
     # Registration / public API.
     # ------------------------------------------------------------------
 
@@ -1121,6 +1312,15 @@ class ZeroDataMCPServer:
             "audio_classify": self.audio_classify,
             "audio_segment_speech": self.audio_segment_speech,
             "audio_analyze_music": self.audio_analyze_music,
+            # Phase 7 — Graph (encode / communities / path / centrality /
+            # isomorphism / track / spanning).
+            "graph_encode": self.graph_encode,
+            "graph_detect_communities": self.graph_detect_communities,
+            "graph_find_path": self.graph_find_path,
+            "graph_analyze_centrality": self.graph_analyze_centrality,
+            "graph_check_isomorphism": self.graph_check_isomorphism,
+            "graph_track_dynamic": self.graph_track_dynamic,
+            "graph_extract_spanning_tree": self.graph_extract_spanning_tree,
         }
 
     def list_tools(self) -> list[str]:

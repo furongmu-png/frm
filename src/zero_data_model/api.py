@@ -687,6 +687,36 @@ class AudioSignalRequest(BaseModel):
     sample_rate: int = Field(16000, ge=1, le=192000)
 
 
+# ------------------------------------------------------------------
+# Phase 7 — Graph request schemas.
+# ------------------------------------------------------------------
+
+
+class GraphAdjacencyRequest(BaseModel):
+    """Shared schema for graph endpoints taking a single adjacency matrix."""
+    adjacency: list[list[float]] = Field(..., min_length=1, max_length=512)
+
+
+class GraphEncodeRequest(BaseModel):
+    adjacency: list[list[float]] = Field(..., min_length=1, max_length=512)
+    node_features: list[list[float]] | None = Field(None)
+
+
+class GraphPathRequest(BaseModel):
+    adjacency: list[list[float]] = Field(..., min_length=1, max_length=512)
+    source: int = Field(..., ge=0, le=4096)
+    target: int = Field(..., ge=0, le=4096)
+
+
+class GraphIsomorphismRequest(BaseModel):
+    adjacency_a: list[list[float]] = Field(..., min_length=1, max_length=512)
+    adjacency_b: list[list[float]] = Field(..., min_length=1, max_length=512)
+
+
+class GraphTrackRequest(BaseModel):
+    snapshots: list[list[list[float]]] = Field(..., min_length=2, max_length=64)
+
+
 # --------------------------------------------------------------------------- #
 # Request tracing middleware (X-Request-ID, structured access log)
 # --------------------------------------------------------------------------- #
@@ -1970,6 +2000,121 @@ def create_app() -> FastAPI:
         model = get_model()
         with model._lock:
             result = model.analyze_music(signal, sample_rate=req.sample_rate)
+        return _to_jsonable(result)
+
+    # ------------------------------------------------------------------
+    # Phase 7 — Graph endpoints.
+    # ------------------------------------------------------------------
+    @app.post("/graph/encode", tags=["graph"])
+    @_limit("30/minute")
+    async def graph_encode(  # noqa: ANN202
+        request: Request,
+        req: GraphEncodeRequest,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Encode a graph into a ``dim``-length L2-normalized vector."""
+        adjacency = np.asarray(req.adjacency, dtype=float)
+        _ensure_finite(adjacency, "adjacency")
+        node_features = None
+        if req.node_features is not None:
+            node_features = np.asarray(req.node_features, dtype=float)
+            _ensure_finite(node_features, "node_features")
+        model = get_model()
+        with model._lock:
+            embedding = model.encode_graph(adjacency, node_features=node_features)
+        return {"embedding": _to_jsonable(embedding)}
+
+    @app.post("/graph/communities", tags=["graph"])
+    @_limit("30/minute")
+    async def graph_communities(  # noqa: ANN202
+        request: Request,
+        req: GraphAdjacencyRequest,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Detect communities via modularity optimization."""
+        adjacency = np.asarray(req.adjacency, dtype=float)
+        _ensure_finite(adjacency, "adjacency")
+        model = get_model()
+        with model._lock:
+            result = model.detect_communities(adjacency)
+        return _to_jsonable(result)
+
+    @app.post("/graph/path", tags=["graph"])
+    @_limit("30/minute")
+    async def graph_path(  # noqa: ANN202
+        request: Request,
+        req: GraphPathRequest,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Find shortest path via Dijkstra."""
+        adjacency = np.asarray(req.adjacency, dtype=float)
+        _ensure_finite(adjacency, "adjacency")
+        model = get_model()
+        with model._lock:
+            result = model.find_path(adjacency, req.source, req.target)
+        return _to_jsonable(result)
+
+    @app.post("/graph/centrality", tags=["graph"])
+    @_limit("30/minute")
+    async def graph_centrality(  # noqa: ANN202
+        request: Request,
+        req: GraphAdjacencyRequest,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Analyze degree / betweenness / closeness centrality."""
+        adjacency = np.asarray(req.adjacency, dtype=float)
+        _ensure_finite(adjacency, "adjacency")
+        model = get_model()
+        with model._lock:
+            result = model.analyze_centrality(adjacency)
+        return _to_jsonable(result)
+
+    @app.post("/graph/isomorphism", tags=["graph"])
+    @_limit("30/minute")
+    async def graph_isomorphism(  # noqa: ANN202
+        request: Request,
+        req: GraphIsomorphismRequest,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Check if two graphs are likely isomorphic (Weisfeiler-Lehman)."""
+        adj_a = np.asarray(req.adjacency_a, dtype=float)
+        adj_b = np.asarray(req.adjacency_b, dtype=float)
+        _ensure_finite(adj_a, "adjacency_a")
+        _ensure_finite(adj_b, "adjacency_b")
+        model = get_model()
+        with model._lock:
+            result = model.check_isomorphism(adj_a, adj_b)
+        return _to_jsonable(result)
+
+    @app.post("/graph/track", tags=["graph"])
+    @_limit("20/minute")
+    async def graph_track(  # noqa: ANN202
+        request: Request,
+        req: GraphTrackRequest,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Track community drift across graph snapshots."""
+        snapshots = [np.asarray(s, dtype=float) for s in req.snapshots]
+        for i, s in enumerate(snapshots):
+            _ensure_finite(s, f"snapshots[{i}]")
+        model = get_model()
+        with model._lock:
+            result = model.track_dynamic_graph(snapshots)
+        return _to_jsonable(result)
+
+    @app.post("/graph/spanning", tags=["graph"])
+    @_limit("30/minute")
+    async def graph_spanning(  # noqa: ANN202
+        request: Request,
+        req: GraphAdjacencyRequest,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Extract the minimum spanning tree via Kruskal."""
+        adjacency = np.asarray(req.adjacency, dtype=float)
+        _ensure_finite(adjacency, "adjacency")
+        model = get_model()
+        with model._lock:
+            result = model.extract_spanning_tree(adjacency)
         return _to_jsonable(result)
 
     return app
