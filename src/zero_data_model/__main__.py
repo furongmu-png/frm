@@ -467,6 +467,139 @@ def _run_graph_spanning(args: argparse.Namespace) -> int:
     return _emit_json(result)
 
 
+# ------------------------------------------------------------------ #
+# Phase 7 — Robotics CLI handlers.
+# ------------------------------------------------------------------ #
+
+
+def _parse_obstacles_file(path: str) -> list:
+    """Load obstacles from a JSON/CSV file.
+
+    Each obstacle is a row ``[x, y, ..., radius]`` where the LAST column
+    is the obstacle radius and the leading columns are its center
+    coordinates. Returns a list of ``(np.ndarray center, float radius)``
+    tuples matching the format expected by the robotics facade.
+    """
+    import numpy as np
+
+    arr = _load_observation(path)
+    if arr.ndim == 1:
+        arr = arr.reshape(1, -1)
+    obstacles: list[tuple[np.ndarray, float]] = []
+    for row in arr:
+        if row.size < 2:
+            continue
+        center = np.asarray(row[:-1], dtype=float)
+        radius = float(row[-1])
+        obstacles.append((center, radius))
+    return obstacles
+
+
+def _run_robotics_motion(args: argparse.Namespace) -> int:
+    waypoints = _load_observation(args.file)
+    model = _build_model()
+    result = model.plan_motion(waypoints, n_steps=int(args.steps))
+    return _emit_json(result)
+
+
+def _run_robotics_forward(args: argparse.Namespace) -> int:
+    joint_angles = _load_observation(args.file)
+    model = _build_model()
+    result = model.forward_kinematics(joint_angles)
+    return _emit_json({"position": result})
+
+
+def _run_robotics_inverse(args: argparse.Namespace) -> int:
+    target = _load_observation(args.file)
+    seed = _load_vector(args.seed) if args.seed else None
+    model = _build_model()
+    result = model.inverse_kinematics(target, seed=seed)
+    return _emit_json(result)
+
+
+def _run_robotics_fuse(args: argparse.Namespace) -> int:
+    """Fuse multiple sensor measurements loaded from a 2D file.
+
+    ``--variances`` accepts comma-separated floats (one per row of the
+    input file). When omitted, equal variances (1.0) are used.
+    """
+    import numpy as np
+
+    measurements_2d = _load_observation(args.file)
+    if measurements_2d.ndim == 1:
+        measurements_2d = measurements_2d.reshape(1, -1)
+    measurements = [measurements_2d[i] for i in range(measurements_2d.shape[0])]
+    if args.variances:
+        variances = [float(v) for v in args.variances.split(",")]
+    else:
+        variances = [1.0] * len(measurements)
+    model = _build_model()
+    result = model.fuse_sensors(measurements, variances)
+    return _emit_json({"fused": result})
+
+
+def _run_robotics_kalman(args: argparse.Namespace) -> int:
+    prior = _load_vector(args.prior)
+    measurement = _load_vector(args.measurement)
+    model = _build_model()
+    result = model.update_kalman(
+        prior, float(args.prior_var), measurement, float(args.meas_var)
+    )
+    return _emit_json(result)
+
+
+def _run_robotics_gait(args: argparse.Namespace) -> int:
+    model = _build_model()
+    result = model.generate_gait(n_steps=int(args.steps), gait_type=args.gait)
+    return _emit_json(result)
+
+
+def _run_robotics_optimize(args: argparse.Namespace) -> int:
+    trajectory = _load_observation(args.file)
+    model = _build_model()
+    result = model.optimize_trajectory(trajectory, n_iter=int(args.n_iter))
+    return _emit_json(result)
+
+
+def _run_robotics_collision(args: argparse.Namespace) -> int:
+    """Check collision at a single position against a list of obstacles.
+
+    The obstacles file is a 2D array ``[[x, y, ..., radius], ...]`` where
+    the LAST column is the obstacle radius and the rest is its center.
+    Position is parsed from the ``--position`` flag (comma-separated).
+    """
+    import numpy as np
+
+    obstacles = _parse_obstacles_file(args.file)
+    position = np.asarray(
+        [float(v) for v in args.position.split(",")], dtype=float
+    )
+    model = _build_model()
+    result = model.check_collision(obstacles, position, radius=float(args.radius))
+    return _emit_json(result)
+
+
+def _run_robotics_path_collision(args: argparse.Namespace) -> int:
+    """Check collision along a path. Obstacles and path are each loaded
+    from a separate JSON/CSV file."""
+    obstacles = _parse_obstacles_file(args.obstacles)
+    path = _load_observation(args.path)
+    model = _build_model()
+    result = model.check_path_collision(obstacles, path, radius=float(args.radius))
+    return _emit_json(result)
+
+
+def _run_robotics_mpc(args: argparse.Namespace) -> int:
+    current_state = _load_vector(args.current)
+    target_state = _load_vector(args.target)
+    obstacles = None
+    if args.obstacles:
+        obstacles = _parse_obstacles_file(args.obstacles)
+    model = _build_model()
+    result = model.control_mpc(current_state, target_state, obstacles=obstacles)
+    return _emit_json(result)
+
+
 def _run_rl_step(args: argparse.Namespace) -> int:
     model = _build_model()
     result = model.step_mdp(int(args.state), int(args.action))
@@ -759,6 +892,112 @@ def _build_parser() -> argparse.ArgumentParser:
     gr_span.add_argument("file", help="Adjacency matrix file.")
     gr_span.set_defaults(func=_run_graph_spanning)
 
+    # ------------------------------------------------------------------
+    # Phase 7 — Robotics subparsers.
+    # ------------------------------------------------------------------
+    robotics_parser = subparsers.add_parser(
+        "robotics",
+        help="Robotics capabilities (motion / forward / inverse / fuse / kalman / gait / optimize / collision / path-collision / mpc).",
+        description="Motion planning + IK + sensor fusion + Kalman + gait + trajectory optimization + collision + MPC facade.",
+    )
+    robotics_sub = robotics_parser.add_subparsers(
+        dest="subcommand", required=True, metavar="<subcommand>",
+        help="motion | forward | inverse | fuse | kalman | gait | optimize | collision | path-collision | mpc",
+    )
+    rb_motion = robotics_sub.add_parser(
+        "motion", help="Plan a smooth trajectory through waypoints (cubic spline)."
+    )
+    rb_motion.add_argument("file", help="Waypoints file (2D: n_wp x n_dof).")
+    rb_motion.add_argument("--steps", type=int, default=100)
+    rb_motion.set_defaults(func=_run_robotics_motion)
+    rb_fwd = robotics_sub.add_parser(
+        "forward", help="Forward kinematics: joint angles -> end-effector position."
+    )
+    rb_fwd.add_argument("file", help="Joint angles file (1D).")
+    rb_fwd.set_defaults(func=_run_robotics_forward)
+    rb_inv = robotics_sub.add_parser(
+        "inverse", help="Inverse kinematics via damped least squares."
+    )
+    rb_inv.add_argument("file", help="Target position file (1D, length 2).")
+    rb_inv.add_argument(
+        "--seed", default=None,
+        help="Optional seed joint-angles file or inline JSON vector.",
+    )
+    rb_inv.set_defaults(func=_run_robotics_inverse)
+    rb_fuse = robotics_sub.add_parser(
+        "fuse", help="Fuse multiple sensor measurements by inverse-variance weighting."
+    )
+    rb_fuse.add_argument("file", help="2D measurements file (n_sensors x n_dims).")
+    rb_fuse.add_argument(
+        "--variances", default=None,
+        help="Comma-separated variances (one per row). Defaults to 1.0 each.",
+    )
+    rb_fuse.set_defaults(func=_run_robotics_fuse)
+    rb_kal = robotics_sub.add_parser(
+        "kalman", help="Sequential Kalman-style Bayesian update."
+    )
+    rb_kal.add_argument(
+        "prior", help="Prior estimate (inline JSON or file)."
+    )
+    rb_kal.add_argument(
+        "measurement", help="Measurement (inline JSON or file)."
+    )
+    rb_kal.add_argument("--prior-var", type=float, required=True)
+    rb_kal.add_argument("--meas-var", type=float, required=True)
+    rb_kal.set_defaults(func=_run_robotics_kalman)
+    rb_gait = robotics_sub.add_parser(
+        "gait", help="Generate a periodic gait pattern (walk / trot / bound)."
+    )
+    rb_gait.add_argument("--steps", type=int, default=100)
+    rb_gait.add_argument(
+        "--gait", default="walk",
+        choices=["walk", "trot", "bound"],
+    )
+    rb_gait.set_defaults(func=_run_robotics_gait)
+    rb_opt = robotics_sub.add_parser(
+        "optimize", help="Smooth a trajectory by minimizing jerk (gradient descent)."
+    )
+    rb_opt.add_argument("file", help="Trajectory file (2D: n_steps x n_dof).")
+    rb_opt.add_argument("--n-iter", type=int, default=10)
+    rb_opt.set_defaults(func=_run_robotics_optimize)
+    rb_col = robotics_sub.add_parser(
+        "collision", help="Check collision at a single position against obstacles."
+    )
+    rb_col.add_argument(
+        "file",
+        help="Obstacles file (2D: each row is [x, y, ..., radius]).",
+    )
+    rb_col.add_argument(
+        "--position", required=True,
+        help="Body position as comma-separated values (e.g. 0.0,0.0).",
+    )
+    rb_col.add_argument("--radius", type=float, default=0.1, help="Body radius.")
+    rb_col.set_defaults(func=_run_robotics_collision)
+    rb_pcol = robotics_sub.add_parser(
+        "path-collision", help="Check collision along a path."
+    )
+    rb_pcol.add_argument(
+        "obstacles",
+        help="Obstacles file (2D: each row is [x, y, ..., radius]).",
+    )
+    rb_pcol.add_argument("path", help="Path file (2D: n_steps x n_dof).")
+    rb_pcol.add_argument("--radius", type=float, default=0.1, help="Body radius.")
+    rb_pcol.set_defaults(func=_run_robotics_path_collision)
+    rb_mpc = robotics_sub.add_parser(
+        "mpc", help="Pick the next control action via model predictive control."
+    )
+    rb_mpc.add_argument(
+        "current", help="Current state (inline JSON or file).",
+    )
+    rb_mpc.add_argument(
+        "target", help="Target state (inline JSON or file).",
+    )
+    rb_mpc.add_argument(
+        "--obstacles", default=None,
+        help="Optional obstacles file (2D: each row is [x, y, ..., radius]).",
+    )
+    rb_mpc.set_defaults(func=_run_robotics_mpc)
+
     rl_parser = subparsers.add_parser(
         "rl",
         help="Reinforcement learning capabilities (step / train-q / search-mcts).",
@@ -795,7 +1034,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _run_mcp()
 
     if getattr(args, "command", None) in (
-        "emergence", "memory", "planning", "multimodal", "rl", "audio", "graph"
+        "emergence", "memory", "planning", "multimodal", "rl",
+        "audio", "graph", "robotics",
     ):
         # ``func`` is set via ``set_defaults`` on each subparser.
         try:

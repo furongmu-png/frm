@@ -63,6 +63,29 @@ def _ensure_finite(arr: np.ndarray, name: str) -> None:
         raise ValueError(f"{name} must be finite (no NaN or Inf)")
 
 
+def _parse_obstacles(rows: list[list[float]]) -> list[tuple[np.ndarray, float]]:
+    """Convert MCP ``obstacles`` rows to ``(center, radius)`` tuples.
+
+    Each row is ``[center_x, center_y, ..., radius]`` — the LAST element
+    is the obstacle radius, the leading elements form the center
+    coordinates. Returns a list of ``(np.ndarray, float)`` matching the
+    format expected by :meth:`ZeroDataModel.check_collision`.
+    """
+    parsed: list[tuple[np.ndarray, float]] = []
+    for i, row in enumerate(rows):
+        if len(row) < 2:
+            raise ValueError(
+                f"obstacles[{i}] must have >= 2 values (center + radius), got {len(row)}"
+            )
+        center = np.asarray(row[:-1], dtype=float)
+        _ensure_finite(center, f"obstacles[{i}].center")
+        radius = float(row[-1])
+        if not math.isfinite(radius) or radius < 0.0:
+            raise ValueError(f"obstacles[{i}].radius must be finite and >= 0, got {radius}")
+        parsed.append((center, radius))
+    return parsed
+
+
 def _error_to_dict(fn: Callable[..., dict]) -> Callable[..., dict]:
     """Wrap a tool so any exception is surfaced as ``{"error": str}``.
 
@@ -1263,6 +1286,342 @@ class ZeroDataMCPServer:
         return _to_py(self.model.extract_spanning_tree(adj))
 
     # ------------------------------------------------------------------
+    # Phase 7 — Robotics tools.
+    # ------------------------------------------------------------------
+
+    @_error_to_dict
+    def robotics_plan_motion(
+        self, waypoints: list[list[float]], n_steps: int = 100
+    ) -> dict:
+        """Plan a smooth trajectory through waypoints (cubic spline).
+
+        Args:
+            waypoints: 2D array of shape ``(n_waypoints, n_dof)`` with at
+                least 2 rows. 1D input is reshaped to ``(n, 1)``.
+            n_steps: Number of trajectory samples (must be >= 1).
+
+        Returns:
+            Dict with keys ``trajectory``, ``velocities``,
+            ``accelerations`` (each a 2D list of shape
+            ``(n_steps, n_dof)``), ``total_time`` (float).
+
+        Failure mode: returns ``{"error": "robotics_plan_motion: ..."}``.
+        """
+        wp = np.asarray(waypoints, dtype=float)
+        if wp.ndim != 2 or wp.shape[0] < 2:
+            raise ValueError(
+                f"waypoints must be 2D with >= 2 rows, got shape {wp.shape}"
+            )
+        _ensure_finite(wp, "waypoints")
+        if n_steps < 1:
+            raise ValueError(f"n_steps must be >= 1, got {n_steps}")
+        return _to_py(self.model.plan_motion(wp, n_steps=int(n_steps)))
+
+    @_error_to_dict
+    def robotics_forward_kinematics(
+        self, joint_angles: list[float]
+    ) -> dict:
+        """Forward kinematics: joint angles -> end-effector position.
+
+        Computes the planar N-DOF arm end-effector position from
+        ``joint_angles`` (length ``arm_segments``, default 4).
+
+        Args:
+            joint_angles: 1D joint angle vector (must be non-empty).
+
+        Returns:
+            Dict with key ``position`` (list[float] of length 2:
+            ``[x, y]``).
+
+        Failure mode: returns ``{"error": "robotics_forward_kinematics: ..."}``.
+        """
+        arr = np.asarray(joint_angles, dtype=float)
+        if arr.ndim != 1 or arr.size < 1:
+            raise ValueError(
+                f"joint_angles must be 1D with len>=1, got shape {arr.shape}"
+            )
+        _ensure_finite(arr, "joint_angles")
+        pos = self.model.forward_kinematics(arr)
+        return {"position": _to_py(pos)}
+
+    @_error_to_dict
+    def robotics_inverse_kinematics(
+        self,
+        target: list[float],
+        seed: list[float] | None = None,
+    ) -> dict:
+        """Inverse kinematics via damped least squares.
+
+        Args:
+            target: 1D target position (must be length 2; extras are
+                truncated).
+            seed: Optional 1D seed joint angle vector.
+
+        Returns:
+            Dict with keys ``joint_angles`` (list[float]),
+            ``success`` (bool), ``iterations`` (int).
+
+        Failure mode: returns ``{"error": "robotics_inverse_kinematics: ..."}``.
+        """
+        tgt = np.asarray(target, dtype=float)
+        if tgt.ndim != 1 or tgt.size < 2:
+            raise ValueError(
+                f"target must be 1D with len>=2, got shape {tgt.shape}"
+            )
+        _ensure_finite(tgt, "target")
+        seed_arr = None
+        if seed is not None:
+            seed_arr = np.asarray(seed, dtype=float)
+            _ensure_finite(seed_arr, "seed")
+        return _to_py(self.model.inverse_kinematics(tgt, seed=seed_arr))
+
+    @_error_to_dict
+    def robotics_fuse_sensors(
+        self,
+        measurements: list[list[float]],
+        variances: list[float],
+    ) -> dict:
+        """Inverse-variance weighted sensor fusion.
+
+        Args:
+            measurements: List of 1D sensor readings (>= 1).
+            variances: Per-sensor variance (>= 1). Must be same length
+                as ``measurements``, each > 0.
+
+        Returns:
+            Dict with key ``fused`` (list[float] of fused measurements).
+
+        Failure mode: returns ``{"error": "robotics_fuse_sensors: ..."}``.
+        """
+        if not isinstance(measurements, list) or len(measurements) < 1:
+            raise ValueError("measurements must be a list of >= 1 vectors")
+        if not isinstance(variances, list) or len(variances) != len(measurements):
+            raise ValueError(
+                f"variances (len={len(variances) if hasattr(variances, '__len__') else 'N/A'}) "
+                f"must match measurements (len={len(measurements)})"
+            )
+        meas_arrs = []
+        for i, m in enumerate(measurements):
+            arr = np.asarray(m, dtype=float)
+            if arr.ndim != 1:
+                raise ValueError(f"measurements[{i}] must be 1D, got shape {arr.shape}")
+            _ensure_finite(arr, f"measurements[{i}]")
+            meas_arrs.append(arr)
+        for i, v in enumerate(variances):
+            v_f = float(v)
+            if not math.isfinite(v_f) or v_f <= 0.0:
+                raise ValueError(f"variances[{i}] must be finite and > 0, got {v}")
+        fused = self.model.fuse_sensors(meas_arrs, [float(v) for v in variances])
+        return {"fused": _to_py(fused)}
+
+    @_error_to_dict
+    def robotics_update_kalman(
+        self,
+        prior: list[float],
+        prior_var: float,
+        measurement: list[float],
+        meas_var: float,
+    ) -> dict:
+        """Sequential Kalman-style Bayesian update.
+
+        Args:
+            prior: 1D prior estimate (must be non-empty).
+            prior_var: Prior variance (must be > 0).
+            measurement: 1D measurement (must be non-empty).
+            meas_var: Measurement variance (must be > 0).
+
+        Returns:
+            Dict with keys ``estimate`` (list[float]), ``variance`` (float).
+
+        Failure mode: returns ``{"error": "robotics_update_kalman: ..."}``.
+        """
+        prior_arr = np.asarray(prior, dtype=float)
+        meas_arr = np.asarray(measurement, dtype=float)
+        if prior_arr.ndim != 1 or prior_arr.size < 1:
+            raise ValueError(
+                f"prior must be 1D with len>=1, got shape {prior_arr.shape}"
+            )
+        if meas_arr.ndim != 1 or meas_arr.size < 1:
+            raise ValueError(
+                f"measurement must be 1D with len>=1, got shape {meas_arr.shape}"
+            )
+        _ensure_finite(prior_arr, "prior")
+        _ensure_finite(meas_arr, "measurement")
+        pv = float(prior_var)
+        mv = float(meas_var)
+        if not math.isfinite(pv) or pv <= 0.0:
+            raise ValueError(f"prior_var must be finite and > 0, got {pv}")
+        if not math.isfinite(mv) or mv <= 0.0:
+            raise ValueError(f"meas_var must be finite and > 0, got {mv}")
+        return _to_py(self.model.update_kalman(prior_arr, pv, meas_arr, mv))
+
+    @_error_to_dict
+    def robotics_generate_gait(
+        self, n_steps: int = 100, gait_type: str = "walk"
+    ) -> dict:
+        """Generate a periodic gait pattern (walk / trot / bound).
+
+        Args:
+            n_steps: Number of gait samples (must be >= 1).
+            gait_type: One of ``"walk"``, ``"trot"``, ``"bound"``.
+                Unknown values default to ``"walk"``.
+
+        Returns:
+            Dict with keys ``joint_angles`` (2D list shape
+            ``(n_steps, 8)``), ``foot_contacts`` (2D list shape
+            ``(n_steps, 4)``), ``period`` (float).
+
+        Failure mode: returns ``{"error": "robotics_generate_gait: ..."}``.
+        """
+        if n_steps < 1:
+            raise ValueError(f"n_steps must be >= 1, got {n_steps}")
+        if gait_type not in ("walk", "trot", "bound"):
+            raise ValueError(
+                f"gait_type must be 'walk' | 'trot' | 'bound', got {gait_type!r}"
+            )
+        return _to_py(
+            self.model.generate_gait(n_steps=int(n_steps), gait_type=gait_type)
+        )
+
+    @_error_to_dict
+    def robotics_optimize_trajectory(
+        self, trajectory: list[list[float]], n_iter: int = 10
+    ) -> dict:
+        """Smooth a trajectory by minimizing jerk (gradient descent).
+
+        Args:
+            trajectory: 2D trajectory array of shape ``(n_steps, n_dof)``
+                with at least 4 rows (must be >= 4 for 3rd differences).
+            n_iter: Number of optimization iterations (must be >= 1).
+
+        Returns:
+            Dict with keys ``optimized`` (2D list, same shape as input),
+            ``jerk`` (float), ``improvement`` (float in [0, 1]).
+
+        Failure mode: returns ``{"error": "robotics_optimize_trajectory: ..."}``.
+        """
+        traj = np.asarray(trajectory, dtype=float)
+        if traj.ndim != 2 or traj.shape[0] < 4:
+            raise ValueError(
+                f"trajectory must be 2D with >= 4 rows, got shape {traj.shape}"
+            )
+        _ensure_finite(traj, "trajectory")
+        if n_iter < 1:
+            raise ValueError(f"n_iter must be >= 1, got {n_iter}")
+        return _to_py(self.model.optimize_trajectory(traj, n_iter=int(n_iter)))
+
+    @_error_to_dict
+    def robotics_check_collision(
+        self,
+        obstacles: list[list[float]],
+        position: list[float],
+        radius: float = 0.1,
+    ) -> dict:
+        """Check collision at a single position against circular obstacles.
+
+        Args:
+            obstacles: List of obstacle rows, each of the form
+                ``[center_x, center_y, ..., radius]`` — the LAST element
+                is the obstacle radius, the leading elements are the
+                center coordinates. Empty list is allowed (no obstacles).
+            position: 1D body position (must be non-empty).
+            radius: Body radius (must be >= 0).
+
+        Returns:
+            Dict with keys ``collision`` (bool),
+            ``nearest_obstacle`` (int, -1 if no obstacles),
+            ``distance`` (float, signed clearance; negative = penetration).
+
+        Failure mode: returns ``{"error": "robotics_check_collision: ..."}``.
+        """
+        obs = _parse_obstacles(obstacles) if obstacles else []
+        pos = np.asarray(position, dtype=float)
+        if pos.ndim != 1 or pos.size < 1:
+            raise ValueError(
+                f"position must be 1D with len>=1, got shape {pos.shape}"
+            )
+        _ensure_finite(pos, "position")
+        r = float(radius)
+        if not math.isfinite(r) or r < 0.0:
+            raise ValueError(f"radius must be finite and >= 0, got {r}")
+        return _to_py(self.model.check_collision(obs, pos, radius=r))
+
+    @_error_to_dict
+    def robotics_check_path_collision(
+        self,
+        obstacles: list[list[float]],
+        path: list[list[float]],
+        radius: float = 0.1,
+    ) -> dict:
+        """Check collision along a path of body positions.
+
+        Args:
+            obstacles: Same format as ``robotics_check_collision``.
+            path: 2D path array of shape ``(n_steps, n_dof)``.
+            radius: Body radius (must be >= 0).
+
+        Returns:
+            Dict with keys ``collision`` (bool),
+            ``first_collision_step`` (int, -1 if no collision),
+            ``nearest_obstacle`` (int), ``min_clearance`` (float).
+
+        Failure mode: returns ``{"error": "robotics_check_path_collision: ..."}``.
+        """
+        obs = _parse_obstacles(obstacles) if obstacles else []
+        p = np.asarray(path, dtype=float)
+        if p.ndim != 2 or p.shape[0] < 1:
+            raise ValueError(
+                f"path must be 2D with >= 1 row, got shape {p.shape}"
+            )
+        _ensure_finite(p, "path")
+        r = float(radius)
+        if not math.isfinite(r) or r < 0.0:
+            raise ValueError(f"radius must be finite and >= 0, got {r}")
+        return _to_py(self.model.check_path_collision(obs, p, radius=r))
+
+    @_error_to_dict
+    def robotics_control_mpc(
+        self,
+        current_state: list[float],
+        target_state: list[float],
+        obstacles: list[list[float]] | None = None,
+    ) -> dict:
+        """Pick the next control action via model predictive control.
+
+        Evaluates 9 candidate actions (8 directions + zero) over a
+        prediction horizon and picks the action with the lowest predicted
+        cost (tracking error + collision penalty + free-energy surprisal).
+
+        Args:
+            current_state: 1D current state (must be non-empty).
+            target_state: 1D target state (must be non-empty).
+            obstacles: Optional obstacles in the same row format as
+                ``robotics_check_collision``.
+
+        Returns:
+            Dict with keys ``action`` (list[float] of length 2),
+            ``predicted_trajectory`` (2D list), ``cost`` (float).
+
+        Failure mode: returns ``{"error": "robotics_control_mpc: ..."}``.
+        """
+        current = np.asarray(current_state, dtype=float)
+        target = np.asarray(target_state, dtype=float)
+        if current.ndim != 1 or current.size < 1:
+            raise ValueError(
+                f"current_state must be 1D with len>=1, got shape {current.shape}"
+            )
+        if target.ndim != 1 or target.size < 1:
+            raise ValueError(
+                f"target_state must be 1D with len>=1, got shape {target.shape}"
+            )
+        _ensure_finite(current, "current_state")
+        _ensure_finite(target, "target_state")
+        obs = None
+        if obstacles is not None:
+            obs = _parse_obstacles(obstacles)
+        return _to_py(self.model.control_mpc(current, target, obstacles=obs))
+
+    # ------------------------------------------------------------------
     # Registration / public API.
     # ------------------------------------------------------------------
 
@@ -1321,6 +1680,18 @@ class ZeroDataMCPServer:
             "graph_check_isomorphism": self.graph_check_isomorphism,
             "graph_track_dynamic": self.graph_track_dynamic,
             "graph_extract_spanning_tree": self.graph_extract_spanning_tree,
+            # Phase 7 — Robotics (plan_motion / forward / inverse / fuse /
+            # kalman / gait / optimize / collision / path-collision / mpc).
+            "robotics_plan_motion": self.robotics_plan_motion,
+            "robotics_forward_kinematics": self.robotics_forward_kinematics,
+            "robotics_inverse_kinematics": self.robotics_inverse_kinematics,
+            "robotics_fuse_sensors": self.robotics_fuse_sensors,
+            "robotics_update_kalman": self.robotics_update_kalman,
+            "robotics_generate_gait": self.robotics_generate_gait,
+            "robotics_optimize_trajectory": self.robotics_optimize_trajectory,
+            "robotics_check_collision": self.robotics_check_collision,
+            "robotics_check_path_collision": self.robotics_check_path_collision,
+            "robotics_control_mpc": self.robotics_control_mpc,
         }
 
     def list_tools(self) -> list[str]:

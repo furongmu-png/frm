@@ -293,6 +293,36 @@ def _to_jsonable(obj: Any) -> Any:
     return obj
 
 
+def _parse_obstacles(rows: list[list[float]]) -> list[tuple[np.ndarray, float]]:
+    """Convert API ``obstacles`` rows to ``(center, radius)`` tuples.
+
+    Each row is ``[center_x, center_y, ..., radius]`` — the LAST element
+    is the obstacle radius, the leading elements form the center
+    coordinates. Returns a list of ``(np.ndarray, float)`` matching the
+    format expected by :meth:`ZeroDataModel.check_collision`.
+    """
+    parsed: list[tuple[np.ndarray, float]] = []
+    for i, row in enumerate(rows):
+        if len(row) < 2:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"obstacles[{i}] must have >= 2 values "
+                    f"(center + radius), got {len(row)}"
+                ),
+            )
+        center = np.asarray(row[:-1], dtype=float)
+        _ensure_finite(center, f"obstacles[{i}].center")
+        radius = float(row[-1])
+        if not np.isfinite(radius) or radius < 0.0:
+            raise HTTPException(
+                status_code=400,
+                detail=f"obstacles[{i}].radius must be finite and >= 0, got {radius}",
+            )
+        parsed.append((center, radius))
+    return parsed
+
+
 # --------------------------------------------------------------------------- #
 # API key auth dependency (CWE-306)
 # --------------------------------------------------------------------------- #
@@ -715,6 +745,77 @@ class GraphIsomorphismRequest(BaseModel):
 
 class GraphTrackRequest(BaseModel):
     snapshots: list[list[list[float]]] = Field(..., min_length=2, max_length=64)
+
+
+# ------------------------------------------------------------------
+# Phase 7 — Robotics request schemas.
+# ------------------------------------------------------------------
+
+
+class RoboticsMotionRequest(BaseModel):
+    """Plan a smooth trajectory through waypoints (cubic spline)."""
+    waypoints: list[list[float]] = Field(..., min_length=2, max_length=512)
+    n_steps: int = Field(100, ge=1, le=2000)
+
+
+class RoboticsJointAnglesRequest(BaseModel):
+    """Forward / inverse kinematics input."""
+    joint_angles: list[float] = Field(..., min_length=1, max_length=64)
+
+
+class RoboticsInverseKinematicsRequest(BaseModel):
+    target: list[float] = Field(..., min_length=2, max_length=2)
+    seed: list[float] | None = Field(None, min_length=1, max_length=64)
+
+
+class RoboticsFuseRequest(BaseModel):
+    """Inverse-variance weighted fusion of multiple sensor measurements."""
+    measurements: list[list[float]] = Field(..., min_length=1, max_length=64)
+    variances: list[float] = Field(..., min_length=1, max_length=64)
+
+
+class RoboticsKalmanRequest(BaseModel):
+    """Sequential Kalman-style Bayesian update."""
+    prior: list[float] = Field(..., min_length=1, max_length=4096)
+    prior_var: float = Field(..., gt=0.0, le=1e6)
+    measurement: list[float] = Field(..., min_length=1, max_length=4096)
+    meas_var: float = Field(..., gt=0.0, le=1e6)
+
+
+class RoboticsGaitRequest(BaseModel):
+    n_steps: int = Field(100, ge=1, le=2000)
+    gait_type: str = Field("walk", pattern="^(walk|trot|bound)$")
+
+
+class RoboticsOptimizeRequest(BaseModel):
+    trajectory: list[list[float]] = Field(..., min_length=4, max_length=4096)
+    n_iter: int = Field(10, ge=1, le=2000)
+
+
+class RoboticsObstaclesRequest(BaseModel):
+    """Shared schema for collision / MPC endpoints.
+
+    Each obstacle row is ``[center_x, center_y, ..., radius]`` — the LAST
+    element is the obstacle radius and the leading elements form the
+    center coordinates.
+    """
+    obstacles: list[list[float]] = Field(default_factory=list, max_length=128)
+
+
+class RoboticsCollisionRequest(RoboticsObstaclesRequest):
+    position: list[float] = Field(..., min_length=1, max_length=64)
+    radius: float = Field(0.1, ge=0.0, le=10.0)
+
+
+class RoboticsPathCollisionRequest(RoboticsObstaclesRequest):
+    path: list[list[float]] = Field(..., min_length=1, max_length=4096)
+    radius: float = Field(0.1, ge=0.0, le=10.0)
+
+
+class RoboticsMPCRequest(BaseModel):
+    current_state: list[float] = Field(..., min_length=1, max_length=64)
+    target_state: list[float] = Field(..., min_length=1, max_length=64)
+    obstacles: list[list[float]] | None = Field(None, max_length=128)
 
 
 # --------------------------------------------------------------------------- #
@@ -2115,6 +2216,187 @@ def create_app() -> FastAPI:
         model = get_model()
         with model._lock:
             result = model.extract_spanning_tree(adjacency)
+        return _to_jsonable(result)
+
+    # ------------------------------------------------------------------
+    # Phase 7 — Robotics endpoints.
+    # ------------------------------------------------------------------
+    @app.post("/robotics/motion", tags=["robotics"])
+    @_limit("30/minute")
+    async def robotics_motion(  # noqa: ANN202
+        request: Request,
+        req: RoboticsMotionRequest,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Plan a smooth trajectory through waypoints (cubic spline)."""
+        waypoints = np.asarray(req.waypoints, dtype=float)
+        _ensure_finite(waypoints, "waypoints")
+        model = get_model()
+        with model._lock:
+            result = model.plan_motion(waypoints, n_steps=req.n_steps)
+        return _to_jsonable(result)
+
+    @app.post("/robotics/forward", tags=["robotics"])
+    @_limit("30/minute")
+    async def robotics_forward(  # noqa: ANN202
+        request: Request,
+        req: RoboticsJointAnglesRequest,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Forward kinematics: joint angles -> end-effector position."""
+        angles = np.asarray(req.joint_angles, dtype=float)
+        _ensure_finite(angles, "joint_angles")
+        model = get_model()
+        with model._lock:
+            position = model.forward_kinematics(angles)
+        return {"position": _to_jsonable(position)}
+
+    @app.post("/robotics/inverse", tags=["robotics"])
+    @_limit("30/minute")
+    async def robotics_inverse(  # noqa: ANN202
+        request: Request,
+        req: RoboticsInverseKinematicsRequest,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Inverse kinematics via damped least squares."""
+        target = np.asarray(req.target, dtype=float)
+        _ensure_finite(target, "target")
+        seed = None
+        if req.seed is not None:
+            seed = np.asarray(req.seed, dtype=float)
+            _ensure_finite(seed, "seed")
+        model = get_model()
+        with model._lock:
+            result = model.inverse_kinematics(target, seed=seed)
+        return _to_jsonable(result)
+
+    @app.post("/robotics/fuse", tags=["robotics"])
+    @_limit("30/minute")
+    async def robotics_fuse(  # noqa: ANN202
+        request: Request,
+        req: RoboticsFuseRequest,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Inverse-variance weighted sensor fusion."""
+        if len(req.measurements) != len(req.variances):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"measurements ({len(req.measurements)}) and variances "
+                    f"({len(req.variances)}) must have equal length"
+                ),
+            )
+        measurements = [np.asarray(m, dtype=float) for m in req.measurements]
+        for i, m in enumerate(measurements):
+            _ensure_finite(m, f"measurements[{i}]")
+        for i, v in enumerate(req.variances):
+            if not np.isfinite(v) or v <= 0.0:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"variances[{i}] must be finite and > 0, got {v}",
+                )
+        model = get_model()
+        with model._lock:
+            fused = model.fuse_sensors(measurements, list(req.variances))
+        return {"fused": _to_jsonable(fused)}
+
+    @app.post("/robotics/kalman", tags=["robotics"])
+    @_limit("30/minute")
+    async def robotics_kalman(  # noqa: ANN202
+        request: Request,
+        req: RoboticsKalmanRequest,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Sequential Kalman-style Bayesian update."""
+        prior = np.asarray(req.prior, dtype=float)
+        meas = np.asarray(req.measurement, dtype=float)
+        _ensure_finite(prior, "prior")
+        _ensure_finite(meas, "measurement")
+        model = get_model()
+        with model._lock:
+            result = model.update_kalman(
+                prior, req.prior_var, meas, req.meas_var
+            )
+        return _to_jsonable(result)
+
+    @app.post("/robotics/gait", tags=["robotics"])
+    @_limit("30/minute")
+    async def robotics_gait(  # noqa: ANN202
+        request: Request,
+        req: RoboticsGaitRequest,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Generate a periodic gait pattern (walk / trot / bound)."""
+        model = get_model()
+        with model._lock:
+            result = model.generate_gait(n_steps=req.n_steps, gait_type=req.gait_type)
+        return _to_jsonable(result)
+
+    @app.post("/robotics/optimize", tags=["robotics"])
+    @_limit("30/minute")
+    async def robotics_optimize(  # noqa: ANN202
+        request: Request,
+        req: RoboticsOptimizeRequest,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Smooth a trajectory by minimizing jerk (gradient descent)."""
+        trajectory = np.asarray(req.trajectory, dtype=float)
+        _ensure_finite(trajectory, "trajectory")
+        model = get_model()
+        with model._lock:
+            result = model.optimize_trajectory(trajectory, n_iter=req.n_iter)
+        return _to_jsonable(result)
+
+    @app.post("/robotics/collision", tags=["robotics"])
+    @_limit("30/minute")
+    async def robotics_collision(  # noqa: ANN202
+        request: Request,
+        req: RoboticsCollisionRequest,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Check collision at a single position against obstacles."""
+        obstacles = _parse_obstacles(req.obstacles)
+        position = np.asarray(req.position, dtype=float)
+        _ensure_finite(position, "position")
+        model = get_model()
+        with model._lock:
+            result = model.check_collision(obstacles, position, radius=req.radius)
+        return _to_jsonable(result)
+
+    @app.post("/robotics/path-collision", tags=["robotics"])
+    @_limit("30/minute")
+    async def robotics_path_collision(  # noqa: ANN202
+        request: Request,
+        req: RoboticsPathCollisionRequest,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Check collision along a path."""
+        obstacles = _parse_obstacles(req.obstacles)
+        path = np.asarray(req.path, dtype=float)
+        _ensure_finite(path, "path")
+        model = get_model()
+        with model._lock:
+            result = model.check_path_collision(obstacles, path, radius=req.radius)
+        return _to_jsonable(result)
+
+    @app.post("/robotics/mpc", tags=["robotics"])
+    @_limit("30/minute")
+    async def robotics_mpc(  # noqa: ANN202
+        request: Request,
+        req: RoboticsMPCRequest,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Pick the next control action via model predictive control."""
+        current = np.asarray(req.current_state, dtype=float)
+        target = np.asarray(req.target_state, dtype=float)
+        _ensure_finite(current, "current_state")
+        _ensure_finite(target, "target_state")
+        obstacles = None
+        if req.obstacles is not None:
+            obstacles = _parse_obstacles(req.obstacles)
+        model = get_model()
+        with model._lock:
+            result = model.control_mpc(current, target, obstacles=obstacles)
         return _to_jsonable(result)
 
     return app
