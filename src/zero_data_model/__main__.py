@@ -353,6 +353,53 @@ def _run_multimodal_contrastive(args: argparse.Namespace) -> int:
     return _emit_json(result)
 
 
+# ------------------------------------------------------------------ #
+# Phase 7 — Audio CLI handlers.
+# ------------------------------------------------------------------ #
+
+
+def _run_audio_encode(args: argparse.Namespace) -> int:
+    signal = _load_observation(args.file)
+    model = _build_model()
+    result = model.encode_audio(signal, sample_rate=int(args.sample_rate))
+    return _emit_json({"embedding": result})
+
+
+def _run_audio_detect_onsets(args: argparse.Namespace) -> int:
+    signal = _load_observation(args.file)
+    model = _build_model()
+    result = model.detect_onsets(signal, sample_rate=int(args.sample_rate))
+    return _emit_json(result)
+
+
+def _run_audio_detect_pitch(args: argparse.Namespace) -> int:
+    signal = _load_observation(args.file)
+    model = _build_model()
+    result = model.detect_pitch(signal, sample_rate=int(args.sample_rate))
+    return _emit_json(result)
+
+
+def _run_audio_classify(args: argparse.Namespace) -> int:
+    signal = _load_observation(args.file)
+    model = _build_model()
+    result = model.classify_audio(signal, sample_rate=int(args.sample_rate))
+    return _emit_json(result)
+
+
+def _run_audio_segment_speech(args: argparse.Namespace) -> int:
+    signal = _load_observation(args.file)
+    model = _build_model()
+    result = model.segment_speech(signal, sample_rate=int(args.sample_rate))
+    return _emit_json(result)
+
+
+def _run_audio_analyze_music(args: argparse.Namespace) -> int:
+    signal = _load_observation(args.file)
+    model = _build_model()
+    result = model.analyze_music(signal, sample_rate=int(args.sample_rate))
+    return _emit_json(result)
+
+
 def _run_rl_step(args: argparse.Namespace) -> int:
     model = _build_model()
     result = model.step_mdp(int(args.state), int(args.action))
@@ -570,6 +617,43 @@ def _build_parser() -> argparse.ArgumentParser:
     mm_con.add_argument("file_b")
     mm_con.set_defaults(func=_run_multimodal_contrastive)
 
+    # ------------------------------------------------------------------
+    # Phase 7 — Audio subparsers.
+    # ------------------------------------------------------------------
+    audio_parser = subparsers.add_parser(
+        "audio",
+        help="Audio capabilities (encode / onsets / pitch / classify / segment / music).",
+        description="Audio encoder + onset/pitch detection + classifier + VAD + music analyzer.",
+    )
+    audio_sub = audio_parser.add_subparsers(
+        dest="subcommand", required=True, metavar="<subcommand>",
+        help="encode | onsets | pitch | classify | segment | music",
+    )
+    au_enc = audio_sub.add_parser("encode", help="Encode a 1D audio signal into a dim-length vector.")
+    au_enc.add_argument("file", help="Audio signal file (.npz / .npy / .csv / .json).")
+    au_enc.add_argument("--sample-rate", type=int, default=16000)
+    au_enc.set_defaults(func=_run_audio_encode)
+    au_onsets = audio_sub.add_parser("onsets", help="Detect note/onset events via spectral flux.")
+    au_onsets.add_argument("file", help="Audio signal file.")
+    au_onsets.add_argument("--sample-rate", type=int, default=16000)
+    au_onsets.set_defaults(func=_run_audio_detect_onsets)
+    au_pitch = audio_sub.add_parser("pitch", help="Detect fundamental frequency via autocorrelation.")
+    au_pitch.add_argument("file", help="Audio signal file.")
+    au_pitch.add_argument("--sample-rate", type=int, default=16000)
+    au_pitch.set_defaults(func=_run_audio_detect_pitch)
+    au_class = audio_sub.add_parser("classify", help="Classify audio texture (speech/music/noise/silence).")
+    au_class.add_argument("file", help="Audio signal file.")
+    au_class.add_argument("--sample-rate", type=int, default=16000)
+    au_class.set_defaults(func=_run_audio_classify)
+    au_seg = audio_sub.add_parser("segment", help="Segment audio into speech/silence regions via VAD.")
+    au_seg.add_argument("file", help="Audio signal file.")
+    au_seg.add_argument("--sample-rate", type=int, default=16000)
+    au_seg.set_defaults(func=_run_audio_segment_speech)
+    au_music = audio_sub.add_parser("music", help="Analyze music for tempo and beats.")
+    au_music.add_argument("file", help="Audio signal file.")
+    au_music.add_argument("--sample-rate", type=int, default=16000)
+    au_music.set_defaults(func=_run_audio_analyze_music)
+
     rl_parser = subparsers.add_parser(
         "rl",
         help="Reinforcement learning capabilities (step / train-q / search-mcts).",
@@ -606,7 +690,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _run_mcp()
 
     if getattr(args, "command", None) in (
-        "emergence", "memory", "planning", "multimodal", "rl"
+        "emergence", "memory", "planning", "multimodal", "rl", "audio"
     ):
         # ``func`` is set via ``set_defaults`` on each subparser.
         try:

@@ -904,6 +904,174 @@ class ZeroDataMCPServer:
         )
 
     # ------------------------------------------------------------------
+    # Phase 7 — Audio tools.
+    # ------------------------------------------------------------------
+
+    @_error_to_dict
+    def audio_encode(self, signal: list[float], sample_rate: int = 16000) -> dict:
+        """Encode a 1D audio signal into a ``dim``-length L2-normalized vector.
+
+        Args:
+            signal: 1D audio samples (must be non-empty, finite).
+            sample_rate: Samples per second (must be >= 1).
+
+        Returns:
+            Dict with key ``embedding`` (list[float] of length ``dim``).
+
+        Failure mode: returns ``{"error": "audio_encode: ..."}`` on
+        invalid input or internal failure.
+        """
+        arr = np.asarray(signal, dtype=float)
+        if arr.ndim != 1 or arr.size < 1:
+            raise ValueError(
+                f"signal must be 1D with len>=1, got shape {arr.shape}"
+            )
+        _ensure_finite(arr, "signal")
+        if sample_rate < 1:
+            raise ValueError(f"sample_rate must be >= 1, got {sample_rate}")
+        result = self.model.encode_audio(arr, sample_rate=int(sample_rate))
+        return {"embedding": _to_py(result)}
+
+    @_error_to_dict
+    def audio_detect_onsets(
+        self, signal: list[float], sample_rate: int = 16000
+    ) -> dict:
+        """Detect note/onset events via spectral flux.
+
+        Args:
+            signal: 1D audio samples (must be non-empty, finite).
+            sample_rate: Samples per second (must be >= 1).
+
+        Returns:
+            Dict with keys ``onset_frames``, ``onset_times``,
+            ``spectral_flux``, ``mean_flux``.
+
+        Failure mode: returns ``{"error": "audio_detect_onsets: ..."}``.
+        """
+        arr = np.asarray(signal, dtype=float)
+        if arr.ndim != 1 or arr.size < 1:
+            raise ValueError(
+                f"signal must be 1D with len>=1, got shape {arr.shape}"
+            )
+        _ensure_finite(arr, "signal")
+        if sample_rate < 1:
+            raise ValueError(f"sample_rate must be >= 1, got {sample_rate}")
+        return _to_py(
+            self.model.detect_onsets(arr, sample_rate=int(sample_rate))
+        )
+
+    @_error_to_dict
+    def audio_detect_pitch(
+        self, signal: list[float], sample_rate: int = 16000
+    ) -> dict:
+        """Detect fundamental frequency via autocorrelation.
+
+        Args:
+            signal: 1D audio samples (must be non-empty, finite).
+            sample_rate: Samples per second (must be >= 1).
+
+        Returns:
+            Dict with keys ``pitch_hz``, ``confidence``, ``f0_candidates``.
+
+        Failure mode: returns ``{"error": "audio_detect_pitch: ..."}``.
+        """
+        arr = np.asarray(signal, dtype=float)
+        if arr.ndim != 1 or arr.size < 1:
+            raise ValueError(
+                f"signal must be 1D with len>=1, got shape {arr.shape}"
+            )
+        _ensure_finite(arr, "signal")
+        if sample_rate < 1:
+            raise ValueError(f"sample_rate must be >= 1, got {sample_rate}")
+        return _to_py(
+            self.model.detect_pitch(arr, sample_rate=int(sample_rate))
+        )
+
+    @_error_to_dict
+    def audio_classify(
+        self, signal: list[float], sample_rate: int = 16000
+    ) -> dict:
+        """Classify audio texture (speech / music / noise / silence).
+
+        Args:
+            signal: 1D audio samples (must be non-empty, finite).
+            sample_rate: Samples per second (must be >= 1).
+
+        Returns:
+            Dict with keys ``label`` (str), ``confidence`` (float),
+            ``features`` (dict of spectral centroid / ZCR / RMS / flatness).
+
+        Failure mode: returns ``{"error": "audio_classify: ..."}``.
+        """
+        arr = np.asarray(signal, dtype=float)
+        if arr.ndim != 1 or arr.size < 1:
+            raise ValueError(
+                f"signal must be 1D with len>=1, got shape {arr.shape}"
+            )
+        _ensure_finite(arr, "signal")
+        if sample_rate < 1:
+            raise ValueError(f"sample_rate must be >= 1, got {sample_rate}")
+        return _to_py(
+            self.model.classify_audio(arr, sample_rate=int(sample_rate))
+        )
+
+    @_error_to_dict
+    def audio_segment_speech(
+        self, signal: list[float], sample_rate: int = 16000
+    ) -> dict:
+        """Segment audio into speech / silence regions via VAD.
+
+        Args:
+            signal: 1D audio samples (must be non-empty, finite).
+            sample_rate: Samples per second (must be >= 1).
+
+        Returns:
+            Dict with keys ``segments`` (list of {start, end, label}),
+            ``total_duration`` (float), ``speech_ratio`` (float).
+
+        Failure mode: returns ``{"error": "audio_segment_speech: ..."}``.
+        """
+        arr = np.asarray(signal, dtype=float)
+        if arr.ndim != 1 or arr.size < 1:
+            raise ValueError(
+                f"signal must be 1D with len>=1, got shape {arr.shape}"
+            )
+        _ensure_finite(arr, "signal")
+        if sample_rate < 1:
+            raise ValueError(f"sample_rate must be >= 1, got {sample_rate}")
+        return _to_py(
+            self.model.segment_speech(arr, sample_rate=int(sample_rate))
+        )
+
+    @_error_to_dict
+    def audio_analyze_music(
+        self, signal: list[float], sample_rate: int = 16000
+    ) -> dict:
+        """Analyze music for tempo and beats.
+
+        Args:
+            signal: 1D audio samples (must be non-empty, finite).
+            sample_rate: Samples per second (must be >= 1).
+
+        Returns:
+            Dict with keys ``tempo_bpm``, ``beat_frames``,
+            ``beat_times``, ``onset_envelope``.
+
+        Failure mode: returns ``{"error": "audio_analyze_music: ..."}``.
+        """
+        arr = np.asarray(signal, dtype=float)
+        if arr.ndim != 1 or arr.size < 1:
+            raise ValueError(
+                f"signal must be 1D with len>=1, got shape {arr.shape}"
+            )
+        _ensure_finite(arr, "signal")
+        if sample_rate < 1:
+            raise ValueError(f"sample_rate must be >= 1, got {sample_rate}")
+        return _to_py(
+            self.model.analyze_music(arr, sample_rate=int(sample_rate))
+        )
+
+    # ------------------------------------------------------------------
     # Registration / public API.
     # ------------------------------------------------------------------
 
@@ -946,6 +1114,13 @@ class ZeroDataMCPServer:
             "rl_step": self.rl_step,
             "rl_train_q": self.rl_train_q,
             "rl_search_mcts": self.rl_search_mcts,
+            # Phase 7 — Audio (encode / onsets / pitch / classify / segment / music).
+            "audio_encode": self.audio_encode,
+            "audio_detect_onsets": self.audio_detect_onsets,
+            "audio_detect_pitch": self.audio_detect_pitch,
+            "audio_classify": self.audio_classify,
+            "audio_segment_speech": self.audio_segment_speech,
+            "audio_analyze_music": self.audio_analyze_music,
         }
 
     def list_tools(self) -> list[str]:

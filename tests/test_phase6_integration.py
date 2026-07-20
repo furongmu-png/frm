@@ -454,9 +454,9 @@ class TestAPIPhase6:
 
 class TestMCPPhase6:
     def test_total_tool_count(self, mcp_server):
-        """Server should now have 34 tools (16 base + 6 emergence + 12 Phase 6)."""
+        """Server should now have 40 tools (16 base + 6 emergence + 12 Phase 6 + 6 Audio)."""
         tools = mcp_server.list_tools()
-        assert len(tools) == 34
+        assert len(tools) == 40
 
     def test_phase6_tools_registered(self, mcp_server):
         tools = set(mcp_server.list_tools())

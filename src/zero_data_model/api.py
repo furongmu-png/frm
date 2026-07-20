@@ -672,6 +672,21 @@ class RLSearchMCTSRequest(BaseModel):
     max_depth: int = Field(10, ge=1, le=200)
 
 
+# ------------------------------------------------------------------
+# Phase 7 — Audio request schemas.
+# ------------------------------------------------------------------
+
+
+class AudioSignalRequest(BaseModel):
+    """Shared schema for all audio endpoints.
+
+    Accepts a 1D or 2D (multi-channel) signal as a flat list (1D) or
+    list-of-channels (2D). Sample rate must be > 0.
+    """
+    signal: list[float] = Field(..., min_length=1, max_length=200000)
+    sample_rate: int = Field(16000, ge=1, le=192000)
+
+
 # --------------------------------------------------------------------------- #
 # Request tracing middleware (X-Request-ID, structured access log)
 # --------------------------------------------------------------------------- #
@@ -1862,6 +1877,99 @@ def create_app() -> FastAPI:
                 n_simulations=req.n_simulations,
                 max_depth=req.max_depth,
             )
+        return _to_jsonable(result)
+
+    # ------------------------------------------------------------------
+    # Phase 7 — Audio endpoints.
+    # ------------------------------------------------------------------
+    @app.post("/audio/encode", tags=["audio"])
+    @_limit("30/minute")
+    async def audio_encode(  # noqa: ANN202
+        request: Request,
+        req: AudioSignalRequest,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Encode a 1D audio signal into a ``dim``-length L2-normalized vector."""
+        signal = np.asarray(req.signal, dtype=float)
+        _ensure_finite(signal, "signal")
+        model = get_model()
+        with model._lock:
+            embedding = model.encode_audio(signal, sample_rate=req.sample_rate)
+        return {"embedding": _to_jsonable(embedding)}
+
+    @app.post("/audio/onsets", tags=["audio"])
+    @_limit("30/minute")
+    async def audio_onsets(  # noqa: ANN202
+        request: Request,
+        req: AudioSignalRequest,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Detect note/onset events via spectral flux."""
+        signal = np.asarray(req.signal, dtype=float)
+        _ensure_finite(signal, "signal")
+        model = get_model()
+        with model._lock:
+            result = model.detect_onsets(signal, sample_rate=req.sample_rate)
+        return _to_jsonable(result)
+
+    @app.post("/audio/pitch", tags=["audio"])
+    @_limit("30/minute")
+    async def audio_pitch(  # noqa: ANN202
+        request: Request,
+        req: AudioSignalRequest,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Detect fundamental frequency via autocorrelation."""
+        signal = np.asarray(req.signal, dtype=float)
+        _ensure_finite(signal, "signal")
+        model = get_model()
+        with model._lock:
+            result = model.detect_pitch(signal, sample_rate=req.sample_rate)
+        return _to_jsonable(result)
+
+    @app.post("/audio/classify", tags=["audio"])
+    @_limit("30/minute")
+    async def audio_classify(  # noqa: ANN202
+        request: Request,
+        req: AudioSignalRequest,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Classify audio texture (speech / music / noise / silence)."""
+        signal = np.asarray(req.signal, dtype=float)
+        _ensure_finite(signal, "signal")
+        model = get_model()
+        with model._lock:
+            result = model.classify_audio(signal, sample_rate=req.sample_rate)
+        return _to_jsonable(result)
+
+    @app.post("/audio/segment", tags=["audio"])
+    @_limit("30/minute")
+    async def audio_segment(  # noqa: ANN202
+        request: Request,
+        req: AudioSignalRequest,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Segment audio into speech/silence regions via VAD."""
+        signal = np.asarray(req.signal, dtype=float)
+        _ensure_finite(signal, "signal")
+        model = get_model()
+        with model._lock:
+            result = model.segment_speech(signal, sample_rate=req.sample_rate)
+        return _to_jsonable(result)
+
+    @app.post("/audio/music", tags=["audio"])
+    @_limit("30/minute")
+    async def audio_music(  # noqa: ANN202
+        request: Request,
+        req: AudioSignalRequest,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Analyze music for tempo and beats."""
+        signal = np.asarray(req.signal, dtype=float)
+        _ensure_finite(signal, "signal")
+        model = get_model()
+        with model._lock:
+            result = model.analyze_music(signal, sample_rate=req.sample_rate)
         return _to_jsonable(result)
 
     return app
