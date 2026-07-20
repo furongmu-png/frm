@@ -538,6 +538,372 @@ class ZeroDataMCPServer:
         return _to_py(result)
 
     # ------------------------------------------------------------------
+    # Phase 6 — Memory / Planning / Multimodal / RL tools (spec §12).
+    # Inputs are JSON-friendly lists/ints/strings; outputs go through
+    # _to_py. Each tool mirrors a Phase 6 API endpoint and CLI handler.
+    # ------------------------------------------------------------------
+
+    @_error_to_dict
+    def memory_encode(
+        self, observation: list[float], label: str | int | None = None
+    ) -> dict:
+        """Encode an observation into the episodic memory store.
+
+        Args:
+            observation: 1D feature vector (must be non-empty). Non-1D
+                input raises ValueError.
+            label: Optional label (string or int) tagging the memory.
+
+        Returns:
+            Dict with keys ``id`` (int), ``label``, ``strength`` (float),
+            ``timestamp`` (int), ``size`` (int = ``len(observation)``).
+
+        Failure mode: returns ``{"error": "memory_encode: ..."}`` on
+        invalid input or internal failure.
+        """
+        arr = np.asarray(observation, dtype=float)
+        if arr.ndim != 1 or arr.shape[0] < 1:
+            raise ValueError(
+                f"observation must be 1D with len>=1, got shape {arr.shape}"
+            )
+        _ensure_finite(arr, "observation")
+        result = self.model.encode_memory(arr, label=label)
+        return _to_py(result)
+
+    @_error_to_dict
+    def memory_retrieve(
+        self, query: list[float], top_k: int = 5
+    ) -> dict:
+        """Retrieve the top-k most similar episodic memories.
+
+        Args:
+            query: 1D query vector. Non-1D input raises ValueError.
+            top_k: Number of nearest neighbors to return (must be >= 1).
+
+        Returns:
+            Dict with keys ``matches`` (list of dicts with ``id``,
+            ``label``, ``similarity``, ``observation``), ``count`` (int).
+
+        Failure mode: returns ``{"error": "memory_retrieve: ..."}`` on
+        invalid input or internal failure.
+        """
+        arr = np.asarray(query, dtype=float)
+        if arr.ndim != 1 or arr.shape[0] < 1:
+            raise ValueError(
+                f"query must be 1D with len>=1, got shape {arr.shape}"
+            )
+        _ensure_finite(arr, "query")
+        result = self.model.retrieve_memory(arr, top_k=int(top_k))
+        return _to_py(result)
+
+    @_error_to_dict
+    def memory_consolidate(self) -> dict:
+        """Promote high-weight working-memory items into episodic memory.
+
+        Takes no arguments. Returns the consolidation summary dict
+        produced by :class:`MemoryConsolidator`.
+
+        Failure mode: returns ``{"error": "memory_consolidate: ..."}``
+        on internal failure.
+        """
+        result = self.model.consolidate_memory()
+        return _to_py(result)
+
+    @_error_to_dict
+    def planning_trajectory(
+        self,
+        start_state: list[float],
+        goal_state: list[float],
+        n_steps: int = 32,
+        obstacles: list[list[float]] | None = None,
+        margin: float | None = None,
+    ) -> dict:
+        """Plan a damped least-action trajectory with per-step actions.
+
+        Mirrors the emergence ``generate_trajectory`` tool but routes
+        through the Phase 6 ``TrajectoryPlanner`` (which emits per-step
+        actions suitable for downstream RL/control).
+
+        Args:
+            start_state, goal_state: 1D boundary vectors of equal length.
+                Mismatched dimensions raise ValueError.
+            n_steps: Number of interior steps (must be >= 0).
+            obstacles: Optional list of obstacle centers, each of the
+                same dimensionality as ``start_state``.
+            margin: Optional safety distance around obstacles.
+
+        Returns:
+            Dict with keys ``trajectory``, ``actions``, ``converged``,
+            ``iterations``, plus ``obstacle_violations`` when obstacles
+            are provided.
+
+        Failure mode: returns ``{"error": "planning_trajectory: ..."}``
+        on invalid input or internal failure.
+        """
+        start = np.asarray(start_state, dtype=float)
+        end = np.asarray(goal_state, dtype=float)
+        if start.shape != end.shape:
+            raise ValueError(
+                f"start_state shape {start.shape} != goal_state shape {end.shape}"
+            )
+        _ensure_finite(start, "start_state")
+        _ensure_finite(end, "goal_state")
+        obs_arr: np.ndarray | None = None
+        if obstacles is not None:
+            obs_arr = np.asarray(obstacles, dtype=float)
+            _ensure_finite(obs_arr, "obstacles")
+        result = self.model.plan_trajectory(
+            start,
+            end,
+            obstacles=obs_arr,
+            n_steps=int(n_steps),
+            margin=margin,
+        )
+        return _to_py(result)
+
+    @_error_to_dict
+    def planning_decompose(
+        self, goal: str, max_depth: int | None = None
+    ) -> dict:
+        """Decompose an abstract goal into an AND/OR tree of sub-goals.
+
+        Args:
+            goal: A short goal description string (must be non-empty).
+            max_depth: Optional recursion depth cap (must be >= 1 when set).
+
+        Returns:
+            Dict with keys ``tree`` (nested dict), ``n_nodes`` (int),
+            ``depth`` (int).
+
+        Failure mode: returns ``{"error": "planning_decompose: ..."}``
+        on invalid input or internal failure.
+        """
+        if not isinstance(goal, str) or not goal.strip():
+            raise ValueError("goal must be a non-empty string")
+        result = self.model.decompose_goal(goal, max_depth=max_depth)
+        return _to_py(result)
+
+    @_error_to_dict
+    def planning_sequence(self, adjacency: list[list[int]]) -> dict:
+        """Topologically sort a DAG of actions with greedy cycle breaking.
+
+        Args:
+            adjacency: Square 2D adjacency matrix (list of lists of
+                ``0``/``1``). Must be at least 1x1.
+
+        Returns:
+            Dict with keys ``order`` (list[int]), ``cycles_broken``
+            (int), ``valid`` (bool).
+
+        Failure mode: returns ``{"error": "planning_sequence: ..."}``
+        on invalid input or internal failure.
+        """
+        arr = np.asarray(adjacency, dtype=int)
+        if arr.ndim != 2 or arr.shape[0] != arr.shape[1] or arr.shape[0] < 1:
+            raise ValueError(
+                f"adjacency must be square 2D, got shape {arr.shape}"
+            )
+        result = self.model.sequence_actions(arr)
+        return _to_py(result)
+
+    @_error_to_dict
+    def multimodal_align(
+        self,
+        observations_a: list[list[float]],
+        observations_b: list[list[float]],
+    ) -> dict:
+        """Fit CCA on paired observations across two modalities.
+
+        Args:
+            observations_a, observations_b: 2D arrays of shape
+                ``(n_samples, dim_a)`` and ``(n_samples, dim_b)``. Both
+                must have at least 2 rows and 2 columns. The row counts
+                must match (CCA is supervised on the sample pairing).
+
+        Returns:
+            Dict with keys ``correlations`` (list[float]), ``n_components``
+            (int), ``mean_correlation`` (float in [0, 1]).
+
+        Failure mode: returns ``{"error": "multimodal_align: ..."}`` on
+        invalid input or internal failure.
+        """
+        a = np.asarray(observations_a, dtype=float)
+        b = np.asarray(observations_b, dtype=float)
+        if a.ndim != 2 or a.shape[0] < 2 or a.shape[1] < 2:
+            raise ValueError(
+                f"observations_a must be 2D with shape (n>=2, d>=2), got {a.shape}"
+            )
+        if b.ndim != 2 or b.shape[0] < 2 or b.shape[1] < 2:
+            raise ValueError(
+                f"observations_b must be 2D with shape (n>=2, d>=2), got {b.shape}"
+            )
+        if a.shape[0] != b.shape[0]:
+            raise ValueError(
+                f"row count mismatch: a={a.shape[0]} vs b={b.shape[0]}"
+            )
+        _ensure_finite(a, "observations_a")
+        _ensure_finite(b, "observations_b")
+        return _to_py(self.model.fit_cross_modal(a, b))
+
+    @_error_to_dict
+    def multimodal_fuse(
+        self,
+        embeddings: list[list[float]],
+        strategy: str | None = None,
+    ) -> dict:
+        """Fuse multiple modality embeddings via mean / concat / weighted.
+
+        Args:
+            embeddings: List of 1D embedding vectors (at least 2). All
+                vectors must have the same length (mean/weighted modes)
+                — concat mode accepts variable lengths.
+            strategy: ``'mean'`` | ``'concat'`` | ``'weighted'``
+                (default: rules-based).
+
+        Returns:
+            Dict with keys ``fused`` (list[float]), ``strategy`` (str),
+            ``n_inputs`` (int).
+
+        Failure mode: returns ``{"error": "multimodal_fuse: ..."}`` on
+        invalid input or internal failure.
+        """
+        if not isinstance(embeddings, list) or len(embeddings) < 2:
+            raise ValueError("embeddings must be a list of >= 2 vectors")
+        arrs = [np.asarray(e, dtype=float) for e in embeddings]
+        for i, e in enumerate(arrs):
+            if e.ndim != 1:
+                raise ValueError(
+                    f"embeddings[{i}] must be 1D, got shape {e.shape}"
+                )
+            _ensure_finite(e, f"embeddings[{i}]")
+        return _to_py(self.model.fuse_modalities(arrs, strategy=strategy))
+
+    @_error_to_dict
+    def multimodal_contrastive(
+        self,
+        batch_a: list[list[float]],
+        batch_b: list[list[float]],
+    ) -> dict:
+        """InfoNCE contrastive alignment loss between paired batches.
+
+        Args:
+            batch_a, batch_b: 2D arrays of shape ``(n_samples, dim)``.
+                Must have at least 2 rows and matching shapes.
+
+        Returns:
+            Dict with keys ``loss`` (float), ``accuracy`` (float in
+            [0, 1]), ``similarity_matrix`` (list[list[float]]).
+
+        Failure mode: returns ``{"error": "multimodal_contrastive: ..."}`
+        on invalid input or internal failure.
+        """
+        a = np.asarray(batch_a, dtype=float)
+        b = np.asarray(batch_b, dtype=float)
+        if a.ndim != 2 or a.shape[0] < 2:
+            raise ValueError(
+                f"batch_a must be 2D with n>=2 rows, got {a.shape}"
+            )
+        if b.shape != a.shape:
+            raise ValueError(
+                f"batch shape mismatch: a={a.shape} vs b={b.shape}"
+            )
+        _ensure_finite(a, "batch_a")
+        _ensure_finite(b, "batch_b")
+        return _to_py(self.model.contrastive_loss(a, b))
+
+    @_error_to_dict
+    def rl_step(self, state: int, action: int) -> dict:
+        """Take one step in the synthetic MDP.
+
+        Args:
+            state: Source state index (must be >= 0).
+            action: Action index (must be >= 0).
+
+        Returns:
+            Dict with keys ``next_state`` (int), ``reward`` (float),
+            ``done`` (bool).
+
+        Failure mode: returns ``{"error": "rl_step: ..."}`` on invalid
+        input or internal failure.
+        """
+        s = int(state)
+        a = int(action)
+        if s < 0:
+            raise ValueError(f"state must be >= 0, got {s}")
+        if a < 0:
+            raise ValueError(f"action must be >= 0, got {a}")
+        return _to_py(self.model.step_mdp(s, a))
+
+    @_error_to_dict
+    def rl_train_q(
+        self,
+        n_episodes: int = 100,
+        max_steps_per_episode: int = 100,
+    ) -> dict:
+        """Full tabular Q-learning training loop on the synthetic MDP.
+
+        Args:
+            n_episodes: Number of training episodes (must be >= 1).
+            max_steps_per_episode: Per-episode step cap (must be >= 1).
+
+        Returns:
+            Dict with keys ``episode_rewards`` (list[float]),
+            ``final_policy`` (list[int]), ``final_value`` (list[float]),
+            ``mean_reward`` (float).
+
+        Failure mode: returns ``{"error": "rl_train_q: ..."}`` on
+        invalid input or internal failure.
+        """
+        if n_episodes < 1:
+            raise ValueError(f"n_episodes must be >= 1, got {n_episodes}")
+        if max_steps_per_episode < 1:
+            raise ValueError(
+                f"max_steps_per_episode must be >= 1, got {max_steps_per_episode}"
+            )
+        return _to_py(
+            self.model.train_q_learner(
+                n_episodes=int(n_episodes),
+                max_steps_per_episode=int(max_steps_per_episode),
+            )
+        )
+
+    @_error_to_dict
+    def rl_search_mcts(
+        self,
+        root_state: int,
+        n_simulations: int = 50,
+        max_depth: int = 10,
+    ) -> dict:
+        """UCT Monte-Carlo Tree Search over the known synthetic MDP.
+
+        Args:
+            root_state: MDP state index to search from (must be >= 0).
+            n_simulations: Number of MCTS rollouts (must be >= 1).
+            max_depth: Maximum tree depth (must be >= 1).
+
+        Returns:
+            Dict with keys ``best_action`` (int), ``visits`` (int),
+            ``value`` (float), ``tree_size`` (int).
+
+        Failure mode: returns ``{"error": "rl_search_mcts: ..."}`` on
+        invalid input or internal failure.
+        """
+        s = int(root_state)
+        if s < 0:
+            raise ValueError(f"root_state must be >= 0, got {s}")
+        if n_simulations < 1:
+            raise ValueError(f"n_simulations must be >= 1, got {n_simulations}")
+        if max_depth < 1:
+            raise ValueError(f"max_depth must be >= 1, got {max_depth}")
+        return _to_py(
+            self.model.search_rl_mcts(
+                s,
+                n_simulations=int(n_simulations),
+                max_depth=int(max_depth),
+            )
+        )
+
+    # ------------------------------------------------------------------
     # Registration / public API.
     # ------------------------------------------------------------------
 
@@ -567,6 +933,19 @@ class ZeroDataMCPServer:
             "sample_posterior": self.sample_posterior,
             "recall_memory": self.recall_memory,
             "emergence_cycle": self.emergence_cycle,
+            # Phase 6 — Memory / Planning / Multimodal / RL (spec §12).
+            "memory_encode": self.memory_encode,
+            "memory_retrieve": self.memory_retrieve,
+            "memory_consolidate": self.memory_consolidate,
+            "planning_trajectory": self.planning_trajectory,
+            "planning_decompose": self.planning_decompose,
+            "planning_sequence": self.planning_sequence,
+            "multimodal_align": self.multimodal_align,
+            "multimodal_fuse": self.multimodal_fuse,
+            "multimodal_contrastive": self.multimodal_contrastive,
+            "rl_step": self.rl_step,
+            "rl_train_q": self.rl_train_q,
+            "rl_search_mcts": self.rl_search_mcts,
         }
 
     def list_tools(self) -> list[str]:

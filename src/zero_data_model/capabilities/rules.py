@@ -335,3 +335,108 @@ class CausalRules(DomainRules):
             "pomdp_horizon": self.pomdp_horizon,
             "causal_significance": self.causal_significance,
         }
+
+
+# ----------------------------------------------------------------------
+# Phase 6 capabilities (v1): Memory / Planning / Multimodal / RL
+# ----------------------------------------------------------------------
+
+
+@dataclass
+class MemoryRules(DomainRules):
+    """Memory priors: capacity, decay, similarity, consolidation."""
+
+    memory_capacity: int = 128
+    memory_decay: float = 0.95
+    memory_similarity_threshold: float = 0.7
+    memory_top_k: int = 5
+    memory_consolidation_weight: float = 0.8
+    memory_spreading_depth: int = 2
+    memory_ebbinghaus_S: float = 1.0
+    memory_hierarchy_consolidation_times: tuple = (60, 3600)
+
+    def __post_init__(self):
+        super().__init__()
+        self.rules = {
+            "memory_capacity": self.memory_capacity,
+            "memory_decay": self.memory_decay,
+            "memory_similarity_threshold": self.memory_similarity_threshold,
+            "memory_top_k": self.memory_top_k,
+            "memory_consolidation_weight": self.memory_consolidation_weight,
+            "memory_spreading_depth": self.memory_spreading_depth,
+            "memory_ebbinghaus_S": self.memory_ebbinghaus_S,
+            "memory_hierarchy_consolidation_times": self.memory_hierarchy_consolidation_times,
+        }
+
+
+@dataclass
+class PlanningRules(DomainRules):
+    """Planning priors: horizon, depth, MCTS, goal tolerance."""
+
+    planning_horizon: int = 32
+    planning_max_depth: int = 5
+    planning_mcts_simulations: int = 100
+    planning_mcts_ucb_c: float = 1.414
+    planning_goal_tolerance: float = 1e-3
+    planning_operator_set: tuple = ("move", "rotate", "grasp", "release")
+
+    def __post_init__(self):
+        super().__init__()
+        self.rules = {
+            "planning_horizon": self.planning_horizon,
+            "planning_max_depth": self.planning_max_depth,
+            "planning_mcts_simulations": self.planning_mcts_simulations,
+            "planning_mcts_ucb_c": self.planning_mcts_ucb_c,
+            "planning_goal_tolerance": self.planning_goal_tolerance,
+            "planning_operator_set": self.planning_operator_set,
+        }
+
+
+@dataclass
+class MultimodalRules(DomainRules):
+    """Multimodal priors: shared dim, alignment method, fusion strategy."""
+
+    multimodal_shared_dim: int = 32
+    multimodal_alignment_method: str = "cca"
+    multimodal_fusion_strategy: str = "mean"
+    multimodal_fusion_weights: tuple = (0.5, 0.5)
+    multimodal_attention_heads: int = 4
+    multimodal_contrastive_temperature: float = 0.07
+
+    def __post_init__(self):
+        super().__init__()
+        self.rules = {
+            "multimodal_shared_dim": self.multimodal_shared_dim,
+            "multimodal_alignment_method": self.multimodal_alignment_method,
+            "multimodal_fusion_strategy": self.multimodal_fusion_strategy,
+            "multimodal_fusion_weights": self.multimodal_fusion_weights,
+            "multimodal_attention_heads": self.multimodal_attention_heads,
+            "multimodal_contrastive_temperature": self.multimodal_contrastive_temperature,
+        }
+
+
+@dataclass
+class RLRules(DomainRules):
+    """RL priors: gamma, alpha, epsilon, MCTS, posterior burn-in."""
+
+    rl_gamma: float = 0.95
+    rl_alpha: float = 0.1
+    rl_epsilon: float = 0.1
+    rl_n_states: int = 16
+    rl_n_actions: int = 4
+    rl_dyna_planning_steps: int = 10
+    rl_mcts_simulations: int = 100
+    rl_posterior_burn_in: int = 50
+
+    def __post_init__(self):
+        super().__init__()
+        self.rules = {
+            "rl_gamma": self.rl_gamma,
+            "rl_alpha": self.rl_alpha,
+            "rl_epsilon": self.rl_epsilon,
+            "rl_n_states": self.rl_n_states,
+            "rl_n_actions": self.rl_n_actions,
+            "rl_dyna_planning_steps": self.rl_dyna_planning_steps,
+            "rl_mcts_simulations": self.rl_mcts_simulations,
+            "rl_posterior_burn_in": self.rl_posterior_burn_in,
+        }

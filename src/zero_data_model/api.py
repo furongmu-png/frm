@@ -611,6 +611,68 @@ class EmergenceCycleRequest(BaseModel):
 
 
 # --------------------------------------------------------------------------- #
+# Phase 6 — Memory / Planning / Multimodal / RL request schemas.
+# --------------------------------------------------------------------------- #
+
+class MemoryEncodeRequest(BaseModel):
+    observation: list[float] = Field(..., min_length=1, max_length=4096)
+    label: str | int | None = None
+
+
+class MemoryRetrieveRequest(BaseModel):
+    query: list[float] = Field(..., min_length=1, max_length=4096)
+    top_k: int = Field(5, ge=1, le=100)
+
+
+class PlanningTrajectoryRequest(BaseModel):
+    start_state: list[float] = Field(..., min_length=1, max_length=4096)
+    goal_state: list[float] = Field(..., min_length=1, max_length=4096)
+    n_steps: int = Field(32, ge=0, le=1000)
+    obstacles: list[list[float]] | None = Field(None, max_length=200)
+    margin: float | None = Field(None, ge=1e-9, le=10.0)
+
+
+class PlanningDecomposeRequest(BaseModel):
+    goal: str = Field(..., min_length=1, max_length=256)
+    max_depth: int | None = Field(None, ge=1, le=20)
+
+
+class PlanningSequenceRequest(BaseModel):
+    adjacency: list[list[int]] = Field(..., min_length=1, max_length=200)
+
+
+class MultimodalAlignRequest(BaseModel):
+    observations_a: list[list[float]] = Field(..., min_length=2, max_length=1000)
+    observations_b: list[list[float]] = Field(..., min_length=2, max_length=1000)
+
+
+class MultimodalFuseRequest(BaseModel):
+    embeddings: list[list[float]] = Field(..., min_length=2, max_length=20)
+    strategy: str | None = Field(None, pattern="^(mean|concat|weighted)$")
+
+
+class MultimodalContrastiveRequest(BaseModel):
+    batch_a: list[list[float]] = Field(..., min_length=2, max_length=256)
+    batch_b: list[list[float]] = Field(..., min_length=2, max_length=256)
+
+
+class RLStepRequest(BaseModel):
+    state: int = Field(..., ge=0, le=4096)
+    action: int = Field(..., ge=0, le=4096)
+
+
+class RLTrainQRequest(BaseModel):
+    n_episodes: int = Field(50, ge=1, le=2000)
+    max_steps_per_episode: int = Field(50, ge=1, le=1000)
+
+
+class RLSearchMCTSRequest(BaseModel):
+    root_state: int = Field(..., ge=0, le=4096)
+    n_simulations: int = Field(50, ge=1, le=2000)
+    max_depth: int = Field(10, ge=1, le=200)
+
+
+# --------------------------------------------------------------------------- #
 # Request tracing middleware (X-Request-ID, structured access log)
 # --------------------------------------------------------------------------- #
 
@@ -1578,6 +1640,228 @@ def create_app() -> FastAPI:
         model = get_model()
         with model._lock:
             result = model.emergence_cycle(arr)
+        return _to_jsonable(result)
+
+    # ------------------------------------------------------------------ #
+    # Phase 6 — Memory / Planning / Multimodal / RL endpoints.
+    # ------------------------------------------------------------------ #
+    @app.post("/memory/encode", tags=["memory"])
+    @_limit("30/minute")
+    async def memory_encode(  # noqa: ANN202
+        request: Request,
+        req: MemoryEncodeRequest,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Encode an observation into the episodic memory store."""
+        obs = np.asarray(req.observation, dtype=float)
+        _ensure_finite(obs, "observation")
+        model = get_model()
+        with model._lock:
+            result = model.encode_memory(obs, label=req.label)
+        return _to_jsonable(result)
+
+    @app.post("/memory/retrieve", tags=["memory"])
+    @_limit("30/minute")
+    async def memory_retrieve(  # noqa: ANN202
+        request: Request,
+        req: MemoryRetrieveRequest,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Retrieve top-k similar episodic memories."""
+        query = np.asarray(req.query, dtype=float)
+        _ensure_finite(query, "query")
+        model = get_model()
+        with model._lock:
+            result = model.retrieve_memory(query, top_k=req.top_k)
+        return _to_jsonable(result)
+
+    @app.post("/memory/consolidate", tags=["memory"])
+    @_limit("10/minute")
+    async def memory_consolidate(  # noqa: ANN202
+        request: Request,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Promote high-weight working-memory items into episodic memory."""
+        model = get_model()
+        with model._lock:
+            result = model.consolidate_memory()
+        return _to_jsonable(result)
+
+    @app.post("/planning/trajectory", tags=["planning"])
+    @_limit("30/minute")
+    async def planning_trajectory(  # noqa: ANN202
+        request: Request,
+        req: PlanningTrajectoryRequest,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Plan a damped least-action trajectory with per-step actions."""
+        start = np.asarray(req.start_state, dtype=float)
+        goal = np.asarray(req.goal_state, dtype=float)
+        _ensure_finite(start, "start_state")
+        _ensure_finite(goal, "goal_state")
+        if start.shape != goal.shape:
+            raise HTTPException(
+                status_code=400,
+                detail="start_state and goal_state must have the same shape",
+            )
+        obstacles = None
+        if req.obstacles is not None:
+            obstacles = np.asarray(req.obstacles, dtype=float)
+            _ensure_finite(obstacles, "obstacles")
+            if obstacles.ndim != 2 or obstacles.shape[1] != start.shape[0]:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "obstacles must be 2D with shape (K, dim) where dim "
+                        f"matches start_state; got {obstacles.shape}"
+                    ),
+                )
+        model = get_model()
+        with model._lock:
+            result = model.plan_trajectory(
+                start, goal, obstacles=obstacles, n_steps=req.n_steps,
+                margin=req.margin,
+            )
+        return _to_jsonable(result)
+
+    @app.post("/planning/decompose", tags=["planning"])
+    @_limit("30/minute")
+    async def planning_decompose(  # noqa: ANN202
+        request: Request,
+        req: PlanningDecomposeRequest,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Decompose a goal into an AND/OR tree of atomic actions."""
+        model = get_model()
+        with model._lock:
+            result = model.decompose_goal(req.goal, max_depth=req.max_depth)
+        return _to_jsonable(result)
+
+    @app.post("/planning/sequence", tags=["planning"])
+    @_limit("30/minute")
+    async def planning_sequence(  # noqa: ANN202
+        request: Request,
+        req: PlanningSequenceRequest,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Topologically sort a DAG of actions."""
+        adj = np.asarray(req.adjacency, dtype=int)
+        _ensure_finite(adj.astype(float), "adjacency")
+        if adj.ndim != 2 or adj.shape[0] != adj.shape[1]:
+            raise HTTPException(
+                status_code=400,
+                detail=f"adjacency must be square 2D, got {adj.shape}",
+            )
+        model = get_model()
+        with model._lock:
+            result = model.sequence_actions(adj)
+        return _to_jsonable(result)
+
+    @app.post("/multimodal/align", tags=["multimodal"])
+    @_limit("30/minute")
+    async def multimodal_align(  # noqa: ANN202
+        request: Request,
+        req: MultimodalAlignRequest,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Fit CCA + project the first sample of modality A into shared space."""
+        a = np.asarray(req.observations_a, dtype=float)
+        b = np.asarray(req.observations_b, dtype=float)
+        _ensure_finite(a, "observations_a")
+        _ensure_finite(b, "observations_b")
+        if a.shape[0] != b.shape[0]:
+            raise HTTPException(
+                status_code=400,
+                detail="observations_a and observations_b must have the same n_samples",
+            )
+        model = get_model()
+        with model._lock:
+            fit = model.fit_cross_modal(a, b)
+            aligned = model.align_cross_modal(a[0], source="a")
+        return _to_jsonable({"fit": fit, "aligned": aligned})
+
+    @app.post("/multimodal/fuse", tags=["multimodal"])
+    @_limit("30/minute")
+    async def multimodal_fuse(  # noqa: ANN202
+        request: Request,
+        req: MultimodalFuseRequest,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Fuse multiple modality embeddings into a single vector."""
+        embeddings = [np.asarray(e, dtype=float) for e in req.embeddings]
+        for i, e in enumerate(embeddings):
+            _ensure_finite(e, f"embeddings[{i}]")
+        model = get_model()
+        with model._lock:
+            result = model.fuse_modalities(embeddings, strategy=req.strategy)
+        return _to_jsonable(result)
+
+    @app.post("/multimodal/contrastive", tags=["multimodal"])
+    @_limit("30/minute")
+    async def multimodal_contrastive(  # noqa: ANN202
+        request: Request,
+        req: MultimodalContrastiveRequest,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """InfoNCE contrastive alignment loss between paired batches."""
+        a = np.asarray(req.batch_a, dtype=float)
+        b = np.asarray(req.batch_b, dtype=float)
+        _ensure_finite(a, "batch_a")
+        _ensure_finite(b, "batch_b")
+        if a.shape != b.shape:
+            raise HTTPException(
+                status_code=400,
+                detail="batch_a and batch_b must have the same shape",
+            )
+        model = get_model()
+        with model._lock:
+            result = model.contrastive_loss(a, b)
+        return _to_jsonable(result)
+
+    @app.post("/rl/step", tags=["rl"])
+    @_limit("60/minute")
+    async def rl_step(  # noqa: ANN202
+        request: Request,
+        req: RLStepRequest,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Take one step in the synthetic MDP."""
+        model = get_model()
+        with model._lock:
+            result = model.step_mdp(req.state, req.action)
+        return _to_jsonable(result)
+
+    @app.post("/rl/train-q", tags=["rl"])
+    @_limit("5/minute")  # expensive — training loop
+    async def rl_train_q(  # noqa: ANN202
+        request: Request,
+        req: RLTrainQRequest,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Full tabular Q-learning training loop."""
+        model = get_model()
+        with model._lock:
+            result = model.train_q_learner(
+                n_episodes=req.n_episodes,
+                max_steps_per_episode=req.max_steps_per_episode,
+            )
+        return _to_jsonable(result)
+
+    @app.post("/rl/search-mcts", tags=["rl"])
+    @_limit("10/minute")
+    async def rl_search_mcts(  # noqa: ANN202
+        request: Request,
+        req: RLSearchMCTSRequest,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """UCT MCTS over the synthetic MDP."""
+        model = get_model()
+        with model._lock:
+            result = model.search_rl_mcts(
+                req.root_state,
+                n_simulations=req.n_simulations,
+                max_depth=req.max_depth,
+            )
         return _to_jsonable(result)
 
     return app

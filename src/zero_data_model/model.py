@@ -45,6 +45,52 @@ from .capabilities.causal_advanced import (
     InterventionAnalyzer,
     POMDPApproximator,
 )
+from .capabilities.memory import (
+    ContextMemory,
+    EpisodicMemory,
+    MemoryConsolidator,
+    WorkingMemory,
+)
+from .capabilities.memory_advanced import (
+    ForgetfulMemory,
+    HierarchicalMemory,
+    MemoryIndexer,
+    SpreadingActivationMemory,
+)
+from .capabilities.planning import (
+    ActionSequencer,
+    GoalDecomposer,
+    HierarchicalPlanner,
+    TrajectoryPlanner,
+)
+from .capabilities.planning_advanced import (
+    ContingencyPlanner,
+    MonteCarloTreePlanner,
+    PolicyGradientPlanner,
+    SymbolicPlanner,
+)
+from .capabilities.multimodal import (
+    CrossModalAligner,
+    ModalityEncoder,
+    ModalityFuser,
+    SharedLatentSpace,
+)
+from .capabilities.multimodal_advanced import (
+    AttentionBasedFuser,
+    ContrastiveAligner,
+    MultimodalRetriever,
+)
+from .capabilities.rl import (
+    PolicyOptimizer,
+    QLearner,
+    SyntheticMDP,
+    ValueFunction,
+)
+from .capabilities.rl_advanced import (
+    DynaQ,
+    MonteCarloTreeSearch,
+    PosteriorSampling,
+)
 from .capabilities.code import (
     ASTAnalyzer,
     CodeEncoder,
@@ -101,7 +147,11 @@ from .capabilities.rules import (
     CausalRules,
     CodeRules,
     GraphRules,
+    MemoryRules,
+    MultimodalRules,
     NLPRules,
+    PlanningRules,
+    RLRules,
     ReasoningRules,
     RoboticsRules,
     TimeRules,
@@ -445,6 +495,154 @@ class ZeroDataModel:
             dim=dim,
             active_inference=self.active_inference,
             rules=self.causal_rules,
+        )
+        # ------------------------------------------------------------------
+        # Phase 6 capabilities: Memory / Planning / Multimodal / RL.
+        # Reuse the emergence engine's chaotic memory, causal engine,
+        # differential generator, and HMC sampler where applicable; reuse
+        # the existing nlp sentence encoder for ContextMemory.
+        # ------------------------------------------------------------------
+        self.memory_rules = MemoryRules()
+        self.planning_rules = PlanningRules()
+        self.multimodal_rules = MultimodalRules()
+        self.rl_rules = RLRules()
+        # Memory (8 classes).
+        self.memory_episodic = EpisodicMemory(
+            dim=dim,
+            chaotic_memory=self.emergence.memory,
+            rules=self.memory_rules,
+        )
+        self.memory_working = WorkingMemory(dim=dim, rules=self.memory_rules)
+        self.memory_context = ContextMemory(
+            dim=dim,
+            sentence_encoder=self.nlp_sentence_encoder,
+            rules=self.memory_rules,
+        )
+        self.memory_consolidator = MemoryConsolidator(
+            dim=dim, rules=self.memory_rules
+        )
+        self.memory_hierarchical = HierarchicalMemory(
+            dim=dim,
+            chaotic_memory=self.emergence.memory,
+            rules=self.memory_rules,
+        )
+        self.memory_spreading = SpreadingActivationMemory(
+            dim=dim, rules=self.memory_rules
+        )
+        self.memory_forgetful = ForgetfulMemory(
+            dim=dim, rules=self.memory_rules
+        )
+        self.memory_indexer = MemoryIndexer(dim=dim, rules=self.memory_rules)
+        # Planning (8 classes).
+        self.planning_trajectory = TrajectoryPlanner(
+            dim=dim,
+            differential_generator=self.emergence.differential,
+            rules=self.planning_rules,
+        )
+        self.planning_goal_decomposer = GoalDecomposer(
+            dim=dim, rules=self.planning_rules
+        )
+        self.planning_action_sequencer = ActionSequencer(
+            dim=dim, rules=self.planning_rules
+        )
+        self.planning_hierarchical = HierarchicalPlanner(
+            dim=dim,
+            causal_inference_engine=self.emergence.causal,
+            rules=self.planning_rules,
+        )
+        self.planning_mcts = MonteCarloTreePlanner(
+            dim=dim,
+            hamiltonian_sampler=self.emergence.hmc,
+            rules=self.planning_rules,
+            rng=_child_rngs[6],
+        )
+        self.planning_symbolic = SymbolicPlanner(
+            dim=dim, rules=self.planning_rules
+        )
+        self.planning_policy_gradient = PolicyGradientPlanner(
+            n_states=int(self.rl_rules.rl_n_states),
+            n_actions=int(self.rl_rules.rl_n_actions),
+            rules=self.planning_rules,
+            rng=_child_rngs[6],
+        )
+        self.planning_contingency = ContingencyPlanner(
+            dim=dim, rules=self.planning_rules
+        )
+        # Multimodal (7 classes).
+        self.multimodal_aligner = CrossModalAligner(
+            dim=dim, rules=self.multimodal_rules
+        )
+        self.multimodal_shared_space = SharedLatentSpace(
+            dim_modal=dim, rules=self.multimodal_rules, rng=_child_rngs[6]
+        )
+        self.multimodal_fuser = ModalityFuser(
+            dim=dim, rules=self.multimodal_rules
+        )
+        self.multimodal_encoder = ModalityEncoder(
+            dim=dim, rules=self.multimodal_rules
+        )
+        self.multimodal_attention_fuser = AttentionBasedFuser(
+            dim=dim,
+            rules=self.multimodal_rules,
+            rng=_child_rngs[6],
+        )
+        self.multimodal_contrastive = ContrastiveAligner(
+            dim=dim,
+            rules=self.multimodal_rules,
+            hamiltonian_sampler=self.emergence.hmc,
+        )
+        self.multimodal_retriever = MultimodalRetriever(
+            dim=dim,
+            shared_latent_space=self.multimodal_shared_space,
+            rules=self.multimodal_rules,
+        )
+        # RL (7 classes). SyntheticMDP is shared across QLearner /
+        # PolicyOptimizer / DynaQ / MonteCarloTreeSearch / PosteriorSampling
+        # so that all algorithms operate on the same environment.
+        self.rl_mdp = SyntheticMDP(
+            n_states=int(self.rl_rules.rl_n_states),
+            n_actions=int(self.rl_rules.rl_n_actions),
+            rules=self.rl_rules,
+            seed=seed,
+            rng=_child_rngs[6],
+        )
+        self.rl_q_learner = QLearner(
+            n_states=int(self.rl_rules.rl_n_states),
+            n_actions=int(self.rl_rules.rl_n_actions),
+            mdp=self.rl_mdp,
+            rules=self.rl_rules,
+            rng=_child_rngs[6],
+        )
+        self.rl_policy_optimizer = PolicyOptimizer(
+            n_states=int(self.rl_rules.rl_n_states),
+            n_actions=int(self.rl_rules.rl_n_actions),
+            mdp=self.rl_mdp,
+            rules=self.rl_rules,
+            rng=_child_rngs[6],
+        )
+        self.rl_value_function = ValueFunction(
+            n_states=int(self.rl_rules.rl_n_states),
+            rules=self.rl_rules,
+            rng=_child_rngs[6],
+        )
+        self.rl_dyna_q = DynaQ(
+            n_states=int(self.rl_rules.rl_n_states),
+            n_actions=int(self.rl_rules.rl_n_actions),
+            mdp=self.rl_mdp,
+            rules=self.rl_rules,
+            rng=_child_rngs[6],
+        )
+        self.rl_mcts = MonteCarloTreeSearch(
+            mdp=self.rl_mdp,
+            rules=self.rl_rules,
+            rng=_child_rngs[6],
+        )
+        self.rl_posterior = PosteriorSampling(
+            n_states=int(self.rl_rules.rl_n_states),
+            n_actions=int(self.rl_rules.rl_n_actions),
+            mdp=self.rl_mdp,
+            rules=self.rl_rules,
+            rng=_child_rngs[6],
         )
         # Hardware acceleration: parallel module execution + GPU-aware arrays.
         # When a seed is set, force sequential execution so the per-module
@@ -1346,3 +1544,409 @@ class ZeroDataModel:
         """
         with self._lock:
             return self.emergence.emergence_cycle(observation)
+
+    # ------------------------------------------------------------------
+    # Phase 6 — Memory domain facades
+    # ------------------------------------------------------------------
+
+    def encode_memory(
+        self, observation: np.ndarray, label: object = None
+    ) -> dict:
+        """Encode an observation into the episodic memory store."""
+        with self._lock:
+            return self.memory_episodic.encode(observation, label=label)
+
+    def retrieve_memory(self, query: np.ndarray, top_k: int = 5) -> dict:
+        """Retrieve the top-k most similar episodic memories."""
+        with self._lock:
+            return self.memory_episodic.retrieve(query, top_k=top_k)
+
+    def push_working(self, observation: np.ndarray) -> dict:
+        """Push an observation onto the working-memory window."""
+        with self._lock:
+            return self.memory_working.push(observation)
+
+    def working_attention(self) -> dict:
+        """Return softmax attention weights over the working memory."""
+        with self._lock:
+            return self.memory_working.attention_weights()
+
+    def add_context_turn(
+        self, user_msg: str, agent_msg: str = ""
+    ) -> dict:
+        """Append a (user, agent) turn to the context memory."""
+        with self._lock:
+            return self.memory_context.add_turn(user_msg, agent_msg)
+
+    def consolidate_memory(self) -> dict:
+        """Promote high-weight working-memory items into episodic memory."""
+        with self._lock:
+            return self.memory_consolidator.consolidate(
+                self.memory_working, self.memory_episodic
+            )
+
+    def retrieve_hierarchical(
+        self, query: np.ndarray, top_k: int = 5
+    ) -> dict:
+        """Retrieve from the hierarchical 3-tier memory."""
+        with self._lock:
+            return self.memory_hierarchical.retrieve(query, top_k=top_k)
+
+    def retrieve_spreading(
+        self, query: np.ndarray, top_k: int | None = None
+    ) -> dict:
+        """Retrieve via spreading activation over the similarity graph."""
+        with self._lock:
+            return self.memory_spreading.retrieve(query, top_k=top_k)
+
+    def retrieve_forgetful(self, query: np.ndarray, top_k: int = 5) -> dict:
+        """Retrieve with Ebbinghaus forgetting-curve decay weighting."""
+        with self._lock:
+            return self.memory_forgetful.retrieve(query, top_k=top_k)
+
+    def review_memory(self, ids: list[int]) -> dict:
+        """Reset the timestamp of reviewed items (Ebbinghaus spaced-repetition)."""
+        with self._lock:
+            return self.memory_forgetful.review(ids)
+
+    def index_memory(
+        self, observations: np.ndarray, labels: list | None = None
+    ) -> dict:
+        """Batch-build the inverted index over observations."""
+        with self._lock:
+            return self.memory_indexer.build_from(observations, labels=labels)
+
+    def search_index(self, query: np.ndarray, top_k: int = 5) -> dict:
+        """Top-k search via the normalized matrix-multiply index."""
+        with self._lock:
+            return self.memory_indexer.search(query, top_k=top_k)
+
+    # ------------------------------------------------------------------
+    # Phase 6 — Planning domain facades
+    # ------------------------------------------------------------------
+
+    def plan_trajectory(
+        self,
+        start_state: np.ndarray,
+        goal_state: np.ndarray,
+        obstacles: np.ndarray | None = None,
+        n_steps: int = 32,
+        margin: float | None = None,
+    ) -> dict:
+        """Plan a damped least-action trajectory with per-step actions."""
+        with self._lock:
+            return self.planning_trajectory.plan(
+                start_state, goal_state, obstacles=obstacles,
+                n_steps=n_steps, margin=margin,
+            )
+
+    def decompose_goal(
+        self, goal: str, max_depth: int | None = None
+    ) -> dict:
+        """Decompose an abstract goal into an AND/OR tree of actions."""
+        with self._lock:
+            return self.planning_goal_decomposer.decompose(
+                goal, max_depth=max_depth
+            )
+
+    def sequence_actions(
+        self, adjacency: np.ndarray, labels: list | None = None
+    ) -> dict:
+        """Topologically sort a DAG of actions (greedy cycle breaking)."""
+        with self._lock:
+            return self.planning_action_sequencer.sequence(
+                adjacency, labels=labels
+            )
+
+    def plan_hierarchical(
+        self,
+        observation: np.ndarray,
+        var_names: list[str] | None = None,
+        goal_vars: list[int] | None = None,
+    ) -> dict:
+        """Discover causal DAG + topologically sort into an action sequence."""
+        with self._lock:
+            return self.planning_hierarchical.plan_hierarchy(
+                observation, var_names=var_names, goal_vars=goal_vars
+            )
+
+    def search_mcts(
+        self,
+        root_state,
+        n_simulations: int | None = None,
+        max_depth: int | None = None,
+    ) -> dict:
+        """Run a UCT MCTS search over a planning model."""
+        with self._lock:
+            return self.planning_mcts.search(
+                root_state,
+                n_simulations=n_simulations,
+                max_depth=max_depth,
+            )
+
+    def plan_symbolic(
+        self,
+        initial_state: dict,
+        goal_state: dict,
+        max_expansions: int = 1000,
+    ) -> dict:
+        """A* STRIPS-style plan from ``initial_state`` to ``goal_state``."""
+        with self._lock:
+            return self.planning_symbolic.plan(
+                initial_state, goal_state, max_expansions=max_expansions
+            )
+
+    def update_policy_gradient(
+        self,
+        state: int,
+        action: int,
+        return_value: float,
+        baseline: float = 0.0,
+    ) -> dict:
+        """REINFORCE-style update of the policy-gradient planner."""
+        with self._lock:
+            return self.planning_policy_gradient.update(
+                state, action, return_value, baseline=baseline
+            )
+
+    def select_policy_gradient_action(self, state) -> dict:
+        """Sample an action from the policy-gradient planner's softmax."""
+        with self._lock:
+            return self.planning_policy_gradient.select_action(state)
+
+    def add_contingency_plan(
+        self, name: str, actions: list, precondition_fn=None
+    ) -> dict:
+        """Register a named plan with a precondition predicate."""
+        with self._lock:
+            return self.planning_contingency.add_plan(
+                name, actions, precondition_fn=precondition_fn
+            )
+
+    def contingency_fallback(self, state=None) -> dict:
+        """Pick the first registered plan whose precondition matches."""
+        with self._lock:
+            return self.planning_contingency.fallback(state)
+
+    # ------------------------------------------------------------------
+    # Phase 6 — Multimodal domain facades
+    # ------------------------------------------------------------------
+
+    def fit_cross_modal(
+        self, observations_a: np.ndarray, observations_b: np.ndarray
+    ) -> dict:
+        """Fit CCA on paired observations across two modalities."""
+        with self._lock:
+            return self.multimodal_aligner.fit(
+                observations_a, observations_b
+            )
+
+    def align_cross_modal(
+        self, observations: np.ndarray, source: str = "a"
+    ) -> dict:
+        """Project ``observations`` into the aligned cross-modal space."""
+        with self._lock:
+            return self.multimodal_aligner.align(observations, source=source)
+
+    def update_shared_space(
+        self, x: np.ndarray, y: np.ndarray
+    ) -> dict:
+        """Online CCA update of the shared latent space."""
+        with self._lock:
+            return self.multimodal_shared_space.update(x, y)
+
+    def project_to_shared(self, x: np.ndarray) -> np.ndarray:
+        """Project ``x`` into the shared latent space."""
+        with self._lock:
+            return self.multimodal_shared_space.project(x)
+
+    def fuse_modalities(
+        self, embeddings: list[np.ndarray], strategy: str | None = None
+    ) -> dict:
+        """Fuse multiple modality embeddings (mean/concat/weighted)."""
+        with self._lock:
+            return self.multimodal_fuser.fuse(embeddings, strategy=strategy)
+
+    def fit_modality_encoder(
+        self, sequences: list, labels: list | None = None
+    ) -> dict:
+        """Fit the modality encoder vocabulary / IDF / PCA basis."""
+        with self._lock:
+            return self.multimodal_encoder.fit(sequences, labels=labels)
+
+    def encode_modality(self, sequence) -> np.ndarray:
+        """Encode a raw modality sequence into a fixed-dim vector."""
+        with self._lock:
+            return self.multimodal_encoder.encode(sequence)
+
+    def fuse_with_attention(
+        self, queries: np.ndarray, keys: np.ndarray, values: np.ndarray
+    ) -> dict:
+        """Multi-head scaled-dot-product attention fusion."""
+        with self._lock:
+            return self.multimodal_attention_fuser.fuse(queries, keys, values)
+
+    def contrastive_loss(
+        self, batch_a: np.ndarray, batch_b: np.ndarray
+    ) -> dict:
+        """InfoNCE contrastive alignment loss between paired batches."""
+        with self._lock:
+            return self.multimodal_contrastive.loss(batch_a, batch_b)
+
+    def build_multimodal_index(
+        self, items: np.ndarray, labels: list | None = None
+    ) -> dict:
+        """Index a corpus of modality-b items for cross-modal retrieval."""
+        with self._lock:
+            return self.multimodal_retriever.build(items, labels=labels)
+
+    def query_multimodal(
+        self, query: np.ndarray, top_k: int = 5
+    ) -> dict:
+        """Cross-modal top-k retrieval."""
+        with self._lock:
+            return self.multimodal_retriever.query(query, top_k=top_k)
+
+    # ------------------------------------------------------------------
+    # Phase 6 — RL domain facades
+    # ------------------------------------------------------------------
+
+    def step_mdp(self, state: int, action: int) -> dict:
+        """Take one step in the synthetic MDP."""
+        with self._lock:
+            return self.rl_mdp.step(state, action)
+
+    def reset_mdp(self) -> dict:
+        """Reset the synthetic MDP to a random non-terminal state."""
+        with self._lock:
+            return self.rl_mdp.reset()
+
+    def update_q(
+        self,
+        state: int,
+        action: int,
+        reward: float,
+        next_state: int,
+    ) -> dict:
+        """One tabular Q-learning TD update."""
+        with self._lock:
+            return self.rl_q_learner.update(
+                state, action, reward, next_state
+            )
+
+    def select_q_action(
+        self, state: int, epsilon: float | None = None
+    ) -> dict:
+        """Epsilon-greedy action selection from the Q-table."""
+        with self._lock:
+            return self.rl_q_learner.select_action(state, epsilon=epsilon)
+
+    def train_q_learner(
+        self, n_episodes: int = 100, max_steps_per_episode: int = 100
+    ) -> dict:
+        """Full tabular Q-learning training loop."""
+        with self._lock:
+            return self.rl_q_learner.train(
+                n_episodes=n_episodes,
+                max_steps_per_episode=max_steps_per_episode,
+            )
+
+    def evaluate_q_learner(
+        self, n_episodes: int = 10, max_steps_per_episode: int = 100
+    ) -> dict:
+        """Evaluate the greedy Q-policy without updating Q."""
+        with self._lock:
+            return self.rl_q_learner.evaluate(
+                n_episodes=n_episodes,
+                max_steps_per_episode=max_steps_per_episode,
+            )
+
+    def train_policy_optimizer(
+        self, n_episodes: int = 100, max_steps_per_episode: int = 100
+    ) -> dict:
+        """REINFORCE-style policy-gradient training loop."""
+        with self._lock:
+            return self.rl_policy_optimizer.train(
+                n_episodes=n_episodes,
+                max_steps_per_episode=max_steps_per_episode,
+            )
+
+    def value_td0_update(
+        self,
+        state: int,
+        reward: float,
+        next_state: int,
+        done: bool = False,
+    ) -> dict:
+        """TD(0) update of the tabular value function."""
+        with self._lock:
+            return self.rl_value_function.td0_update(
+                state, reward, next_state, done=done
+            )
+
+    def value_td_lambda_update(
+        self, trajectory: list, lambda_: float = 0.9
+    ) -> dict:
+        """TD(λ) update of the tabular value function over a trajectory."""
+        with self._lock:
+            return self.rl_value_function.td_lambda_update(
+                trajectory, lambda_=lambda_
+            )
+
+    def value_monte_carlo_update(self, trajectory: list) -> dict:
+        """First-visit MC update of the tabular value function."""
+        with self._lock:
+            return self.rl_value_function.monte_carlo_update(trajectory)
+
+    def train_dyna_q(
+        self, n_episodes: int = 100, max_steps_per_episode: int = 100
+    ) -> dict:
+        """Dyna-Q training (Q-learning + model + imaginary rollouts)."""
+        with self._lock:
+            return self.rl_dyna_q.train(
+                n_episodes=n_episodes,
+                max_steps_per_episode=max_steps_per_episode,
+            )
+
+    def search_rl_mcts(
+        self,
+        root_state: int,
+        n_simulations: int | None = None,
+        max_depth: int | None = None,
+    ) -> dict:
+        """UCT MCTS over the known synthetic MDP."""
+        with self._lock:
+            return self.rl_mcts.search(
+                root_state,
+                n_simulations=n_simulations,
+                max_depth=max_depth,
+            )
+
+    def update_rl_posterior(
+        self, state: int, action: int, reward: float
+    ) -> dict:
+        """Bayesian update of the PSRL reward posterior."""
+        with self._lock:
+            return self.rl_posterior.update(state, action, reward)
+
+    def sample_rl_posterior(self) -> dict:
+        """Sample a reward matrix from the PSRL posterior."""
+        with self._lock:
+            return self.rl_posterior.sample_reward()
+
+    def value_iterate_rl(
+        self, reward: np.ndarray, n_iters: int = 50
+    ) -> dict:
+        """Value iteration on the MDP with a sampled reward."""
+        with self._lock:
+            return self.rl_posterior.value_iteration(reward, n_iters=n_iters)
+
+    def train_posterior_sampling(
+        self, n_episodes: int = 50, max_steps_per_episode: int = 100
+    ) -> dict:
+        """PSRL training loop (sample reward → value iteration → act)."""
+        with self._lock:
+            return self.rl_posterior.train(
+                n_episodes=n_episodes,
+                max_steps_per_episode=max_steps_per_episode,
+            )

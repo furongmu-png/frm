@@ -279,6 +279,105 @@ def _run_emergence_cycle(args: argparse.Namespace) -> int:
 
 
 # ------------------------------------------------------------------ #
+# Phase 6 — Memory / Planning / Multimodal / RL subcommand handlers
+# ------------------------------------------------------------------ #
+
+def _run_memory_encode(args: argparse.Namespace) -> int:
+    obs = _load_observation(args.file)
+    model = _build_model()
+    result = model.encode_memory(obs, label=args.label)
+    return _emit_json(result)
+
+
+def _run_memory_retrieve(args: argparse.Namespace) -> int:
+    query = _load_observation(args.file)
+    model = _build_model()
+    result = model.retrieve_memory(query, top_k=args.top_k)
+    return _emit_json(result)
+
+
+def _run_memory_consolidate(args: argparse.Namespace) -> int:
+    model = _build_model()
+    result = model.consolidate_memory()
+    return _emit_json(result)
+
+
+def _run_planning_trajectory(args: argparse.Namespace) -> int:
+    start = _load_vector(args.start)
+    end = _load_vector(args.end)
+    obstacles = _load_observation(args.obstacles) if args.obstacles else None
+    model = _build_model()
+    result = model.plan_trajectory(
+        start, end, obstacles=obstacles, n_steps=args.steps, margin=args.margin
+    )
+    return _emit_json(result)
+
+
+def _run_planning_decompose(args: argparse.Namespace) -> int:
+    model = _build_model()
+    result = model.decompose_goal(args.goal, max_depth=args.max_depth)
+    return _emit_json(result)
+
+
+def _run_planning_sequence(args: argparse.Namespace) -> int:
+    adjacency = _load_observation(args.file)
+    model = _build_model()
+    result = model.sequence_actions(adjacency)
+    return _emit_json(result)
+
+
+def _run_multimodal_align(args: argparse.Namespace) -> int:
+    a = _load_observation(args.file_a)
+    b = _load_observation(args.file_b)
+    model = _build_model()
+    fit = model.fit_cross_modal(a, b)
+    # Align a single sample (the first row) — align() expects a 1D vector.
+    sample = a[0] if a.ndim == 2 else a
+    aligned = model.align_cross_modal(sample, source="a")
+    return _emit_json({"fit": fit, "aligned": aligned})
+
+
+def _run_multimodal_fuse(args: argparse.Namespace) -> int:
+    a = _load_observation(args.file_a)
+    b = _load_observation(args.file_b)
+    model = _build_model()
+    result = model.fuse_modalities([a, b], strategy=args.strategy)
+    return _emit_json(result)
+
+
+def _run_multimodal_contrastive(args: argparse.Namespace) -> int:
+    a = _load_observation(args.file_a)
+    b = _load_observation(args.file_b)
+    model = _build_model()
+    result = model.contrastive_loss(a, b)
+    return _emit_json(result)
+
+
+def _run_rl_step(args: argparse.Namespace) -> int:
+    model = _build_model()
+    result = model.step_mdp(int(args.state), int(args.action))
+    return _emit_json(result)
+
+
+def _run_rl_train_q(args: argparse.Namespace) -> int:
+    model = _build_model()
+    result = model.train_q_learner(
+        n_episodes=args.episodes, max_steps_per_episode=args.max_steps
+    )
+    return _emit_json(result)
+
+
+def _run_rl_search_mcts(args: argparse.Namespace) -> int:
+    model = _build_model()
+    result = model.search_rl_mcts(
+        int(args.root_state),
+        n_simulations=args.simulations,
+        max_depth=args.depth,
+    )
+    return _emit_json(result)
+
+
+# ------------------------------------------------------------------ #
 # argparse wiring
 # ------------------------------------------------------------------ #
 
@@ -401,6 +500,99 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     cycle_parser.set_defaults(func=_run_emergence_cycle)
 
+    # ------------------------------------------------------------------ #
+    # Phase 6 — Memory / Planning / Multimodal / RL subparsers.
+    # ------------------------------------------------------------------ #
+    memory_parser = subparsers.add_parser(
+        "memory",
+        help="Memory capabilities (encode / retrieve / consolidate).",
+        description="Episodic + working memory facade.",
+    )
+    memory_sub = memory_parser.add_subparsers(
+        dest="subcommand", required=True, metavar="<subcommand>",
+        help="encode | retrieve | consolidate",
+    )
+    mem_enc = memory_sub.add_parser("encode", help="Encode an observation.")
+    mem_enc.add_argument("file", help="Observation file (.npz / .npy / .csv / .json).")
+    mem_enc.add_argument("--label", default=None, help="Optional label for the memory.")
+    mem_enc.set_defaults(func=_run_memory_encode)
+    mem_ret = memory_sub.add_parser("retrieve", help="Retrieve top-k similar memories.")
+    mem_ret.add_argument("file", help="Query file (.npz / .npy / .csv / .json).")
+    mem_ret.add_argument("--top-k", type=int, default=5, help="Top-k (default 5).")
+    mem_ret.set_defaults(func=_run_memory_retrieve)
+    mem_con = memory_sub.add_parser("consolidate", help="Promote working → episodic.")
+    mem_con.set_defaults(func=_run_memory_consolidate)
+
+    planning_parser = subparsers.add_parser(
+        "planning",
+        help="Planning capabilities (trajectory / decompose / sequence).",
+        description="Hierarchical / trajectory / action sequencing facade.",
+    )
+    planning_sub = planning_parser.add_subparsers(
+        dest="subcommand", required=True, metavar="<subcommand>",
+        help="trajectory | decompose | sequence",
+    )
+    plan_traj = planning_sub.add_parser("trajectory", help="Plan a trajectory.")
+    plan_traj.add_argument("start", help="Start state (inline JSON or file).")
+    plan_traj.add_argument("end", help="End state (inline JSON or file).")
+    plan_traj.add_argument("--steps", type=int, default=32)
+    plan_traj.add_argument("--obstacles", default=None)
+    plan_traj.add_argument("--margin", type=float, default=None)
+    plan_traj.set_defaults(func=_run_planning_trajectory)
+    plan_dec = planning_sub.add_parser("decompose", help="Decompose a goal.")
+    plan_dec.add_argument("goal", help="Goal name.")
+    plan_dec.add_argument("--max-depth", type=int, default=None)
+    plan_dec.set_defaults(func=_run_planning_decompose)
+    plan_seq = planning_sub.add_parser("sequence", help="Topologically sort actions.")
+    plan_seq.add_argument("file", help="Adjacency matrix file (.npz / .npy / .csv).")
+    plan_seq.set_defaults(func=_run_planning_sequence)
+
+    multimodal_parser = subparsers.add_parser(
+        "multimodal",
+        help="Multimodal capabilities (align / fuse / contrastive).",
+        description="Cross-modal alignment / fusion / contrastive learning facade.",
+    )
+    multimodal_sub = multimodal_parser.add_subparsers(
+        dest="subcommand", required=True, metavar="<subcommand>",
+        help="align | fuse | contrastive",
+    )
+    mm_align = multimodal_sub.add_parser("align", help="CCA alignment of two modalities.")
+    mm_align.add_argument("file_a", help="Observation file for modality A.")
+    mm_align.add_argument("file_b", help="Observation file for modality B.")
+    mm_align.set_defaults(func=_run_multimodal_align)
+    mm_fuse = multimodal_sub.add_parser("fuse", help="Fuse two modality embeddings.")
+    mm_fuse.add_argument("file_a")
+    mm_fuse.add_argument("file_b")
+    mm_fuse.add_argument("--strategy", default=None, help="mean | concat | weighted.")
+    mm_fuse.set_defaults(func=_run_multimodal_fuse)
+    mm_con = multimodal_sub.add_parser("contrastive", help="InfoNCE contrastive loss.")
+    mm_con.add_argument("file_a")
+    mm_con.add_argument("file_b")
+    mm_con.set_defaults(func=_run_multimodal_contrastive)
+
+    rl_parser = subparsers.add_parser(
+        "rl",
+        help="Reinforcement learning capabilities (step / train-q / search-mcts).",
+        description="Synthetic MDP + Q-learning + MCTS facade.",
+    )
+    rl_sub = rl_parser.add_subparsers(
+        dest="subcommand", required=True, metavar="<subcommand>",
+        help="step | train-q | search-mcts",
+    )
+    rl_step = rl_sub.add_parser("step", help="Take one MDP step.")
+    rl_step.add_argument("state", type=int, help="Current state index.")
+    rl_step.add_argument("action", type=int, help="Action index.")
+    rl_step.set_defaults(func=_run_rl_step)
+    rl_train = rl_sub.add_parser("train-q", help="Train the Q-learner.")
+    rl_train.add_argument("--episodes", type=int, default=100)
+    rl_train.add_argument("--max-steps", type=int, default=100)
+    rl_train.set_defaults(func=_run_rl_train_q)
+    rl_mcts = rl_sub.add_parser("search-mcts", help="MCTS over the synthetic MDP.")
+    rl_mcts.add_argument("root_state", type=int)
+    rl_mcts.add_argument("--simulations", type=int, default=100)
+    rl_mcts.add_argument("--depth", type=int, default=10)
+    rl_mcts.set_defaults(func=_run_rl_search_mcts)
+
     return parser
 
 
@@ -413,8 +605,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.mcp:
         return _run_mcp()
 
-    if getattr(args, "command", None) == "emergence":
-        # ``func`` is set via ``set_defaults`` on each emergence subparser.
+    if getattr(args, "command", None) in (
+        "emergence", "memory", "planning", "multimodal", "rl"
+    ):
+        # ``func`` is set via ``set_defaults`` on each subparser.
         try:
             return args.func(args)
         except (ValueError, OSError) as exc:

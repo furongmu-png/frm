@@ -187,6 +187,80 @@ with contextlib.suppress(ImportError):  # pragma: no cover - optional sibling mo
         POMDPApproximator,
     )
 
+# Phase 6 capability modules (Memory / Planning / Multimodal / RL).
+# Each capability ships a base module + an advanced module; same optional
+# import guard pattern so the package stays importable if a sibling
+# module is removed.
+with contextlib.suppress(ImportError):  # pragma: no cover - optional sibling module
+    from .memory import (
+        ContextMemory,
+        EpisodicMemory,
+        MemoryConsolidator,
+        WorkingMemory,
+    )
+
+with contextlib.suppress(ImportError):  # pragma: no cover - optional sibling module
+    from .memory_advanced import (
+        ForgetfulMemory,
+        HierarchicalMemory,
+        MemoryIndexer,
+        SpreadingActivationMemory,
+    )
+
+with contextlib.suppress(ImportError):  # pragma: no cover - optional sibling module
+    from .planning import (
+        ActionSequencer,
+        GoalDecomposer,
+        HierarchicalPlanner,
+        TrajectoryPlanner,
+    )
+
+with contextlib.suppress(ImportError):  # pragma: no cover - optional sibling module
+    from .planning_advanced import (
+        ContingencyPlanner,
+        MonteCarloTreePlanner,
+        PolicyGradientPlanner,
+        SymbolicPlanner,
+    )
+
+with contextlib.suppress(ImportError):  # pragma: no cover - optional sibling module
+    from .multimodal import (
+        CrossModalAligner,
+        ModalityEncoder,
+        ModalityFuser,
+        SharedLatentSpace,
+    )
+
+with contextlib.suppress(ImportError):  # pragma: no cover - optional sibling module
+    from .multimodal_advanced import (
+        AttentionBasedFuser,
+        ContrastiveAligner,
+        MultimodalRetriever,
+    )
+
+with contextlib.suppress(ImportError):  # pragma: no cover - optional sibling module
+    from .rl import (
+        PolicyOptimizer,
+        SyntheticMDP,
+        QLearner,
+        ValueFunction,
+    )
+
+with contextlib.suppress(ImportError):  # pragma: no cover - optional sibling module
+    from .rl_advanced import (
+        DynaQ,
+        MonteCarloTreeSearch,
+        PosteriorSampling,
+    )
+
+# Phase 6 rules dataclasses.
+from .rules import (
+    MemoryRules,
+    MultimodalRules,
+    PlanningRules,
+    RLRules,
+)
+
 __all__ = [
     "DomainRules",
     "NLPRules",
@@ -279,4 +353,43 @@ __all__ = [
     "POMDPApproximator",
     "CausalGraphBuilder",
     "InterventionAnalyzer",
+    # Phase 6 rules.
+    "MemoryRules",
+    "PlanningRules",
+    "MultimodalRules",
+    "RLRules",
+    # Phase 6 Memory capabilities.
+    "EpisodicMemory",
+    "WorkingMemory",
+    "ContextMemory",
+    "MemoryConsolidator",
+    "HierarchicalMemory",
+    "SpreadingActivationMemory",
+    "ForgetfulMemory",
+    "MemoryIndexer",
+    # Phase 6 Planning capabilities.
+    "HierarchicalPlanner",
+    "GoalDecomposer",
+    "TrajectoryPlanner",
+    "ActionSequencer",
+    "MonteCarloTreePlanner",
+    "SymbolicPlanner",
+    "PolicyGradientPlanner",
+    "ContingencyPlanner",
+    # Phase 6 Multimodal capabilities.
+    "CrossModalAligner",
+    "SharedLatentSpace",
+    "ModalityFuser",
+    "ModalityEncoder",
+    "AttentionBasedFuser",
+    "ContrastiveAligner",
+    "MultimodalRetriever",
+    # Phase 6 RL capabilities.
+    "SyntheticMDP",
+    "QLearner",
+    "PolicyOptimizer",
+    "ValueFunction",
+    "DynaQ",
+    "MonteCarloTreeSearch",
+    "PosteriorSampling",
 ]
