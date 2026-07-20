@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import threading
 from collections import deque
 from dataclasses import dataclass
 
@@ -135,6 +136,12 @@ class ConsciousnessCore(CognitiveModule):
         self.dim = dim
         # Round-3 audit CRIT-1: per-module Generator
         self._rng = rng if rng is not None else np.random.default_rng()
+        # Per-module re-entrant lock (Phase D / think() lockless update):
+        # protects ``process`` / ``predict`` / ``update`` / ``reflect`` from
+        # concurrent think() calls racing on ``self._rng`` and shared
+        # mutable state (layers, workspace, self_model). RLock allows
+        # re-entry from the same thread (process -> compute_free_energy).
+        self._lock = threading.RLock()
         self.layers = [
             PredictiveLayer(
                 weights=self._rng.standard_normal((dim, dim)) * 0.1,
@@ -148,90 +155,112 @@ class ConsciousnessCore(CognitiveModule):
         # instead of re-running the predictive hierarchy (Fix 12).
         self._last_process_output: np.ndarray | None = None
 
+    def __getstate__(self) -> dict:
+        # Phase D: per-module RLock is not picklable. Strip it here and
+        # rebuild in __setstate__. We hold the lock during the snapshot
+        # so concurrent think() (which acquires the same lock via
+        # ``with self._lock:`` in process/predict/update) blocks until
+        # the snapshot completes, producing a consistent array copy.
+        # This replaces the previous approach (model.__getstate__ setting
+        # each module's _lock to None during deepcopy) which raced with
+        # concurrent think(): the background thread found _lock=None and
+        # raised ``TypeError: 'NoneType' object does not support the
+        # context manager protocol``.
+        with self._lock:
+            return {k: v for k, v in self.__dict__.items() if k != "_lock"}
+
+    def __setstate__(self, state: dict) -> None:
+        self.__dict__.update(state)
+        self._lock = threading.RLock()
+
     def process(self, signal: Signal) -> Signal:
-        x = signal.data[: self.dim]
-        if len(x) < self.dim:
-            x = np.pad(x, (0, self.dim - len(x)))
-
-        for layer in self.layers:
-            prediction = layer.predict(x)
-            error = layer.prediction_error(x, prediction)
-            # Round-8 audit THEORY8-13: clip the error before injecting it as
-            # noise std. ``prediction_error`` is MSE; with ``predicted`` bounded
-            # to (-1, 1) by tanh/relu but ``actual = x`` unbounded (the input
-            # signal may carry large values from upstream modules), MSE can
-            # reach 1e6+ and the noise ``randn * MSE * 0.01`` becomes
-            # ``randn * 1e4``, which then feeds the next layer's MSE and
-            # diverges to inf/NaN within ~3 layers. Cap to 4.0 — the maximum
-            # MSE between two vectors in (-1, 1)^d is 4.0 — so well-posed
-            # inputs are unaffected and runaway inputs no longer diverge.
-            error = float(np.clip(error, 0.0, 4.0))
-            # Round-3 audit CRIT-1: per-module Generator
-            x = prediction + self._rng.standard_normal(self.dim) * error * 0.01
-
-        self.self_model.update(x)
-        # Cache the post-hierarchy state for predict() to reuse (Fix 12).
-        self._last_process_output = x
-        # C-batch fix: ``update_attention`` was previously never called from
-        # ``process``, so the attention weights stayed uniform (1/dim) and
-        # ``broadcast``'s ``signal * attention_weights`` was a uniform scaling
-        # that did not actually attend to anything. Now we update the
-        # attention weights from the per-dimension relevance of the
-        # post-hierarchy state BEFORE broadcasting, so the workspace
-        # meaningfully emphasises salient dimensions.
-        relevance = np.abs(x)
-        self.workspace.update_attention(relevance)
-        result = self.workspace.broadcast(Signal(data=x, metadata=signal.metadata))
-        return result
-
-    def predict(self, signal: Signal) -> Prediction:
-        # Reuse the cached process output when available so we do not re-run
-        # the predictive hierarchy twice per think() cycle (Fix 12). Fall back
-        # to a single-layer forward pass when predict() is called standalone.
-        if self._last_process_output is not None:
-            predicted = self._last_process_output
-        else:
+        with self._lock:
             x = signal.data[: self.dim]
             if len(x) < self.dim:
                 x = np.pad(x, (0, self.dim - len(x)))
-            predicted = self.layers[0].predict(x)
-        uncertainty = float(np.var(predicted))
-        return Prediction(value=predicted, uncertainty=uncertainty)
+
+            for layer in self.layers:
+                prediction = layer.predict(x)
+                error = layer.prediction_error(x, prediction)
+                # Round-8 audit THEORY8-13: clip the error before injecting it as
+                # noise std. ``prediction_error`` is MSE; with ``predicted`` bounded
+                # to (-1, 1) by tanh/relu but ``actual = x`` unbounded (the input
+                # signal may carry large values from upstream modules), MSE can
+                # reach 1e6+ and the noise ``randn * MSE * 0.01`` becomes
+                # ``randn * 1e4``, which then feeds the next layer's MSE and
+                # diverges to inf/NaN within ~3 layers. Cap to 4.0 — the maximum
+                # MSE between two vectors in (-1, 1)^d is 4.0 — so well-posed
+                # inputs are unaffected and runaway inputs no longer diverge.
+                error = float(np.clip(error, 0.0, 4.0))
+                # Round-3 audit CRIT-1: per-module Generator
+                x = prediction + self._rng.standard_normal(self.dim) * error * 0.01
+
+            self.self_model.update(x)
+            # Cache the post-hierarchy state for predict() to reuse (Fix 12).
+            self._last_process_output = x
+            # C-batch fix: ``update_attention`` was previously never called from
+            # ``process``, so the attention weights stayed uniform (1/dim) and
+            # ``broadcast``'s ``signal * attention_weights`` was a uniform scaling
+            # that did not actually attend to anything. Now we update the
+            # attention weights from the per-dimension relevance of the
+            # post-hierarchy state BEFORE broadcasting, so the workspace
+            # meaningfully emphasises salient dimensions.
+            relevance = np.abs(x)
+            self.workspace.update_attention(relevance)
+            result = self.workspace.broadcast(Signal(data=x, metadata=signal.metadata))
+            return result
+
+    def predict(self, signal: Signal) -> Prediction:
+        with self._lock:
+            # Reuse the cached process output when available so we do not re-run
+            # the predictive hierarchy twice per think() cycle (Fix 12). Fall back
+            # to a single-layer forward pass when predict() is called standalone.
+            if self._last_process_output is not None:
+                predicted = self._last_process_output
+            else:
+                x = signal.data[: self.dim]
+                if len(x) < self.dim:
+                    x = np.pad(x, (0, self.dim - len(x)))
+                predicted = self.layers[0].predict(x)
+            uncertainty = float(np.var(predicted))
+            return Prediction(value=predicted, uncertainty=uncertainty)
 
     def update(self, prediction_error: float) -> None:
-        if not np.isfinite(prediction_error):
-            return
-        # Round-10 audit R10-C-004: clip to ``[0, 1e6]`` to match the
-        # Round-8 THEORY8-clip contract enforced in ``active_inference``,
-        # ``category_engine``, ``biological``, ``quantum_hybrid`` and
-        # ``math_universe`` (R10-C-001). The previous ``[-1e6, 1e6]``
-        # clip was dead code (``prediction_error`` is an MSE by
-        # construction and is non-negative) but signalled an inconsistent
-        # contract: the OLD code paired ``[-1e6, 1e6]`` with
-        # ``abs(prediction_error) * 0.001`` further down (the abs() was a
-        # redundant band-aid compensating for the negative half-range of
-        # the clip). Removing the abs() alone — without also tightening
-        # the clip to ``[0, 1e6]`` — would have flipped the noise sign
-        # for negative errors (gradient ascent, not descent). The R10-C-004
-        # fix tightens the clip and removes the redundant ``abs()``
-        # together, so neither can drift back into a state where one is
-        # needed to compensate for the other.
-        # Round-10 audit R10-A-003: confirmed there is no remaining
-        # ``abs()`` in this method — the stale comment reference to
-        # "the ``abs()`` below" was removed when R10-C-004 deleted the
-        # ``abs(prediction_error)`` band-aid.
-        prediction_error = float(np.clip(prediction_error, 0.0, 1e6))
-        # Round-3 audit: clamp the effective noise scale so a runaway
-        # prediction_error near the 1e6 ceiling does not destroy learned
-        # weights in a single step (1e6 * 0.001 = 1000 std-dev noise).
-        step = float(np.clip(prediction_error * 0.001, 0.0, 0.1))
-        if step == 0.0:
-            return
-        for layer in self.layers:
-            # Round-3 audit CRIT-1: per-module Generator
-            noise = self._rng.standard_normal(layer.weights.shape) * step
-            layer.weights += noise
+        with self._lock:
+            if not np.isfinite(prediction_error):
+                return
+            # Round-10 audit R10-C-004: clip to ``[0, 1e6]`` to match the
+            # Round-8 THEORY8-clip contract enforced in ``active_inference``,
+            # ``category_engine``, ``biological``, ``quantum_hybrid`` and
+            # ``math_universe`` (R10-C-001). The previous ``[-1e6, 1e6]``
+            # clip was dead code (``prediction_error`` is an MSE by
+            # construction and is non-negative) but signalled an inconsistent
+            # contract: the OLD code paired ``[-1e6, 1e6]`` with
+            # ``abs(prediction_error) * 0.001`` further down (the abs() was a
+            # redundant band-aid compensating for the negative half-range of
+            # the clip). Removing the abs() alone — without also tightening
+            # the clip to ``[0, 1e6]`` — would have flipped the noise sign
+            # for negative errors (gradient ascent, not descent). The R10-C-004
+            # fix tightens the clip and removes the redundant ``abs()``
+            # together, so neither can drift back into a state where one is
+            # needed to compensate for the other.
+            # Round-10 audit R10-A-003: confirmed there is no remaining
+            # ``abs()`` in this method — the stale comment reference to
+            # "the ``abs()`` below" was removed when R10-C-004 deleted the
+            # ``abs(prediction_error)`` band-aid.
+            prediction_error = float(np.clip(prediction_error, 0.0, 1e6))
+            # Round-3 audit: clamp the effective noise scale so a runaway
+            # prediction_error near the 1e6 ceiling does not destroy learned
+            # weights in a single step (1e6 * 0.001 = 1000 std-dev noise).
+            step = float(np.clip(prediction_error * 0.001, 0.0, 0.1))
+            if step == 0.0:
+                return
+            for layer in self.layers:
+                # Round-3 audit CRIT-1: per-module Generator
+                noise = self._rng.standard_normal(layer.weights.shape) * step
+                layer.weights += noise
 
     def reflect(self) -> Signal:
         """Metacognition — the system thinks about its own state."""
-        return self.self_model.reflect()
+        with self._lock:
+            return self.self_model.reflect()

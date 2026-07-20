@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import threading
 import warnings
 from collections import deque
 from dataclasses import dataclass
@@ -244,6 +245,14 @@ class ActiveInferenceEngine(CognitiveModule):
     ):
         # Round-3 audit CRIT-1: per-module Generator
         self._rng = rng if rng is not None else np.random.default_rng()
+        # Per-module re-entrant lock (Phase D / think() lockless update):
+        # protects ``process`` / ``predict`` / ``update`` /
+        # ``compute_free_energy`` / ``select_action`` from concurrent
+        # think() calls racing on ``self._rng`` and shared mutable
+        # state (blanket, generative_model, action_history,
+        # free_energy_history). RLock allows re-entry (process calls
+        # compute_free_energy + select_action internally).
+        self._lock = threading.RLock()
         self.blanket = MarkovBlanket.create(obs_dim, action_dim, state_dim, rng=self._rng)
         self.generative_model = GenerativeModel(state_dim, obs_dim, rng=self._rng)
         self.homeostasis = HomeostaticController(state_dim)
@@ -266,6 +275,17 @@ class ActiveInferenceEngine(CognitiveModule):
         # ``process`` after appending to action_history.
         self._cached_sigma_q2: float = 1.0
         self._sigma_q2_dirty: bool = True
+
+    def __getstate__(self) -> dict:
+        # Phase D: per-module RLock is not picklable. Strip it here and
+        # rebuild in __setstate__. Hold the lock so concurrent think()
+        # blocks during the snapshot (consistent array copy).
+        with self._lock:
+            return {k: v for k, v in self.__dict__.items() if k != "_lock"}
+
+    def __setstate__(self, state: dict) -> None:
+        self.__dict__.update(state)
+        self._lock = threading.RLock()
 
     def _compute_sigma_q2(self) -> float:
         """Estimate the variational posterior variance ``sigma_q^2`` from
@@ -375,74 +395,75 @@ class ActiveInferenceEngine(CognitiveModule):
         (always ``float``), but the value-domain on bad inputs changed in
         Round-5 TEST5-1/TEST5-5.
         """
-        observation = np.asarray(observation, dtype=float)
-        gm = self.generative_model
-        # Round-7 audit THEORY7-1: use ``state`` for BOTH terms so they share
-        # the same posterior q(s) = N(state, sigma_q^2 I).
-        state = gm.belief_state if state is None else np.asarray(state, dtype=float)
-        # Round-7 audit TEST5-1/TEST5-3 (regression guard): when the
-        # observation is non-finite, return the EXACT sentinel value
-        # immediately — do NOT compute pred_error + kl_qp, which would yield
-        # ``sentinel + small_kl_term`` (slightly above 1e6) and break the
-        # ``fe == _FREE_ENERGY_SENTINEL`` contract that ``process`` and the
-        # Round-4 regression tests rely on for anomaly detection.
-        if not np.all(np.isfinite(observation)):
-            return _FREE_ENERGY_SENTINEL
-        predicted_obs = gm.predict_observation(state)
-        error = observation[: gm.obs_dim] - predicted_obs[: len(observation)]
-        if len(error) < gm.obs_dim:
-            error = np.pad(error, (0, gm.obs_dim - len(error)))
-        # Round-7 audit PERF7-8: np.dot(error, error) avoids the temporary
-        # ``error ** 2`` array that np.mean(error ** 2) materialises.
-        pred_error = float(np.dot(error, error)) / error.size
-        # Guard the result so callers never receive a NaN free energy (which
-        # would break argmin in select_action). The sentinel IS the anomaly
-        # signal — do not collapse it to a small value.
-        if not np.isfinite(pred_error):
-            return _FREE_ENERGY_SENTINEL
-        if not np.all(np.isfinite(state)):
-            state = np.nan_to_num(state, nan=0.0, posinf=0.0, neginf=0.0)
-        # Estimate variational posterior variance sigma_q^2 from recent
-        # action variance (uncertainty about the next state -> uncertainty
-        # about the posterior). Fall back to 1.0 when no actions recorded.
-        # Round-8 audit PERF8-2: use the cached value — ``_compute_sigma_q2``
-        # only recomputes when ``action_history`` changes (once per cycle in
-        # ``process``), avoiding 9x redundant O(N) re-materialisations.
-        sigma_q2 = self._compute_sigma_q2()
-        dim = float(gm.state_dim)
-        b_norm_sq = float(np.dot(state, state))
-        if not np.isfinite(b_norm_sq):
-            b_norm_sq = _FREE_ENERGY_SENTINEL
-        # KL(N(state, sigma^2 I) || N(0, I))
-        kl_qp = 0.5 * (
-            b_norm_sq
-            + sigma_q2 * dim
-            - dim
-            - dim * float(np.log(sigma_q2))
-        )
-        # Round-8 audit THEORY8-2: under the variational posterior
-        # ``q(s) = N(state, sigma_q^2 I)``, the expected negative
-        # log-likelihood (pragmatic term) is
-        #   E_q[||obs - s @ emission||^2] = ||obs - state @ emission||^2
-        #                                  + sigma_q^2 * ||emission||_F^2
-        # The previous code included only the first term (``pred_error``),
-        # so when ``sigma_q2`` was large (high posterior uncertainty) the
-        # KL term grew but the pragmatic term did NOT -- the posterior
-        # variance had no effect on the pragmatic surprise, biasing
-        # ``select_action`` toward over-confident actions. Adding the
-        # missing ``sigma_q2 * ||emission||_F^2`` term makes the KL and
-        # pragmatic terms consistent: higher posterior uncertainty now
-        # RAISES the expected surprise, so ``select_action`` is rewarded
-        # for visiting well-resolved states (low sigma_q2) -- the
-        # epistemic-drive behaviour active inference predicts.
-        emission_fro_sq = float(
-            np.dot(gm.emission.ravel(), gm.emission.ravel())
-        )
-        pragmatic = pred_error + sigma_q2 * emission_fro_sq
-        fe = pragmatic + kl_qp
-        # Final guard: if anything still escaped (shouldn't happen, but
-        # defense-in-depth), return the sentinel rather than NaN.
-        return float(fe) if np.isfinite(fe) else _FREE_ENERGY_SENTINEL
+        with self._lock:
+            observation = np.asarray(observation, dtype=float)
+            gm = self.generative_model
+            # Round-7 audit THEORY7-1: use ``state`` for BOTH terms so they share
+            # the same posterior q(s) = N(state, sigma_q^2 I).
+            state = gm.belief_state if state is None else np.asarray(state, dtype=float)
+            # Round-7 audit TEST5-1/TEST5-3 (regression guard): when the
+            # observation is non-finite, return the EXACT sentinel value
+            # immediately — do NOT compute pred_error + kl_qp, which would yield
+            # ``sentinel + small_kl_term`` (slightly above 1e6) and break the
+            # ``fe == _FREE_ENERGY_SENTINEL`` contract that ``process`` and the
+            # Round-4 regression tests rely on for anomaly detection.
+            if not np.all(np.isfinite(observation)):
+                return _FREE_ENERGY_SENTINEL
+            predicted_obs = gm.predict_observation(state)
+            error = observation[: gm.obs_dim] - predicted_obs[: len(observation)]
+            if len(error) < gm.obs_dim:
+                error = np.pad(error, (0, gm.obs_dim - len(error)))
+            # Round-7 audit PERF7-8: np.dot(error, error) avoids the temporary
+            # ``error ** 2`` array that np.mean(error ** 2) materialises.
+            pred_error = float(np.dot(error, error)) / error.size
+            # Guard the result so callers never receive a NaN free energy (which
+            # would break argmin in select_action). The sentinel IS the anomaly
+            # signal — do not collapse it to a small value.
+            if not np.isfinite(pred_error):
+                return _FREE_ENERGY_SENTINEL
+            if not np.all(np.isfinite(state)):
+                state = np.nan_to_num(state, nan=0.0, posinf=0.0, neginf=0.0)
+            # Estimate variational posterior variance sigma_q^2 from recent
+            # action variance (uncertainty about the next state -> uncertainty
+            # about the posterior). Fall back to 1.0 when no actions recorded.
+            # Round-8 audit PERF8-2: use the cached value — ``_compute_sigma_q2``
+            # only recomputes when ``action_history`` changes (once per cycle in
+            # ``process``), avoiding 9x redundant O(N) re-materialisations.
+            sigma_q2 = self._compute_sigma_q2()
+            dim = float(gm.state_dim)
+            b_norm_sq = float(np.dot(state, state))
+            if not np.isfinite(b_norm_sq):
+                b_norm_sq = _FREE_ENERGY_SENTINEL
+            # KL(N(state, sigma^2 I) || N(0, I))
+            kl_qp = 0.5 * (
+                b_norm_sq
+                + sigma_q2 * dim
+                - dim
+                - dim * float(np.log(sigma_q2))
+            )
+            # Round-8 audit THEORY8-2: under the variational posterior
+            # ``q(s) = N(state, sigma_q^2 I)``, the expected negative
+            # log-likelihood (pragmatic term) is
+            #   E_q[||obs - s @ emission||^2] = ||obs - state @ emission||^2
+            #                                  + sigma_q^2 * ||emission||_F^2
+            # The previous code included only the first term (``pred_error``),
+            # so when ``sigma_q2`` was large (high posterior uncertainty) the
+            # KL term grew but the pragmatic term did NOT -- the posterior
+            # variance had no effect on the pragmatic surprise, biasing
+            # ``select_action`` toward over-confident actions. Adding the
+            # missing ``sigma_q2 * ||emission||_F^2`` term makes the KL and
+            # pragmatic terms consistent: higher posterior uncertainty now
+            # RAISES the expected surprise, so ``select_action`` is rewarded
+            # for visiting well-resolved states (low sigma_q2) -- the
+            # epistemic-drive behaviour active inference predicts.
+            emission_fro_sq = float(
+                np.dot(gm.emission.ravel(), gm.emission.ravel())
+            )
+            pragmatic = pred_error + sigma_q2 * emission_fro_sq
+            fe = pragmatic + kl_qp
+            # Final guard: if anything still escaped (shouldn't happen, but
+            # defense-in-depth), return the sentinel rather than NaN.
+            return float(fe) if np.isfinite(fe) else _FREE_ENERGY_SENTINEL
 
     def select_action(
         self,
@@ -493,85 +514,86 @@ class ActiveInferenceEngine(CognitiveModule):
         ``+ action`` term changes. Saves 7 redundant O(dim^2) matmuls per
         ``select_action`` call.
         """
-        best_action = None
-        best_efep = float("inf")
-        # Markov blanket projection: belief -> mean action. Shape
-        # (active_dim,) = belief @ active_weights.
-        aw = self.blanket.active_weights  # (internal_dim, active_dim)
-        if belief.shape[0] == aw.shape[0]:
-            mean_action = belief @ aw
-        else:
-            mean_action = np.zeros(self.blanket.active_dim)
-        # Round-8 audit PERF8-4: belief @ transition is invariant across the
-        # 8 candidate actions (only the additive action term changes), so
-        # hoist it out of the loop. Saves 7 redundant O(dim^2) matmuls.
-        base_next_state = self.generative_model.predict_next_state(belief, action=None)
-        # Round-8 audit THEORY8-12: the epistemic bonus must measure the
-        # spread of predicted states ACROSS the 8 candidate actions (i.e.
-        # how much each candidate resolves the uncertainty about which
-        # action to take), NOT the variance across the COMPONENTS of one
-        # candidate's predicted-state vector. The previous
-        # ``np.var(predicted_state)`` computed the within-candidate
-        # dimension-spread -- dominated by the magnitude profile of the
-        # state vector, not by the action's information value. We collect
-        # all candidate (action, predicted_state, efe, homeostatic_dev)
-        # tuples first, then compute the cross-candidate variance per
-        # state-dimension and assign each candidate its share of the
-        # epistemic bonus.
-        candidates: list[np.ndarray] = []
-        predicted_states: list[np.ndarray] = []
-        efes: list[float] = []
-        homeostatic_devs: list[float] = []
-        for _ in range(8):
-            # Sample around the blanket-projected mean rather than around 0,
-            # so the action selection uses the sensory-active coupling learned
-            # by the Markov blanket.
-            # Round-3 audit CRIT-1: per-module Generator
-            candidate = mean_action + self._rng.standard_normal(self.blanket.active_dim) * 0.5
-            # Apply only the action's additive contribution (transition part
-            # already in base_next_state). Pads to state_dim.
-            padded = np.zeros(self.generative_model.state_dim)
-            padded[: len(candidate)] = candidate
-            predicted_state = base_next_state + padded
-            # Pragmatic term: expected prediction error under this action.
-            # Round-8 audit THEORY8-1: evaluate the EFE against the CURRENT
-            # observation (not the predicted observation) so the NLL term is
-            # non-degenerate. If no current observation is available, fall
-            # back to the prior prediction target so the EFE is well-defined.
-            if current_observation is not None:
-                efe_obs = current_observation
+        with self._lock:
+            best_action = None
+            best_efep = float("inf")
+            # Markov blanket projection: belief -> mean action. Shape
+            # (active_dim,) = belief @ active_weights.
+            aw = self.blanket.active_weights  # (internal_dim, active_dim)
+            if belief.shape[0] == aw.shape[0]:
+                mean_action = belief @ aw
             else:
-                efe_obs = self.generative_model.predict_observation(predicted_state)
-            efe = self.compute_free_energy(efe_obs, state=predicted_state)
-            # Homeostatic term: deviation from the target state.
-            homeostatic_dev = self.homeostasis.deviation(predicted_state)
-            candidates.append(candidate)
-            predicted_states.append(predicted_state)
-            efes.append(efe)
-            homeostatic_devs.append(homeostatic_dev)
-        # THEORY8-12: cross-candidate variance per state dimension. Each
-        # candidate's epistemic bonus is proportional to how much ITS
-        # predicted state contributes to the cross-candidate spread --
-        # candidates that move the predicted state away from the mean of
-        # the other candidates have higher information potential.
-        predicted_stack = np.stack(predicted_states)  # (8, state_dim)
-        cross_candidate_var = np.var(predicted_stack, axis=0)  # (state_dim,)
-        candidate_mean = np.mean(predicted_stack, axis=0)  # (state_dim,)
-        for i in range(8):
-            # Distance of this candidate's predicted state from the
-            # cross-candidate mean, weighted by the per-dimension variance.
-            # Candidates in high-variance dimensions that are far from the
-            # mean have higher information value.
-            deviation = predicted_states[i] - candidate_mean
-            epistemic_bonus = -0.05 * float(
-                np.dot(deviation * deviation, cross_candidate_var)
-                / (np.sum(cross_candidate_var) + 1e-12)
-            )
-            total = efes[i] + 0.1 * homeostatic_devs[i] + epistemic_bonus
-            if total < best_efep:
-                best_efep = total
-                best_action = candidates[i]
-        return best_action if best_action is not None else np.zeros(self.blanket.active_dim)
+                mean_action = np.zeros(self.blanket.active_dim)
+            # Round-8 audit PERF8-4: belief @ transition is invariant across the
+            # 8 candidate actions (only the additive action term changes), so
+            # hoist it out of the loop. Saves 7 redundant O(dim^2) matmuls.
+            base_next_state = self.generative_model.predict_next_state(belief, action=None)
+            # Round-8 audit THEORY8-12: the epistemic bonus must measure the
+            # spread of predicted states ACROSS the 8 candidate actions (i.e.
+            # how much each candidate resolves the uncertainty about which
+            # action to take), NOT the variance across the COMPONENTS of one
+            # candidate's predicted-state vector. The previous
+            # ``np.var(predicted_state)`` computed the within-candidate
+            # dimension-spread -- dominated by the magnitude profile of the
+            # state vector, not by the action's information value. We collect
+            # all candidate (action, predicted_state, efe, homeostatic_dev)
+            # tuples first, then compute the cross-candidate variance per
+            # state-dimension and assign each candidate its share of the
+            # epistemic bonus.
+            candidates: list[np.ndarray] = []
+            predicted_states: list[np.ndarray] = []
+            efes: list[float] = []
+            homeostatic_devs: list[float] = []
+            for _ in range(8):
+                # Sample around the blanket-projected mean rather than around 0,
+                # so the action selection uses the sensory-active coupling learned
+                # by the Markov blanket.
+                # Round-3 audit CRIT-1: per-module Generator
+                candidate = mean_action + self._rng.standard_normal(self.blanket.active_dim) * 0.5
+                # Apply only the action's additive contribution (transition part
+                # already in base_next_state). Pads to state_dim.
+                padded = np.zeros(self.generative_model.state_dim)
+                padded[: len(candidate)] = candidate
+                predicted_state = base_next_state + padded
+                # Pragmatic term: expected prediction error under this action.
+                # Round-8 audit THEORY8-1: evaluate the EFE against the CURRENT
+                # observation (not the predicted observation) so the NLL term is
+                # non-degenerate. If no current observation is available, fall
+                # back to the prior prediction target so the EFE is well-defined.
+                if current_observation is not None:
+                    efe_obs = current_observation
+                else:
+                    efe_obs = self.generative_model.predict_observation(predicted_state)
+                efe = self.compute_free_energy(efe_obs, state=predicted_state)
+                # Homeostatic term: deviation from the target state.
+                homeostatic_dev = self.homeostasis.deviation(predicted_state)
+                candidates.append(candidate)
+                predicted_states.append(predicted_state)
+                efes.append(efe)
+                homeostatic_devs.append(homeostatic_dev)
+            # THEORY8-12: cross-candidate variance per state dimension. Each
+            # candidate's epistemic bonus is proportional to how much ITS
+            # predicted state contributes to the cross-candidate spread --
+            # candidates that move the predicted state away from the mean of
+            # the other candidates have higher information potential.
+            predicted_stack = np.stack(predicted_states)  # (8, state_dim)
+            cross_candidate_var = np.var(predicted_stack, axis=0)  # (state_dim,)
+            candidate_mean = np.mean(predicted_stack, axis=0)  # (state_dim,)
+            for i in range(8):
+                # Distance of this candidate's predicted state from the
+                # cross-candidate mean, weighted by the per-dimension variance.
+                # Candidates in high-variance dimensions that are far from the
+                # mean have higher information value.
+                deviation = predicted_states[i] - candidate_mean
+                epistemic_bonus = -0.05 * float(
+                    np.dot(deviation * deviation, cross_candidate_var)
+                    / (np.sum(cross_candidate_var) + 1e-12)
+                )
+                total = efes[i] + 0.1 * homeostatic_devs[i] + epistemic_bonus
+                if total < best_efep:
+                    best_efep = total
+                    best_action = candidates[i]
+            return best_action if best_action is not None else np.zeros(self.blanket.active_dim)
 
     def epistemic_foraging(self, belief: np.ndarray) -> Signal | None:
         """Actively seek information when uncertain.
@@ -596,60 +618,62 @@ class ActiveInferenceEngine(CognitiveModule):
         return None
 
     def process(self, signal: Signal) -> Signal:
-        # Round-7 audit THEORY7-3 + PERF7-2: compute the free energy BEFORE
-        # ``update_belief`` mutates ``belief_state``. The Round-6 THEORY6-1
-        # fix called ``compute_free_energy`` AFTER ``update_belief``, so the
-        # recorded FE was the *posterior* surprise (after the belief had
-        # already moved toward the observation), not the *prior* surprise
-        # that ``AnomalyDetector`` (which z-scores this value) expects.
-        # Computing FE first also eliminates the redundant ``infer_state``
-        # call (PERF7-2): ``compute_free_energy`` computes its own
-        # prediction error from ``belief_state @ emission`` — no need for
-        # ``update_belief``'s return value.
-        free_energy = self.compute_free_energy(signal.data)
-        # ``update_belief`` mutates the shared belief_state (this is the only
-        # place analytics-callable code paths intentionally update the belief).
-        belief, pred_error = self.generative_model.update_belief(signal.data)
-        # ``compute_free_energy`` may return the sentinel when ``signal.data``
-        # is non-finite; fall back to the raw prediction error so the history
-        # always carries a finite value for downstream AnomalyDetector.
-        if free_energy == _FREE_ENERGY_SENTINEL or not np.isfinite(free_energy):
-            free_energy = float(pred_error) if np.isfinite(pred_error) else 0.0
-        self.free_energy_history.append(free_energy)
-        # Round-8 audit THEORY8-1: pass the current observation to
-        # ``select_action`` so the EFE's pragmatic term is non-degenerate
-        # (evaluates the predicted state's surprise against the current
-        # sensory input rather than against its own prediction).
-        action = self.select_action(belief, current_observation=signal.data)
-        self.action_history.append(action)
-        # Round-8 audit PERF8-7: keep ``_recent_actions`` in lockstep with
-        # ``action_history`` so ``_compute_sigma_q2`` can read from the
-        # bounded 32-entry deque instead of materialising the full
-        # 1000-entry ``action_history`` every CFE call.
-        self._recent_actions.append(action)
-        # Round-8 audit PERF8-2: invalidate the sigma_q2 cache now that
-        # action_history has a new entry; the next CFE burst will recompute.
-        self._sigma_q2_dirty = True
-        correction = self.homeostasis.regulate(belief)
-        output = belief + correction
-        return Signal(data=output, metadata={"free_energy": free_energy})
+        with self._lock:
+            # Round-7 audit THEORY7-3 + PERF7-2: compute the free energy BEFORE
+            # ``update_belief`` mutates ``belief_state``. The Round-6 THEORY6-1
+            # fix called ``compute_free_energy`` AFTER ``update_belief``, so the
+            # recorded FE was the *posterior* surprise (after the belief had
+            # already moved toward the observation), not the *prior* surprise
+            # that ``AnomalyDetector`` (which z-scores this value) expects.
+            # Computing FE first also eliminates the redundant ``infer_state``
+            # call (PERF7-2): ``compute_free_energy`` computes its own
+            # prediction error from ``belief_state @ emission`` — no need for
+            # ``update_belief``'s return value.
+            free_energy = self.compute_free_energy(signal.data)
+            # ``update_belief`` mutates the shared belief_state (this is the only
+            # place analytics-callable code paths intentionally update the belief).
+            belief, pred_error = self.generative_model.update_belief(signal.data)
+            # ``compute_free_energy`` may return the sentinel when ``signal.data``
+            # is non-finite; fall back to the raw prediction error so the history
+            # always carries a finite value for downstream AnomalyDetector.
+            if free_energy == _FREE_ENERGY_SENTINEL or not np.isfinite(free_energy):
+                free_energy = float(pred_error) if np.isfinite(pred_error) else 0.0
+            self.free_energy_history.append(free_energy)
+            # Round-8 audit THEORY8-1: pass the current observation to
+            # ``select_action`` so the EFE's pragmatic term is non-degenerate
+            # (evaluates the predicted state's surprise against the current
+            # sensory input rather than against its own prediction).
+            action = self.select_action(belief, current_observation=signal.data)
+            self.action_history.append(action)
+            # Round-8 audit PERF8-7: keep ``_recent_actions`` in lockstep with
+            # ``action_history`` so ``_compute_sigma_q2`` can read from the
+            # bounded 32-entry deque instead of materialising the full
+            # 1000-entry ``action_history`` every CFE call.
+            self._recent_actions.append(action)
+            # Round-8 audit PERF8-2: invalidate the sigma_q2 cache now that
+            # action_history has a new entry; the next CFE burst will recompute.
+            self._sigma_q2_dirty = True
+            correction = self.homeostasis.regulate(belief)
+            output = belief + correction
+            return Signal(data=output, metadata={"free_energy": free_energy})
 
     def predict(self, signal: Signal) -> Prediction:
-        # Seed the prediction from the incoming signal rather than the (shared)
-        # internal belief_state, so predictions actually reflect the input.
-        # ``predict_observation`` does ``state @ emission`` and expects a
-        # state_dim-length vector, so we pad/pad the signal to state_dim
-        # (not obs_dim) to avoid a shape mismatch when obs_dim != state_dim.
-        gm = self.generative_model
-        state = signal.data[: gm.state_dim]
-        if len(state) < gm.state_dim:
-            state = np.pad(state, (0, gm.state_dim - len(state)))
-        predicted_obs = gm.predict_observation(state)
-        # Round-3 audit: np.var of empty/NaN returns NaN; guard so a single
-        # bad module cannot poison the integration softmax in think().
-        var = float(np.var(predicted_obs))
-        uncertainty = var if np.isfinite(var) else 1.0
-        return Prediction(value=predicted_obs, uncertainty=uncertainty)
+        with self._lock:
+            # Seed the prediction from the incoming signal rather than the (shared)
+            # internal belief_state, so predictions actually reflect the input.
+            # ``predict_observation`` does ``state @ emission`` and expects a
+            # state_dim-length vector, so we pad/pad the signal to state_dim
+            # (not obs_dim) to avoid a shape mismatch when obs_dim != state_dim.
+            gm = self.generative_model
+            state = signal.data[: gm.state_dim]
+            if len(state) < gm.state_dim:
+                state = np.pad(state, (0, gm.state_dim - len(state)))
+            predicted_obs = gm.predict_observation(state)
+            # Round-3 audit: np.var of empty/NaN returns NaN; guard so a single
+            # bad module cannot poison the integration softmax in think().
+            var = float(np.var(predicted_obs))
+            uncertainty = var if np.isfinite(var) else 1.0
+            return Prediction(value=predicted_obs, uncertainty=uncertainty)
 
     def update(self, prediction_error: float) -> None:
         """Update the generative model from a prediction error signal.
@@ -684,31 +708,32 @@ class ActiveInferenceEngine(CognitiveModule):
         This makes the lr scale consistent with the gradient objective,
         and removes the negative-lr hazard.
         """
-        if not np.isfinite(prediction_error):
-            return
-        # Round-8 audit THEORY8-7: clip to NON-NEGATIVE — a negative
-        # prediction_error would invert the gradient (ascent, not descent).
-        # MSE is non-negative by construction; this is defense-in-depth.
-        prediction_error = float(np.clip(prediction_error, 0.0, 1e6))
-        if prediction_error == 0.0:
-            return
-        # Round-8 audit THEORY8-3: derive lr from the cached inference
-        # context (the same one ``emission_gradient_step`` will use) so the
-        # lr scale and the gradient direction are from the SAME objective.
-        # ``_last_error`` is the error ``update_belief`` computed against
-        # ``belief_state`` (objective B), so the lr matches the gradient
-        # direction. Falls back to the argument when no inference has been
-        # cached yet (preserves the pre-process ``update()`` contract).
-        cached_error = self.generative_model._last_error
-        if cached_error is not None and cached_error.size > 0:
-            scale_error = float(np.dot(cached_error, cached_error)) / cached_error.size
-            if not np.isfinite(scale_error) or scale_error <= 0:
+        with self._lock:
+            if not np.isfinite(prediction_error):
+                return
+            # Round-8 audit THEORY8-7: clip to NON-NEGATIVE — a negative
+            # prediction_error would invert the gradient (ascent, not descent).
+            # MSE is non-negative by construction; this is defense-in-depth.
+            prediction_error = float(np.clip(prediction_error, 0.0, 1e6))
+            if prediction_error == 0.0:
+                return
+            # Round-8 audit THEORY8-3: derive lr from the cached inference
+            # context (the same one ``emission_gradient_step`` will use) so the
+            # lr scale and the gradient direction are from the SAME objective.
+            # ``_last_error`` is the error ``update_belief`` computed against
+            # ``belief_state`` (objective B), so the lr matches the gradient
+            # direction. Falls back to the argument when no inference has been
+            # cached yet (preserves the pre-process ``update()`` contract).
+            cached_error = self.generative_model._last_error
+            if cached_error is not None and cached_error.size > 0:
+                scale_error = float(np.dot(cached_error, cached_error)) / cached_error.size
+                if not np.isfinite(scale_error) or scale_error <= 0:
+                    scale_error = prediction_error
+            else:
                 scale_error = prediction_error
-        else:
-            scale_error = prediction_error
-        # Round-3 audit: clamp lr to prevent divergence when prediction_error
-        # is near the 1e6 ceiling (lr=1000 would overshoot wildly).
-        lr = float(np.clip(0.001 * scale_error, 0.0, 0.1))
-        if lr == 0.0:
-            return
-        self.generative_model.emission_gradient_step(lr)
+            # Round-3 audit: clamp lr to prevent divergence when prediction_error
+            # is near the 1e6 ceiling (lr=1000 would overshoot wildly).
+            lr = float(np.clip(0.001 * scale_error, 0.0, 0.1))
+            if lr == 0.0:
+                return
+            self.generative_model.emission_gradient_step(lr)

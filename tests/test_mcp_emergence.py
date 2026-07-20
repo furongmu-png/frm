@@ -69,10 +69,15 @@ def test_emergence_tools_docstrings_preserved():
 
 def test_perceive_topology_success():
     """Four-cluster corners give β0=4 (4 components, no loops)."""
+    # Phase D topology optimisation: default max_dim is now 1 (O(n^6)).
+    # Pass max_dim=2 explicitly because the test asserts on betti[2] (voids)
+    # and expects len(betti_numbers) == 3. n_points=4 is well under the
+    # high-dim cap of 16, so max_dim=2 is safe here (~0.01s).
     server = _make_server()
     result = server.call_tool(
         "perceive_topology",
         data=[[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]],
+        max_dim=2,
     )
     assert isinstance(result, dict)
     assert "error" not in result
@@ -96,8 +101,15 @@ def test_perceive_topology_success():
 
 def test_perceive_topology_circle_has_loop():
     """A unit circle must have β0=1 and β1>=1 (one loop)."""
+    # Phase D topology optimisation: default max_dim is now 1; pass
+    # max_dim=2 explicitly because the test asserts betti[2] == 0.
+    # n_points=16 is exactly at the high-dim cap, so max_dim=2 is allowed.
     server = _make_server()
-    result = server.call_tool("perceive_topology", data=_circle_points(16))
+    result = server.call_tool(
+        "perceive_topology",
+        data=_circle_points(16),
+        max_dim=2,
+    )
     assert "error" not in result
     assert result["betti_numbers"][0] == 1
     assert result["betti_numbers"][1] >= 1

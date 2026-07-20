@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import threading
 from collections import OrderedDict
 
 import numpy as np
@@ -293,6 +294,15 @@ class BiologicalSubstrate(CognitiveModule):
         self.dim = dim
         # Round-3 audit CRIT-1: per-module Generator
         self._rng = rng if rng is not None else np.random.default_rng()
+        # Per-module re-entrant lock (Phase D / think() lockless update):
+        # protects ``process`` / ``predict`` / ``update`` from concurrent
+        # think() calls racing on ``self._rng`` and shared mutable state
+        # (dna_storage, morphogenetic, automata, _cycle_count). RLock
+        # allows re-entry. ``predict``'s save/restore pattern for the
+        # morphogenetic grid benefits most from locking — without it, two
+        # concurrent ``predict`` calls could each save a different grid,
+        # then both restore, clobbering each other.
+        self._lock = threading.RLock()
         self.dna_storage = DNAStorage(capacity=16, rng=self._rng)
         self.morphogenetic = MorphogeneticField(grid_size=16, rng=self._rng)
         self.automata = CellularAutomata(size=dim, rng=self._rng)
@@ -311,88 +321,102 @@ class BiologicalSubstrate(CognitiveModule):
         # pass was a real per-cycle cost.
         self._last_process_output: np.ndarray | None = None
 
+    def __getstate__(self) -> dict:
+        # Phase D: per-module RLock is not picklable. Strip it here and
+        # rebuild in __setstate__. Hold the lock so concurrent think()
+        # blocks during the snapshot (consistent array copy).
+        with self._lock:
+            return {k: v for k, v in self.__dict__.items() if k != "_lock"}
+
+    def __setstate__(self, state: dict) -> None:
+        self.__dict__.update(state)
+        self._lock = threading.RLock()
+
     def process(self, signal: Signal) -> Signal:
-        # Use a unique per-cycle key so the store accumulates a population of
-        # signals and crossover/recombination actually runs (Fix 4). Capacity
-        # is bounded by DNAStorage (oldest evicted automatically).
-        self.dna_storage.store(f"signal_{self._cycle_count}", signal.data)
-        self._cycle_count += 1
-        generated = self.dna_storage.generate(signal)
-        pattern = self.morphogenetic.develop(n_steps=10)
-        pattern_flat = pattern.flatten()[: self.dim]
-        if len(pattern_flat) < self.dim:
-            pattern_flat = np.pad(pattern_flat, (0, self.dim - len(pattern_flat)))
-        self.automata.step_n(5)
-        ca_signal = self.automata.state.astype(float)
-        combined = 0.4 * generated.data[: self.dim] + 0.3 * pattern_flat + 0.3 * ca_signal
-        if len(combined) < self.dim:
-            combined = np.pad(combined, (0, self.dim - len(combined)))
-        # Round-8 audit PERF8-3: cache for ``predict`` to reuse.
-        self._last_process_output = combined[: self.dim]
-        return Signal(data=combined[: self.dim], metadata={"source": "biological"})
+        with self._lock:
+            # Use a unique per-cycle key so the store accumulates a population of
+            # signals and crossover/recombination actually runs (Fix 4). Capacity
+            # is bounded by DNAStorage (oldest evicted automatically).
+            self.dna_storage.store(f"signal_{self._cycle_count}", signal.data)
+            self._cycle_count += 1
+            generated = self.dna_storage.generate(signal)
+            pattern = self.morphogenetic.develop(n_steps=10)
+            pattern_flat = pattern.flatten()[: self.dim]
+            if len(pattern_flat) < self.dim:
+                pattern_flat = np.pad(pattern_flat, (0, self.dim - len(pattern_flat)))
+            self.automata.step_n(5)
+            ca_signal = self.automata.state.astype(float)
+            combined = 0.4 * generated.data[: self.dim] + 0.3 * pattern_flat + 0.3 * ca_signal
+            if len(combined) < self.dim:
+                combined = np.pad(combined, (0, self.dim - len(combined)))
+            # Round-8 audit PERF8-3: cache for ``predict`` to reuse.
+            self._last_process_output = combined[: self.dim]
+            return Signal(data=combined[: self.dim], metadata={"source": "biological"})
 
     def predict(self, signal: Signal) -> Prediction:
-        # Round-8 audit PERF8-3: reuse the cached process output when available
-        # so we do not re-run ``morphogenetic.develop(n_steps=5)`` (the
-        # heaviest op in this module) twice per think() cycle. Falls back to
-        # the full perturbed-develop pass when ``predict`` is called
-        # standalone (no prior ``process`` in this cycle), matching the
-        # ConsciousnessCore/MathUniverse pattern (Fix 12).
-        if self._last_process_output is not None:
-            predicted = self._last_process_output
+        with self._lock:
+            # Round-8 audit PERF8-3: reuse the cached process output when available
+            # so we do not re-run ``morphogenetic.develop(n_steps=5)`` (the
+            # heaviest op in this module) twice per think() cycle. Falls back to
+            # the full perturbed-develop pass when ``predict`` is called
+            # standalone (no prior ``process`` in this cycle), matching the
+            # ConsciousnessCore/MathUniverse pattern (Fix 12).
+            if self._last_process_output is not None:
+                predicted = self._last_process_output
+                var = float(np.var(predicted))
+                uncertainty = var if np.isfinite(var) else 1.0
+                return Prediction(value=predicted[: self.dim], uncertainty=uncertainty)
+            # Seed the morphogenetic field development from the incoming signal
+            # rather than ignoring it (Fix 17): project the signal onto the grid
+            # via an outer product so the prediction actually reflects the input.
+            seed = signal.data[: self.dim]
+            if len(seed) < self.dim:
+                seed = np.pad(seed, (0, self.dim - len(seed)))
+            gs = self.morphogenetic.grid.shape[0]
+            # Build a (gs, gs) perturbation from the first ``gs`` signal samples.
+            seed_vec = seed[:gs]
+            if seed_vec.shape[0] < gs:
+                seed_vec = np.pad(seed_vec, (0, gs - seed_vec.shape[0]))
+            perturb = 0.05 * np.outer(seed_vec, seed_vec)
+            # Save/restore the morphogenetic grid so predict() stays read-only
+            # w.r.t. substrate state across the parallel predict step.
+            saved_grid = self.morphogenetic.grid.copy()
+            saved_morphogens = [m.copy() for m in self.morphogenetic.morphogens]
+            saved_rate = self.morphogenetic.diffusion_rate
+            try:
+                self.morphogenetic.grid = self.morphogenetic.grid + perturb
+                pattern = self.morphogenetic.develop(n_steps=5)
+            finally:
+                self.morphogenetic.grid = saved_grid
+                self.morphogenetic.morphogens = saved_morphogens
+                self.morphogenetic.diffusion_rate = saved_rate
+            predicted = pattern.flatten()[: self.dim]
+            if len(predicted) < self.dim:
+                predicted = np.pad(predicted, (0, self.dim - len(predicted)))
+            # Round-3 audit: np.var of empty/NaN returns NaN; guard.
             var = float(np.var(predicted))
             uncertainty = var if np.isfinite(var) else 1.0
             return Prediction(value=predicted[: self.dim], uncertainty=uncertainty)
-        # Seed the morphogenetic field development from the incoming signal
-        # rather than ignoring it (Fix 17): project the signal onto the grid
-        # via an outer product so the prediction actually reflects the input.
-        seed = signal.data[: self.dim]
-        if len(seed) < self.dim:
-            seed = np.pad(seed, (0, self.dim - len(seed)))
-        gs = self.morphogenetic.grid.shape[0]
-        # Build a (gs, gs) perturbation from the first ``gs`` signal samples.
-        seed_vec = seed[:gs]
-        if seed_vec.shape[0] < gs:
-            seed_vec = np.pad(seed_vec, (0, gs - seed_vec.shape[0]))
-        perturb = 0.05 * np.outer(seed_vec, seed_vec)
-        # Save/restore the morphogenetic grid so predict() stays read-only
-        # w.r.t. substrate state across the parallel predict step.
-        saved_grid = self.morphogenetic.grid.copy()
-        saved_morphogens = [m.copy() for m in self.morphogenetic.morphogens]
-        saved_rate = self.morphogenetic.diffusion_rate
-        try:
-            self.morphogenetic.grid = self.morphogenetic.grid + perturb
-            pattern = self.morphogenetic.develop(n_steps=5)
-        finally:
-            self.morphogenetic.grid = saved_grid
-            self.morphogenetic.morphogens = saved_morphogens
-            self.morphogenetic.diffusion_rate = saved_rate
-        predicted = pattern.flatten()[: self.dim]
-        if len(predicted) < self.dim:
-            predicted = np.pad(predicted, (0, self.dim - len(predicted)))
-        # Round-3 audit: np.var of empty/NaN returns NaN; guard.
-        var = float(np.var(predicted))
-        uncertainty = var if np.isfinite(var) else 1.0
-        return Prediction(value=predicted[: self.dim], uncertainty=uncertainty)
 
     def update(self, prediction_error: float) -> None:
-        if not np.isfinite(prediction_error):
-            return
-        # Round-8 audit THEORY8-11: clip to NON-NEGATIVE (MSE is non-negative
-        # by construction; a negative value would invert the rate update,
-        # matching the THEORY8-7 fix in active_inference.update).
-        prediction_error = float(np.clip(prediction_error, 0.0, 1e6))
-        if prediction_error == 0.0:
-            return
-        # Round-8 audit THEORY8-11: use ``tanh`` to keep the rate update
-        # bounded and proportional. The previous ``rate += err * 0.01`` saturated
-        # to the [0.001, 0.2] clip boundaries for any |err| > 20, turning the
-        # update into a binary "small error -> floor, large error -> ceiling"
-        # control with no gradient in between. ``tanh`` preserves the
-        # small-error/small-update gradient while capping large errors.
-        # ``0.01 * tanh(err * 0.001)`` ranges in [-0.01, 0.01] (err=1e3 ->
-        # ~0.01, err=1 -> 1e-5), so a single update never moves the rate by
-        # more than 0.01 — well inside the [0.001, 0.2] stability window.
-        delta = 0.01 * float(np.tanh(prediction_error * 0.001))
-        new_rate = self.morphogenetic.diffusion_rate + delta
-        self.morphogenetic.diffusion_rate = min(0.2, max(0.001, new_rate))
+        with self._lock:
+            if not np.isfinite(prediction_error):
+                return
+            # Round-8 audit THEORY8-11: clip to NON-NEGATIVE (MSE is non-negative
+            # by construction; a negative value would invert the rate update,
+            # matching the THEORY8-7 fix in active_inference.update).
+            prediction_error = float(np.clip(prediction_error, 0.0, 1e6))
+            if prediction_error == 0.0:
+                return
+            # Round-8 audit THEORY8-11: use ``tanh`` to keep the rate update
+            # bounded and proportional. The previous ``rate += err * 0.01`` saturated
+            # to the [0.001, 0.2] clip boundaries for any |err| > 20, turning the
+            # update into a binary "small error -> floor, large error -> ceiling"
+            # control with no gradient in between. ``tanh`` preserves the
+            # small-error/small-update gradient while capping large errors.
+            # ``0.01 * tanh(err * 0.001)`` ranges in [-0.01, 0.01] (err=1e3 ->
+            # ~0.01, err=1 -> 1e-5), so a single update never moves the rate by
+            # more than 0.01 — well inside the [0.001, 0.2] stability window.
+            delta = 0.01 * float(np.tanh(prediction_error * 0.001))
+            new_rate = self.morphogenetic.diffusion_rate + delta
+            self.morphogenetic.diffusion_rate = min(0.2, max(0.001, new_rate))

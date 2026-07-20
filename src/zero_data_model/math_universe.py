@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import threading
+
 import numpy as np
 
 from .base import CognitiveModule, Prediction, Signal
@@ -364,6 +366,12 @@ class MathematicalUniverse(CognitiveModule):
         self.dim = dim
         # Round-3 audit CRIT-1: per-module Generator
         self._rng = rng if rng is not None else np.random.default_rng()
+        # Per-module re-entrant lock (Phase D / think() lockless update):
+        # protects ``process`` / ``predict`` / ``update`` from concurrent
+        # think() calls racing on ``self._rng`` and shared mutable state
+        # (info_geometry, topology, fractal.transforms). RLock allows
+        # re-entry (process -> fractal.generate -> topology features).
+        self._lock = threading.RLock()
         self.info_geometry = InformationGeometry(dim)
         self.topology = TopologicalAnalyzer(dim)
         self.fractal = FractalGenerator(dim, rng=self._rng)
@@ -371,41 +379,55 @@ class MathematicalUniverse(CognitiveModule):
         # instead of re-running ``fractal.generate`` (Fix 12).
         self._last_process_output: np.ndarray | None = None
 
+    def __getstate__(self) -> dict:
+        # Phase D: per-module RLock is not picklable. Strip it here and
+        # rebuild in __setstate__. Hold the lock so concurrent think()
+        # blocks during the snapshot (consistent array copy).
+        with self._lock:
+            return {k: v for k, v in self.__dict__.items() if k != "_lock"}
+
+    def __setstate__(self, state: dict) -> None:
+        self.__dict__.update(state)
+        self._lock = threading.RLock()
+
     def process(self, signal: Signal) -> Signal:
-        topo_features = self.topology.topological_features(signal.data)
-        fractal_output = self.fractal.generate(signal.data)
-        combined = 0.5 * topo_features + 0.5 * fractal_output
-        # Cache the combined output for predict() to reuse (Fix 12).
-        self._last_process_output = combined
-        return Signal(data=combined, metadata={"topological": True, "fractal": True})
+        with self._lock:
+            topo_features = self.topology.topological_features(signal.data)
+            fractal_output = self.fractal.generate(signal.data)
+            combined = 0.5 * topo_features + 0.5 * fractal_output
+            # Cache the combined output for predict() to reuse (Fix 12).
+            self._last_process_output = combined
+            return Signal(data=combined, metadata={"topological": True, "fractal": True})
 
     def predict(self, signal: Signal) -> Prediction:
-        # Reuse the cached process output when available so we do not call
-        # ``fractal.generate`` twice per think() cycle (Fix 12). Fall back to
-        # a fresh fractal pass when predict() is called standalone.
-        if self._last_process_output is not None:
-            value = self._last_process_output
-        else:
-            value = self.fractal.generate(signal.data, n_iterations=5)
-        return Prediction(value=value, uncertainty=float(np.var(value)))
+        with self._lock:
+            # Reuse the cached process output when available so we do not call
+            # ``fractal.generate`` twice per think() cycle (Fix 12). Fall back to
+            # a fresh fractal pass when predict() is called standalone.
+            if self._last_process_output is not None:
+                value = self._last_process_output
+            else:
+                value = self.fractal.generate(signal.data, n_iterations=5)
+            return Prediction(value=value, uncertainty=float(np.var(value)))
 
     def update(self, prediction_error: float) -> None:
-        if not np.isfinite(prediction_error):
-            return
-        # Round-10 audit R10-C-001: clip to ``[0, 1e6]`` and clamp the
-        # step size to 0.1, matching ``active_inference`` /
-        # ``category_engine`` / ``biological`` / ``quantum_hybrid`` /
-        # ``consciousness_core`` (Round-8 THEORY8-clip contract). The
-        # previous ``[-1e6, 1e6]`` clip allowed negative values to flip
-        # the noise sign (gradient ascent, not descent), and the absence
-        # of a step clamp let a runaway ``prediction_error`` near the
-        # 1e6 ceiling inject 1000 std-dev noise in a single step
-        # (1e6 * 0.001 = 1000), destroying the learned fractal transforms.
-        prediction_error = float(np.clip(prediction_error, 0.0, 1e6))
-        step = float(np.clip(prediction_error * 0.001, 0.0, 0.1))
-        if step == 0.0:
-            return
-        for i, (scale, offset) in enumerate(self.fractal.transforms):
-            # Round-3 audit CRIT-1: per-module Generator
-            noise = self._rng.standard_normal(scale.shape) * step
-            self.fractal.transforms[i] = (scale + noise, offset)
+        with self._lock:
+            if not np.isfinite(prediction_error):
+                return
+            # Round-10 audit R10-C-001: clip to ``[0, 1e6]`` and clamp the
+            # step size to 0.1, matching ``active_inference`` /
+            # ``category_engine`` / ``biological`` / ``quantum_hybrid`` /
+            # ``consciousness_core`` (Round-8 THEORY8-clip contract). The
+            # previous ``[-1e6, 1e6]`` clip allowed negative values to flip
+            # the noise sign (gradient ascent, not descent), and the absence
+            # of a step clamp let a runaway ``prediction_error`` near the
+            # 1e6 ceiling inject 1000 std-dev noise in a single step
+            # (1e6 * 0.001 = 1000), destroying the learned fractal transforms.
+            prediction_error = float(np.clip(prediction_error, 0.0, 1e6))
+            step = float(np.clip(prediction_error * 0.001, 0.0, 0.1))
+            if step == 0.0:
+                return
+            for i, (scale, offset) in enumerate(self.fractal.transforms):
+                # Round-3 audit CRIT-1: per-module Generator
+                noise = self._rng.standard_normal(scale.shape) * step
+                self.fractal.transforms[i] = (scale + noise, offset)

@@ -307,10 +307,15 @@ class ZeroDataMCPServer:
         Args:
             data: 2D array of shape ``(n_points, n_features)``. Must be
                 at least 2x2 — smaller or non-2D input raises ValueError.
-            max_dim: Optional maximum homology dimension (default 2).
+            max_dim: Optional maximum homology dimension. Defaults to
+                ``rules.topology_max_dim`` (1 as of Phase D — computes
+                β0 + β1 only). Pass ``max_dim=2`` to also compute β2
+                (voids); note the column reduction is O(n^9) at
+                max_dim=2, so ``n_points`` is hard-capped at
+                ``rules.topology_max_points_high_dim`` (16 by default).
 
         Returns:
-            Dict with keys ``betti_numbers`` (list[int], len 3),
+            Dict with keys ``betti_numbers`` (list[int], len max_dim+1),
             ``persistence_entropy`` (float), ``euler_characteristic``
             (int), ``n_points`` (int), ``max_eps`` (float).
 

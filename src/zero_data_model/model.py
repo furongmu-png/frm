@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import copy
 import os
 import threading
 
@@ -693,26 +692,44 @@ class ZeroDataModel:
         # concurrent ``think()`` (which acquires ``_lock`` and performs
         # in-place ``emission[:, :] += ...``, ``layer.weights += ...``)
         # could mutate the very arrays pickle was serializing, producing
-        # a torn snapshot. The fix is to ``deepcopy`` the dict INSIDE the
-        # lock so pickle walks private array copies; the lock can then be
-        # released without re-exposing the snapshot to mutation. We drop
-        # the unpicklable concurrency primitives (``_lock`` is an
-        # ``RLock``; ``parallel_executor`` wraps a ``ThreadPoolExecutor``)
-        # BEFORE the deepcopy so ``copy.deepcopy`` does not try to clone
-        # them (which raises ``TypeError``).
-        with self._lock:
-            shallow = self.__dict__.copy()
-            shallow["_lock"] = None
-            shallow["parallel_executor"] = None
-            state = copy.deepcopy(shallow)
-        # ``_seed`` survives in the state so ``__setstate__`` can rebuild
-        # ``parallel_executor`` with the same n_workers policy (1 for
-        # seeded, auto for unseeded).
-        return state
+        # a torn snapshot.
+        #
+        # Phase D (think() lockless update): each core cognitive module
+        # now holds its own per-module ``threading.RLock``. We acquire
+        # all 7 locks (model + 6 modules) in a fixed order so concurrent
+        # ``think()`` calls block at the per-module lock acquisition
+        # until the snapshot completes. Each module implements its own
+        # ``__getstate__`` that strips its own ``_lock`` from the state
+        # dict — so we do NOT mutate the live lock attributes here (the
+        # previous approach set them to ``None`` during deepcopy, which
+        # raced with concurrent ``think()``: the background thread found
+        # ``module._lock = None`` and raised ``TypeError: 'NoneType'
+        # object does not support the context manager protocol``).
+        # Pickle recursively calls each module's ``__getstate__`` when
+        # walking the returned dict, so per-module locks are stripped at
+        # the right level without any live-object mutation.
+        #
+        # We exclude ``_lock`` (model-level RLock, not picklable) and
+        # ``parallel_executor`` (wraps a ThreadPoolExecutor, not picklable)
+        # from the top-level dict; ``__setstate__`` rebuilds them.
+        with self._lock, \
+             self.consciousness._lock, \
+             self.active_inference._lock, \
+             self.category_engine._lock, \
+             self.quantum_hybrid._lock, \
+             self.biological._lock, \
+             self.math_universe._lock:
+            return {
+                k: v for k, v in self.__dict__.items()
+                if k not in ("_lock", "parallel_executor")
+            }
 
     def __setstate__(self, state: dict) -> None:
         self.__dict__.update(state)
-        # Rebuild the concurrency primitives that ``__getstate__`` dropped.
+        # Rebuild the model-level concurrency primitives that
+        # ``__getstate__`` excluded. Per-module ``_lock`` attributes are
+        # rebuilt by each module's own ``__setstate__`` (called by
+        # pickle when it restores the module objects in ``state``).
         self._lock = threading.RLock()
         seed = self._seed
         self.parallel_executor = ParallelExecutor(
@@ -737,9 +754,25 @@ class ZeroDataModel:
         Module ``process`` and ``predict`` steps run concurrently via the
         parallel executor when multiple cores are available.
 
-        The whole cycle is serialized by ``self._lock`` (Fix 7) so concurrent
-        ``think`` calls do not race on the shared per-module Generators
-        (CRIT-1) or on shared module state.
+        Phase D (think() lockless update): previously the whole cycle was
+        serialized by ``self._lock`` (Fix 7), making concurrent API
+        requests sequential. We now drop the global lock and rely on
+        per-module ``threading.RLock`` (added to all 6 core cognitive
+        modules) to protect ``process`` / ``predict`` / ``update`` /
+        ``reflect`` from racing on the per-module Generators (CRIT-1)
+        and on shared module state. Different modules can now run in
+        parallel up to module-level contention; same-module calls
+        serialize on that module's lock.
+
+        Risk control: the only remaining shared state in ``think()`` is
+        ``self.cycle_count`` (an int counter); we protect it with a brief
+        ``self._lock`` acquisition at the end (sub-microsecond). All
+        other setter methods (``load`` / ``save`` / ``solve`` / ...) still
+        hold ``self._lock`` for now — "break through one by one" per the
+        user's instruction. ``_self_generate`` acquires the per-module
+        locks of the two modules it touches (``biological`` and
+        ``math_universe``) so concurrent ``think()`` calls do not race
+        on their RNGs.
 
         C-7: Per-module prediction uncertainties are computed from the input
         signal (not the integrated signal) and used to weight the integration
@@ -749,104 +782,121 @@ class ZeroDataModel:
         predict pass and aligning with predictive-processing theory (bottom-up
         prediction errors drive both integration and learning).
         """
+        # Phase 1: READ — build the input Signal (no shared state mutation).
+        # ``_self_generate`` acquires ``biological._lock`` and
+        # ``math_universe._lock`` internally so it is safe to call
+        # concurrently. When ``input_data`` is provided, no lock is needed
+        # — the Signal is a fresh ndarray copied from the caller's input.
+        if input_data is None:
+            signal = self._self_generate()
+        else:
+            padded = np.zeros(self.dim)
+            padded[: len(input_data)] = input_data[: self.dim]
+            signal = Signal(data=padded)
+
+        # Phase 2: COMPUTE — parallel module processing + prediction.
+        # Each module's ``process`` / ``predict`` acquires its own per-module
+        # RLock internally, so concurrent ``think()`` calls can run in
+        # parallel up to module-level contention (different modules in
+        # parallel; same module serialised). No global lock held here.
+        results = self.parallel_executor.map_modules(self.modules, signal)
+
+        # C-7: Predict from the INPUT signal to obtain per-module
+        # uncertainties, which then weight the integration. Modules that
+        # are more confident (lower uncertainty) about the input contribute
+        # more to the integrated output. The same predictions drive the
+        # ``update()`` step below, avoiding a redundant second predict
+        # pass. ``ConsciousnessCore.predict`` reuses its process cache,
+        # so this call is cheap for that module.
+        preds = self.parallel_executor.map(
+            lambda m: m.predict(signal), self.modules
+        )
+        # Round-3 audit: ``max(nan, 1e-8)`` returns ``nan`` (because
+        # ``nan > 1e-8`` is False, so the first argument wins). Explicitly
+        # reject non-finite uncertainties so a single NaN-poisoned module
+        # cannot corrupt the entire softmax weighting.
+        uncertainties = np.array(
+            [
+                max(float(p.uncertainty), 1e-8)
+                if np.isfinite(float(p.uncertainty))
+                else 1e8
+                for p in preds
+            ]
+        )
+
+        # C-7: Weighted integration by inverse uncertainty. ``_integrate``
+        # is purely functional (no module state mutation) — no lock needed.
+        integrated = self._integrate(results, uncertainties)
+        # ``reflect`` reads ``consciousness.self_model.state``; protected
+        # by ``ConsciousnessCore._lock`` internally.
+        reflection = self.consciousness.reflect()
+
+        # Phase 3: WRITE — per-module update. Each module's ``update``
+        # acquires its own per-module RLock internally, so writes to
+        # different modules are independent (no global lock needed).
+        # Per-module prediction error (Fix 16 + Round-7 THEORY7-4): the
+        # original code passed every module the same mean error; Fix 16
+        # changed it to ``pred.uncertainty`` — but ``uncertainty`` is the
+        # VARIANCE of the predicted output, not a prediction error.
+        # Modules' ``update()`` methods interpret the argument as a
+        # prediction-error magnitude and scale learning rates by it
+        # (e.g. ``lr = 0.001 * prediction_error``). Passing variance
+        # instead of error means a module with high-variance but accurate
+        # predictions gets a large learning rate, while a module with
+        # low-variance but wrong predictions barely updates — the opposite
+        # of what's intended.
+        # Round-7 fix: compute the ACTUAL per-module prediction error as
+        # the mean-squared distance between the predicted observation and
+        # the input signal. Fall back to ``pred.uncertainty`` if the
+        # prediction is non-finite (defensive — keeps update() callable).
+        for module, pred in zip(self.modules, preds, strict=False):
+            pred_val = np.asarray(pred.value, dtype=float).flatten()
+            sig_slice = signal.data[: len(pred_val)]
+            if len(sig_slice) < len(pred_val):
+                sig_slice = np.pad(sig_slice, (0, len(pred_val) - len(sig_slice)))
+            diff = pred_val - sig_slice
+            error = float(np.dot(diff, diff)) / max(len(pred_val), 1)
+            if not np.isfinite(error):
+                error = float(pred.uncertainty)
+            module.update(error)
+
+        # ``cycle_count`` is the only remaining shared state in think().
+        # Use a brief global lock to serialise just the counter increment
+        # (sub-microsecond) so concurrent ``think()`` calls do not lose
+        # updates. Other API setters still hold ``self._lock`` for their
+        # full body — they will block on this brief acquisition only if
+        # they happen to run during this tiny window.
         with self._lock:
-            # Round-3 audit CRIT-1: per-module Generator — each module holds its
-            # own ``self._rng`` (seeded once in ``__init__``), so the per-cycle
-            # global ``np.random.seed`` re-seed is no longer needed. The
-            # generators advance their own state on every draw, so two seeded
-            # models still produce identical ``think()`` sequences.
-
-            if input_data is None:
-                signal = self._self_generate()
-            else:
-                padded = np.zeros(self.dim)
-                padded[: len(input_data)] = input_data[: self.dim]
-                signal = Signal(data=padded)
-
-            # Parallel module processing.
-            results = self.parallel_executor.map_modules(self.modules, signal)
-
-            # C-7: Predict from the INPUT signal to obtain per-module
-            # uncertainties, which then weight the integration. Modules that
-            # are more confident (lower uncertainty) about the input contribute
-            # more to the integrated output. The same predictions drive the
-            # ``update()`` step below, avoiding a redundant second predict
-            # pass. ``ConsciousnessCore.predict`` reuses its process cache,
-            # so this call is cheap for that module.
-            preds = self.parallel_executor.map(
-                lambda m: m.predict(signal), self.modules
-            )
-            # Round-3 audit: ``max(nan, 1e-8)`` returns ``nan`` (because
-            # ``nan > 1e-8`` is False, so the first argument wins). Explicitly
-            # reject non-finite uncertainties so a single NaN-poisoned module
-            # cannot corrupt the entire softmax weighting.
-            uncertainties = np.array(
-                [
-                    max(float(p.uncertainty), 1e-8)
-                    if np.isfinite(float(p.uncertainty))
-                    else 1e8
-                    for p in preds
-                ]
-            )
-
-            # C-7: Weighted integration by inverse uncertainty.
-            integrated = self._integrate(results, uncertainties)
-            reflection = self.consciousness.reflect()
-
-            # Per-module prediction error (Fix 16 + Round-7 THEORY7-4): the
-            # original code passed every module the same mean error; Fix 16
-            # changed it to ``pred.uncertainty`` — but ``uncertainty`` is the
-            # VARIANCE of the predicted output, not a prediction error.
-            # Modules' ``update()`` methods interpret the argument as a
-            # prediction-error magnitude and scale learning rates by it
-            # (e.g. ``lr = 0.001 * prediction_error``). Passing variance
-            # instead of error means a module with high-variance but accurate
-            # predictions gets a large learning rate, while a module with
-            # low-variance but wrong predictions barely updates — the opposite
-            # of what's intended.
-            # Round-7 fix: compute the ACTUAL per-module prediction error as
-            # the mean-squared distance between the predicted observation and
-            # the input signal. Fall back to ``pred.uncertainty`` if the
-            # prediction is non-finite (defensive — keeps update() callable).
-            for module, pred in zip(self.modules, preds, strict=False):
-                pred_val = np.asarray(pred.value, dtype=float).flatten()
-                sig_slice = signal.data[: len(pred_val)]
-                if len(sig_slice) < len(pred_val):
-                    sig_slice = np.pad(sig_slice, (0, len(pred_val) - len(sig_slice)))
-                diff = pred_val - sig_slice
-                error = float(np.dot(diff, diff)) / max(len(pred_val), 1)
-                if not np.isfinite(error):
-                    error = float(pred.uncertainty)
-                module.update(error)
-
             self.cycle_count += 1
-            # Round-8 audit THEORY8-9: previously the returned Signal left
-            # ``confidence`` at its default of 1.0 (base.Signal dataclass),
-            # so every ``/think`` response reported ``confidence: 1.0`` to
-            # clients regardless of how uncertain the model actually was.
-            # Derive a meaningful confidence in (0, 1] from the mean
-            # per-module uncertainty: when modules are very confident
-            # (uncertainty -> 0), confidence -> 1; when they are uncertain,
-            # confidence -> 0. The 1/(1+x) form keeps it bounded and smooth.
-            mean_uncertainty = float(np.mean(uncertainties))
-            confidence = float(1.0 / (1.0 + mean_uncertainty))
-            return Signal(
-                data=integrated.data,
-                metadata={
-                    "cycle": self.cycle_count,
-                    "self_reflection": reflection.metadata,
-                    "module_count": len(self.modules),
-                    # Round-10 audit R10-C-010: propagate the
-                    # ``self_generated`` flag from ``_self_generate`` so
-                    # callers can tell whether this cycle ran on a real
-                    # input or on internally-generated content. Previously
-                    # the metadata was rebuilt here and the flag was lost,
-                    # so any downstream code reading
-                    # ``result.metadata["self_generated"]`` raised KeyError.
-                    "self_generated": input_data is None,
-                },
-                confidence=confidence,
-            )
+            cycle = self.cycle_count
+
+        # Round-8 audit THEORY8-9: previously the returned Signal left
+        # ``confidence`` at its default of 1.0 (base.Signal dataclass),
+        # so every ``/think`` response reported ``confidence: 1.0`` to
+        # clients regardless of how uncertain the model actually was.
+        # Derive a meaningful confidence in (0, 1] from the mean
+        # per-module uncertainty: when modules are very confident
+        # (uncertainty -> 0), confidence -> 1; when they are uncertain,
+        # confidence -> 0. The 1/(1+x) form keeps it bounded and smooth.
+        mean_uncertainty = float(np.mean(uncertainties))
+        confidence = float(1.0 / (1.0 + mean_uncertainty))
+        return Signal(
+            data=integrated.data,
+            metadata={
+                "cycle": cycle,
+                "self_reflection": reflection.metadata,
+                "module_count": len(self.modules),
+                # Round-10 audit R10-C-010: propagate the
+                # ``self_generated`` flag from ``_self_generate`` so
+                # callers can tell whether this cycle ran on a real
+                # input or on internally-generated content. Previously
+                # the metadata was rebuilt here and the flag was lost,
+                # so any downstream code reading
+                # ``result.metadata["self_generated"]`` raised KeyError.
+                "self_generated": input_data is None,
+            },
+            confidence=confidence,
+        )
 
     def _self_generate(self) -> Signal:
         """Self-generate input from internal knowledge."""

@@ -23,9 +23,34 @@ class EmergenceRules(DomainRules):
     spec-v2-verification.md) for the fix history.
     """
 
-    # Module A: persistent homology (fix C1: max_points lowered to 16)
+    # Module A: persistent homology (fix C1: max_points lowered to 16).
+    #
+    # Phase D topology optimisation: ``topology_max_dim`` default lowered
+    # from 2 to 1. The boundary-matrix column reduction is
+    # O(n_cols^3 / 64) where n_cols = sum_d C(n_points, d+1) up to
+    # max_dim+1. For max_dim=2 this is O(n^9) in practice: n=16 finishes
+    # in ~0.3s, n=24 in ~9s, n=32 in ~100s, n=40 in ~10min. Defaulting to
+    # max_dim=1 (computes betti_0 connectivity + betti_1 loops, no voids)
+    # keeps the default path fast (O(n^6)). Users who explicitly opt into
+    # max_dim >= 2 hit ``topology_max_points_high_dim`` (hard cap on
+    # n_points for high-dim computation) and ``topology_max_simplices``
+    # (hard cap on total simplex count) — both raise ``ValueError`` when
+    # exceeded, with a helpful message pointing at the rule fields to
+    # override. This converts the silent ~100s hang into a loud,
+    # actionable error.
     topology_max_points: int = 16
-    topology_max_dim: int = 2
+    topology_max_dim: int = 1
+    # Hard cap on n_points when max_dim >= 2. With max_dim=2 the column
+    # reduction is O(n^9); n=16 is ~0.3s, n=20 is ~2s, n=24 is ~9s. 16 is
+    # the largest n that stays under 1s on commodity hardware. Override
+    # ONLY if you understand the O(n^9) cost.
+    topology_max_points_high_dim: int = 16
+    # Hard cap on total simplex count (sum over dims 0..max_dim+1 of
+    # C(n_points, d+1)). The column reduction is O(n_cols^3 / 64) word
+    # ops; 5000 columns = ~2e9 ops ~= 30s on commodity hardware. This is
+    # the ultimate guard against the combinatorial explosion regardless
+    # of which dim/points combination triggers it.
+    topology_max_simplices: int = 5000
     topology_eps_steps: int = 50
 
     # Module B: causal discovery
@@ -80,6 +105,8 @@ class EmergenceRules(DomainRules):
         self.rules = {
             "topology_max_points": self.topology_max_points,
             "topology_max_dim": self.topology_max_dim,
+            "topology_max_points_high_dim": self.topology_max_points_high_dim,
+            "topology_max_simplices": self.topology_max_simplices,
             "topology_eps_steps": self.topology_eps_steps,
             "causal_method": self.causal_method,
             "causal_significance": self.causal_significance,

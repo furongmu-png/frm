@@ -9,6 +9,27 @@ Algorithm: layered degradation strategy (spec §3.2). For n_points ≤ 16
 (default), full boundary matrix column reduction over GF(2) computes
 betti_0, betti_1, betti_2 and a persistence diagram. Larger inputs are
 deterministically subsampled to ``topology_max_points`` via the rng.
+
+Phase D complexity guard: the boundary-matrix column reduction is
+O(n_cols^3 / 64) word ops, where n_cols = sum_{d=0}^{max_dim+1} C(n_points,
+d+1). For the default ``max_dim=1`` this is O(n^6) -- n=16 finishes in
+~20ms, n=32 in ~25ms. For ``max_dim >= 2`` it is O(n^9) -- n=16 finishes
+in ~300ms, n=24 in ~9s, n=32 in ~100s, n=40 in ~10min.
+
+To prevent the silent O(n^9) hang on medium-sized inputs (the user-facing
+symptom of "feature exists but is unusable"), two hard caps are enforced
+in ``perceive`` / ``_persistent_homology``:
+
+- ``topology_max_points_high_dim`` (default 16): hard cap on n_points
+  when ``max_dim >= 2``. Raise this rule ONLY if you understand the
+  O(n^9) cost.
+- ``topology_max_simplices`` (default 5000): hard cap on total simplex
+  count regardless of dim. The ultimate guard against combinatorial
+  explosion. n_cols = 5000 ~= 2e9 reduction ops ~= 30s.
+
+Both caps raise ``ValueError`` with a message pointing at the rule
+fields to override, so the silent 100s hang becomes a loud, actionable
+error.
 """
 
 from __future__ import annotations
@@ -105,6 +126,25 @@ class PersistentHomologyPerceiver:
             arr = arr[idx]
             n_points = k
 
+        # Phase D complexity guard: hard cap on n_points when max_dim >= 2.
+        # The column reduction is O(n_cols^3 / 64) where n_cols grows like
+        # O(n^(max_dim+2)); for max_dim=2 this is O(n^9). Without this cap
+        # a 24-point cloud at max_dim=2 hangs for ~9s, n=32 for ~100s.
+        # Convert the silent hang into a loud, actionable ValueError.
+        if max_dim >= 2 and n_points > self.rules.topology_max_points_high_dim:
+            raise ValueError(
+                f"PersistentHomologyPerceiver: max_dim={max_dim} with "
+                f"n_points={n_points} exceeds the hard cap "
+                f"topology_max_points_high_dim="
+                f"{self.rules.topology_max_points_high_dim}. "
+                f"The boundary-matrix column reduction is O(n^9) at "
+                f"max_dim=2: n=16 is ~0.3s, n=24 is ~9s, n=32 is ~100s. "
+                f"Either pass max_dim=1 (default; computes betti_0 + "
+                f"betti_1 only) or raise "
+                f"EmergenceRules.topology_max_points_high_dim after "
+                f"understanding the O(n^9) cost."
+            )
+
         # Pairwise distance matrix
         diff = arr[:, None, :] - arr[None, :, :]
         dist = np.sqrt(np.sum(diff * diff, axis=-1))
@@ -183,6 +223,27 @@ class PersistentHomologyPerceiver:
             sxm[0]: i for i, sxm in enumerate(simplices)
         }
         n_cols = len(simplices)
+
+        # Phase D complexity guard: hard cap on total simplex count.
+        # The column reduction below is O(n_cols^3 / 64) word ops; n_cols
+        # = 5000 ~= 2e9 ops ~= 30s on commodity hardware. This is the
+        # ultimate guard against combinatorial explosion regardless of
+        # which (n_points, max_dim) combination triggered it -- the
+        # n_points cap above only catches max_dim >= 2, but a user could
+        # raise both caps and still hit a uselessly-slow regime.
+        max_simplices = getattr(self.rules, "topology_max_simplices", 5000)
+        if n_cols > max_simplices:
+            raise ValueError(
+                f"PersistentHomologyPerceiver: built {n_cols} simplices "
+                f"from n={n} points at max_dim={max_dim}, exceeding the "
+                f"hard cap topology_max_simplices={max_simplices}. "
+                f"The column reduction is O(n_cols^3 / 64): "
+                f"{n_cols} cols ~= {n_cols**3 / 64:.2e} ops. "
+                f"Either lower max_dim, lower n_points (via "
+                f"topology_max_points), or raise "
+                f"EmergenceRules.topology_max_simplices after "
+                f"understanding the cost."
+            )
 
         # Build boundary matrix over GF(2) (as bool ndarray).
         # boundary[i, j] = 1 if simplex i is a face of simplex j (codim 1).

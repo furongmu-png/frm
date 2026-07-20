@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import math
+import threading
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -152,6 +153,12 @@ class CategoryTheoryEngine(CognitiveModule):
         self.dim = dim
         # Round-3 audit CRIT-1: per-module Generator
         self._rng = rng if rng is not None else np.random.default_rng()
+        # Per-module re-entrant lock (Phase D / think() lockless update):
+        # protects ``process`` / ``predict`` / ``update`` from concurrent
+        # think() calls racing on ``self._rng`` and shared mutable state
+        # (categories, functors, topos.classifier). RLock allows re-entry
+        # (process calls structural_similarity which reads classifier).
+        self._lock = threading.RLock()
         self.categories: dict[str, Category] = {}
         self.functors: list[Functor] = []
         self.topos = ToposEngine(dim, rng=self._rng)
@@ -178,6 +185,17 @@ class CategoryTheoryEngine(CognitiveModule):
             object_map={f"concept_{i}": f"concept_{i}" for i in range(5)},
             morphism_map={("concept_0", "concept_1"): transfer_nlp_cv},
         ))
+
+    def __getstate__(self) -> dict:
+        # Phase D: per-module RLock is not picklable. Strip it here and
+        # rebuild in __setstate__. Hold the lock so concurrent think()
+        # blocks during the snapshot (consistent array copy).
+        with self._lock:
+            return {k: v for k, v in self.__dict__.items() if k != "_lock"}
+
+    def __setstate__(self, state: dict) -> None:
+        self.__dict__.update(state)
+        self._lock = threading.RLock()
 
     def structural_similarity(self, problem_a: np.ndarray, problem_b: np.ndarray) -> float:
         """Cosine similarity in ``[-1, 1]`` between two problem vectors.
@@ -299,55 +317,61 @@ class CategoryTheoryEngine(CognitiveModule):
         )
 
     def process(self, signal: Signal) -> Signal:
-        truth = self.topos.classify(signal.data)
-        for cat_name, cat in self.categories.items():
-            for _obj_name, obj_repr in cat.objects.items():
-                # Round-6 audit NEW5-10: call ``structural_similarity`` directly
-                # instead of the deprecated ``find_isomorphism`` alias. The
-                # C-batch renamed the method but missed this callsite, so every
-                # ``think()`` cycle that reached this loop emitted a
-                # DeprecationWarning (with stack-frame inspection) up to 15
-                # times per cycle (3 categories x 5 objects).
-                similarity = self.structural_similarity(signal.data, obj_repr)
-                if similarity > 0.8:
-                    for functor in self.functors:
-                        if functor.source == cat_name:
-                            transferred = functor.apply(obj_repr)
-                            # Round-8 audit PERF8-5: cache the process output
-                            # so ``predict`` reuses it (matches the
-                            # ConsciousnessCore/MathUniverse/BiologicalSubstrate
-                            # pattern from Fix 12 / PERF8-3).
-                            self._last_process_output = transferred
-                            return Signal(data=transferred, metadata={"transferred_from": cat_name})
-        # Round-8 audit PERF8-5: cache for ``predict`` to reuse.
-        self._last_process_output = truth
-        return Signal(data=truth, metadata={"classified": True})
+        with self._lock:
+            truth = self.topos.classify(signal.data)
+            for cat_name, cat in self.categories.items():
+                for _obj_name, obj_repr in cat.objects.items():
+                    # Round-6 audit NEW5-10: call ``structural_similarity`` directly
+                    # instead of the deprecated ``find_isomorphism`` alias. The
+                    # C-batch renamed the method but missed this callsite, so every
+                    # ``think()`` cycle that reached this loop emitted a
+                    # DeprecationWarning (with stack-frame inspection) up to 15
+                    # times per cycle (3 categories x 5 objects).
+                    similarity = self.structural_similarity(signal.data, obj_repr)
+                    if similarity > 0.8:
+                        for functor in self.functors:
+                            if functor.source == cat_name:
+                                transferred = functor.apply(obj_repr)
+                                # Round-8 audit PERF8-5: cache the process output
+                                # so ``predict`` reuses it (matches the
+                                # ConsciousnessCore/MathUniverse/BiologicalSubstrate
+                                # pattern from Fix 12 / PERF8-3).
+                                self._last_process_output = transferred
+                                return Signal(
+                                    data=transferred,
+                                    metadata={"transferred_from": cat_name},
+                                )
+            # Round-8 audit PERF8-5: cache for ``predict`` to reuse.
+            self._last_process_output = truth
+            return Signal(data=truth, metadata={"classified": True})
 
     def predict(self, signal: Signal) -> Prediction:
-        # Round-8 audit PERF8-5: reuse the cached process output so we do not
-        # re-run ``topos.classify`` (an O(dim^2) matmul + sigmoid) twice per
-        # think() cycle. Falls back to a fresh classify when ``predict`` is
-        # called standalone (no prior ``process`` in this cycle), matching
-        # the ConsciousnessCore/MathUniverse/BiologicalSubstrate pattern.
-        if self._last_process_output is not None:
-            truth = self._last_process_output
-        else:
-            truth = self.topos.classify(signal.data)
-        return Prediction(value=truth, uncertainty=float(1.0 - np.mean(np.abs(truth))))
+        with self._lock:
+            # Round-8 audit PERF8-5: reuse the cached process output so we do not
+            # re-run ``topos.classify`` (an O(dim^2) matmul + sigmoid) twice per
+            # think() cycle. Falls back to a fresh classify when ``predict`` is
+            # called standalone (no prior ``process`` in this cycle), matching
+            # the ConsciousnessCore/MathUniverse/BiologicalSubstrate pattern.
+            if self._last_process_output is not None:
+                truth = self._last_process_output
+            else:
+                truth = self.topos.classify(signal.data)
+            return Prediction(value=truth, uncertainty=float(1.0 - np.mean(np.abs(truth))))
 
     def update(self, prediction_error: float) -> None:
-        if not np.isfinite(prediction_error):
-            return
-        # Round-8 audit THEORY8-clip: clip to [0, 1e6] (NON-NEGATIVE) to
-        # match ``active_inference.update`` and ``biological.update``. The
-        # previous ``[-1e6, 1e6]`` clip allowed negative values to flip
-        # the noise sign -- so a module could "learn" in the OPPOSITE
-        # direction from what the prediction error signals (gradient
-        # ascent instead of descent). ``biological.update`` uses
-        # ``tanh(prediction_error * 0.001)`` (sign-preserving but bounded);
-        # ``active_inference.update`` clips to ``[0, 1e6]``. We pick the
-        # latter for consistency with the rest of the cognitive stack.
-        prediction_error = float(np.clip(prediction_error, 0.0, 1e6))
-        # Round-3 audit CRIT-1: per-module Generator
-        noise = self._rng.standard_normal((self.dim, self.dim)) * prediction_error * 0.001
-        self.topos.classifier += noise
+        with self._lock:
+            if not np.isfinite(prediction_error):
+                return
+            # Round-8 audit THEORY8-clip: clip to [0, 1e6] (NON-NEGATIVE) to
+            # match ``active_inference.update`` and ``biological.update``. The
+            # previous ``[-1e6, 1e6]`` clip allowed negative values to flip
+            # the noise sign -- so a module could "learn" in the OPPOSITE
+            # direction from what the prediction error signals (gradient
+            # ascent instead of descent). ``biological.update`` uses
+            # ``tanh(prediction_error * 0.001)`` (sign-preserving but bounded);
+            # ``active_inference.update`` clips to ``[0, 1e6]``. We pick the
+            # latter for consistency with the rest of the cognitive stack.
+            prediction_error = float(np.clip(prediction_error, 0.0, 1e6))
+            # Round-3 audit CRIT-1: per-module Generator
+            noise = self._rng.standard_normal((self.dim, self.dim)) * prediction_error * 0.001
+            self.topos.classifier += noise

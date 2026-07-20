@@ -45,13 +45,19 @@ web = [
 ]
 mcp = ["mcp>=1.0,<2"]
 # Dev tooling: pytest 7+/8, ruff 0.x, line_profiler 5.x (Fix 20),
-# hypothesis 6.x for property-based invariant tests (Round-3 audit C-batch).
+# hypothesis 6.x for property-based invariant tests (Round-3 audit
+# C-batch). httpx is required by fastapi.testclient.TestClient used in
+# the API + phase-integration test suites (test_api_emergence,
+# test_phase{6,7}_*_integration). Without it declared here, CI installs
+# (which start from a clean environment) silently skip those tests via
+# pytest.importorskip, masking real regressions (Phase D dep fix).
 dev = [
     "pytest>=7,<9",
     "pytest-cov>=4,<8",
     "ruff>=0.1,<1",
     "line_profiler>=4,<6",
     "hypothesis>=6,<7",
+    "httpx>=0.24,<1",
 ]
 all = [
     "qiskit>=1.0,<3",
@@ -66,6 +72,12 @@ all = [
     "structlog>=24,<27",
     "prometheus-fastapi-instrumentator>=6,<9",
     "mcp>=1.0,<2",
+    "pytest>=7,<9",
+    "pytest-cov>=4,<8",
+    "ruff>=0.1,<1",
+    "line_profiler>=4,<6",
+    "hypothesis>=6,<7",
+    "httpx>=0.24,<1",
 ]
 
 [tool.setuptools.packages.find]

@@ -42,9 +42,12 @@ def _disc_points(n: int = 16, rng=None) -> np.ndarray:
 
 def test_circle_betti_numbers():
     """Unit circle sampled at 16 points -> betti = [1, 1, 0]."""
+    # Phase D topology optimisation: default max_dim is now 1 (O(n^6)).
+    # Tests that assert on betti_2 (voids) must explicitly opt into
+    # max_dim=2 (O(n^9) — only viable for n_points <= 16).
     perceiver = PersistentHomologyPerceiver(rules=EmergenceRules())
     points = _circle_points(16)
-    result = perceiver.perceive(points)
+    result = perceiver.perceive(points, max_dim=2)
     assert result["betti_numbers"][0] == 1, "circle has 1 connected component"
     assert result["betti_numbers"][1] >= 1, "circle has at least 1 loop"
     assert result["betti_numbers"][2] == 0, "circle has no voids"
@@ -52,10 +55,12 @@ def test_circle_betti_numbers():
 
 def test_disc_betti_numbers():
     """Solid disc -> betti = [1, 0, 0] (connected, no loops, no voids)."""
+    # Phase D topology optimisation: default max_dim is now 1; opt into
+    # max_dim=2 here because the test asserts on betti_2 == 0.
     rng = np.random.default_rng(7)
     perceiver = PersistentHomologyPerceiver(rules=EmergenceRules(), rng=rng)
     points = _disc_points(16, rng=rng)
-    result = perceiver.perceive(points)
+    result = perceiver.perceive(points, max_dim=2)
     assert result["betti_numbers"][0] == 1
     assert result["betti_numbers"][1] == 0
     assert result["betti_numbers"][2] == 0
@@ -74,9 +79,11 @@ def test_two_clusters_betti_zero():
 
 def test_euler_characteristic_circle():
     """Circle: chi = betti_0 - betti_1 + betti_2 = 1 - 1 + 0 = 0."""
+    # Phase D topology optimisation: default max_dim is now 1; opt into
+    # max_dim=2 so betti_2 is computed (the test reads b[2]).
     perceiver = PersistentHomologyPerceiver(rules=EmergenceRules())
     points = _circle_points(16)
-    result = perceiver.perceive(points)
+    result = perceiver.perceive(points, max_dim=2)
     b = result["betti_numbers"]
     expected_euler = b[0] - b[1] + (b[2] if len(b) > 2 else 0)
     assert result["euler_characteristic"] == expected_euler
@@ -247,3 +254,85 @@ def test_performance_under_2_seconds():
     perceiver.perceive(points)
     elapsed = time.perf_counter() - start
     assert elapsed < 2.0, f"topology took {elapsed:.2f}s, expected < 2s"
+
+
+# ----------------------------------------------------------------------
+# Phase D topology optimisation: complexity guards (spec §3.2 + §10.4)
+# ----------------------------------------------------------------------
+
+def test_default_max_dim_is_1():
+    """Phase D: default ``topology_max_dim`` is 1 (O(n^6)) instead of 2
+    (O(n^9)). The default ``perceive`` call must return exactly 2 Betti
+    numbers (betti_0 + betti_1) without computing voids.
+    """
+    perceiver = PersistentHomologyPerceiver(rules=EmergenceRules())
+    result = perceiver.perceive(_circle_points(16))
+    assert len(result["betti_numbers"]) == 2
+    assert result["betti_numbers"][0] == 1  # circle is connected
+    assert result["betti_numbers"][1] >= 1   # circle has at least 1 loop
+
+
+def test_high_dim_raises_on_too_many_points():
+    """Phase D: ``max_dim >= 2`` with ``n_points > max_points_high_dim``
+    raises ``ValueError`` instead of silently hanging for ~100s.
+
+    The default ``topology_max_points_high_dim`` is 16 (the largest n
+    that stays under ~1s at max_dim=2). We raise the subsampling cap
+    to 32 here and verify the high-dim guard fires before the column
+    reduction runs.
+    """
+    rng = np.random.default_rng(0)
+    rules = EmergenceRules(topology_max_points=32)  # bypass subsampling
+    perceiver = PersistentHomologyPerceiver(rules=rules, rng=rng)
+    points = rng.standard_normal((24, 4))  # n=24 at max_dim=2 ~= 9s without cap
+    with pytest.raises(ValueError, match="topology_max_points_high_dim"):
+        perceiver.perceive(points, max_dim=2)
+
+
+def test_high_dim_allows_n_at_cap():
+    """Phase D: ``max_dim >= 2`` with ``n_points == max_points_high_dim``
+    is allowed (boundary case). n=16 at max_dim=2 finishes in ~0.3s.
+    """
+    rng = np.random.default_rng(0)
+    rules = EmergenceRules()  # default cap = 16
+    perceiver = PersistentHomologyPerceiver(rules=rules, rng=rng)
+    points = rng.standard_normal((16, 4))
+    result = perceiver.perceive(points, max_dim=2)
+    assert len(result["betti_numbers"]) == 3
+
+
+def test_simplex_count_cap_fires():
+    """Phase D: ``topology_max_simplices`` raises when the total simplex
+    count exceeds the hard cap, regardless of which (n, max_dim)
+    combination triggers it.
+
+    We set ``topology_max_simplices = 100`` (well below the default
+    5000) and verify that a 16-point cloud at max_dim=2 (which would
+    build 16 + 120 + 560 + 1820 = 2516 simplices) hits the cap.
+    """
+    rng = np.random.default_rng(0)
+    rules = EmergenceRules(topology_max_simplices=100)
+    perceiver = PersistentHomologyPerceiver(rules=rules, rng=rng)
+    points = rng.standard_normal((16, 4))
+    with pytest.raises(ValueError, match="topology_max_simplices"):
+        perceiver.perceive(points, max_dim=2)
+
+
+def test_max_dim_1_unaffected_by_high_dim_cap():
+    """Phase D: the ``max_dim >= 2`` points cap does not affect
+    ``max_dim=1`` calls, which are O(n^6) and safe at moderate n_points.
+
+    n=28 at max_dim=1 builds 28 + C(28,2) + C(28,3) = 3682 simplices,
+    comfortably under ``topology_max_simplices=5000``, so neither cap
+    fires. The same n at max_dim=2 would build ~13k simplices and trip
+    the simplex cap; at max_dim >= 2 with n > 16 it would also trip the
+    high-dim points cap. This test isolates the points-cap behaviour by
+    showing max_dim=1 is exempt from it.
+    """
+    rng = np.random.default_rng(0)
+    rules = EmergenceRules(topology_max_points=28)  # bypass subsampling
+    perceiver = PersistentHomologyPerceiver(rules=rules, rng=rng)
+    points = rng.standard_normal((28, 4))
+    result = perceiver.perceive(points, max_dim=1)
+    assert result["n_points"] == 28
+    assert len(result["betti_numbers"]) == 2

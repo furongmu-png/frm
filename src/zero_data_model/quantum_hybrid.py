@@ -9,6 +9,8 @@ with numba when installed for faster optimization.
 
 from __future__ import annotations
 
+import threading
+
 import numpy as np
 
 from .base import CognitiveModule, Prediction, Signal
@@ -196,6 +198,12 @@ class QuantumClassicalHybrid(CognitiveModule):
         self.n_qubits = n_qubits
         # Round-3 audit CRIT-1: per-module Generator
         self._rng = rng if rng is not None else np.random.default_rng()
+        # Per-module re-entrant lock (Phase D / think() lockless update):
+        # protects ``process`` / ``predict`` / ``update`` /
+        # ``solve_optimization`` from concurrent think() calls racing on
+        # ``self._rng`` and shared mutable state (quantum_circuit, annealer,
+        # classical_weights). RLock allows re-entry (process -> evolve).
+        self._lock = threading.RLock()
         self.quantum_circuit = VariationalQuantumCircuit(
             n_qubits=n_qubits, n_layers=3, backend=quantum_backend, rng=self._rng
         )
@@ -216,63 +224,78 @@ class QuantumClassicalHybrid(CognitiveModule):
     def quantum_backend_name(self) -> str:
         return self.quantum_circuit.backend_name
 
+    def __getstate__(self) -> dict:
+        # Phase D: per-module RLock is not picklable. Strip it here and
+        # rebuild in __setstate__. Hold the lock so concurrent think()
+        # blocks during the snapshot (consistent array copy).
+        with self._lock:
+            return {k: v for k, v in self.__dict__.items() if k != "_lock"}
+
+    def __setstate__(self, state: dict) -> None:
+        self.__dict__.update(state)
+        self._lock = threading.RLock()
+
     def process(self, signal: Signal) -> Signal:
-        x = signal.data[: self.dim]
-        if len(x) < self.dim:
-            x = np.pad(x, (0, self.dim - len(x)))
-        quantum_features = self.quantum_circuit.evolve(x[: 2 * self.n_qubits])
-        qf = np.zeros(self.dim)
-        qf[: len(quantum_features)] = quantum_features[: self.dim]
-        if _HAS_KERNELS_JIT:
-            classical = _quantum_classical_forward(
-                np.ascontiguousarray(x, dtype=float),
-                np.ascontiguousarray(self.classical_weights, dtype=float),
+        with self._lock:
+            x = signal.data[: self.dim]
+            if len(x) < self.dim:
+                x = np.pad(x, (0, self.dim - len(x)))
+            quantum_features = self.quantum_circuit.evolve(x[: 2 * self.n_qubits])
+            qf = np.zeros(self.dim)
+            qf[: len(quantum_features)] = quantum_features[: self.dim]
+            if _HAS_KERNELS_JIT:
+                classical = _quantum_classical_forward(
+                    np.ascontiguousarray(x, dtype=float),
+                    np.ascontiguousarray(self.classical_weights, dtype=float),
+                )
+            else:
+                classical = np.tanh(x @ self.classical_weights)
+            combined = 0.3 * qf + 0.7 * classical
+            # Round-8 audit PERF8-6: cache for ``predict`` to reuse.
+            self._last_process_output = combined
+            return Signal(
+                data=combined,
+                metadata={"quantum_features": True, "quantum_backend": self.quantum_backend_name},
             )
-        else:
-            classical = np.tanh(x @ self.classical_weights)
-        combined = 0.3 * qf + 0.7 * classical
-        # Round-8 audit PERF8-6: cache for ``predict`` to reuse.
-        self._last_process_output = combined
-        return Signal(
-            data=combined,
-            metadata={"quantum_features": True, "quantum_backend": self.quantum_backend_name},
-        )
 
     def predict(self, signal: Signal) -> Prediction:
-        # Round-8 audit PERF8-6: reuse the cached process output so we do not
-        # re-run the O(dim^2) classical matmul + tanh twice per think()
-        # cycle. Falls back to a fresh classical forward pass when
-        # ``predict`` is called standalone (no prior ``process`` in this
-        # cycle), matching the ConsciousnessCore/MathUniverse/Biological/
-        # CategoryEngine pattern (Fix 12 / PERF8-3 / PERF8-5).
-        if self._last_process_output is not None:
-            predicted = self._last_process_output
+        with self._lock:
+            # Round-8 audit PERF8-6: reuse the cached process output so we do not
+            # re-run the O(dim^2) classical matmul + tanh twice per think()
+            # cycle. Falls back to a fresh classical forward pass when
+            # ``predict`` is called standalone (no prior ``process`` in this
+            # cycle), matching the ConsciousnessCore/MathUniverse/Biological/
+            # CategoryEngine pattern (Fix 12 / PERF8-3 / PERF8-5).
+            if self._last_process_output is not None:
+                predicted = self._last_process_output
+                return Prediction(value=predicted, uncertainty=float(np.var(predicted)))
+            x = signal.data[: self.dim]
+            if len(x) < self.dim:
+                x = np.pad(x, (0, self.dim - len(x)))
+            if _HAS_KERNELS_JIT:
+                predicted = _quantum_classical_forward(
+                    np.ascontiguousarray(x, dtype=float),
+                    np.ascontiguousarray(self.classical_weights, dtype=float),
+                )
+            else:
+                predicted = np.tanh(x @ self.classical_weights)
             return Prediction(value=predicted, uncertainty=float(np.var(predicted)))
-        x = signal.data[: self.dim]
-        if len(x) < self.dim:
-            x = np.pad(x, (0, self.dim - len(x)))
-        if _HAS_KERNELS_JIT:
-            predicted = _quantum_classical_forward(
-                np.ascontiguousarray(x, dtype=float),
-                np.ascontiguousarray(self.classical_weights, dtype=float),
-            )
-        else:
-            predicted = np.tanh(x @ self.classical_weights)
-        return Prediction(value=predicted, uncertainty=float(np.var(predicted)))
 
     def update(self, prediction_error: float) -> None:
-        if not np.isfinite(prediction_error):
-            return
-        # Round-8 audit THEORY8-clip: clip to [0, 1e6] (NON-NEGATIVE) to
-        # match ``active_inference.update`` and ``category_engine.update``.
-        # The previous ``[-1e6, 1e6]`` clip allowed negative values to
-        # flip the noise sign -- so the module could "learn" in the
-        # OPPOSITE direction from what the prediction error signals
-        # (gradient ascent instead of descent).
-        prediction_error = float(np.clip(prediction_error, 0.0, 1e6))
-        # Round-3 audit CRIT-1: per-module Generator
-        noise = self._rng.standard_normal(self.classical_weights.shape) * prediction_error * 0.001
-        self.classical_weights += noise
+        with self._lock:
+            if not np.isfinite(prediction_error):
+                return
+            # Round-8 audit THEORY8-clip: clip to [0, 1e6] (NON-NEGATIVE) to
+            # match ``active_inference.update`` and ``category_engine.update``.
+            # The previous ``[-1e6, 1e6]`` clip allowed negative values to
+            # flip the noise sign -- so the module could "learn" in the
+            # OPPOSITE direction from what the prediction error signals
+            # (gradient ascent instead of descent).
+            prediction_error = float(np.clip(prediction_error, 0.0, 1e6))
+            # Round-3 audit CRIT-1: per-module Generator
+            noise = self._rng.standard_normal(self.classical_weights.shape) * prediction_error * 0.001
+            self.classical_weights += noise
 
     def solve_optimization(self) -> tuple[np.ndarray, float]:
-        return self.annealer.optimize()
+        with self._lock:
+            return self.annealer.optimize()

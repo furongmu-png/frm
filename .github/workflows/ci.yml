@@ -45,7 +45,12 @@ jobs:
       - name: Install package with extras
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev,quantum,jit,parallel,web]"
+          # Phase D dep fix: include ``mcp`` extra so the MCP server tests
+          # (test_mcp_server.py, test_mcp_emergence.py) actually run in CI
+          # instead of being silently skipped via pytest.importorskip.
+          # ``httpx`` is now in ``dev`` extras (declared in pyproject.toml)
+          # so fastapi.testclient.TestClient works without a separate install.
+          pip install -e ".[dev,quantum,jit,parallel,web,mcp]"
           pip install pytest-cov
 
       - name: Run tests with coverage
