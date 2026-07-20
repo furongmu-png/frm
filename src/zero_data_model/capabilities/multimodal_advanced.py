@@ -49,7 +49,7 @@ class AttentionBasedFuser:
         self.dim = int(dim)
         self.rules = rules or MultimodalRules()
         self.n_heads = int(self.rules.multimodal_attention_heads)
-        self.rng = rng or np.random.default_rng(0)
+        self.rng = rng if rng is not None else np.random.default_rng(0)
         # Per-head projection matrices W_q, W_k, W_v (each (dim, dk)).
         if self.dim % self.n_heads != 0:
             # Round up n_heads so dim divides evenly.

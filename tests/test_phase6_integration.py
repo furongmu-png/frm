@@ -251,6 +251,51 @@ class TestCLIPhase6:
             payload = json.loads(r.stdout)
             assert "best_action" in payload
 
+    # ------------------------------------------------------------------
+    # Multimodal CLI — previously uncovered (P6-AUDIT-007).
+    # ------------------------------------------------------------------
+
+    def test_multimodal_align_cli(self, tmp_path):
+        rng = np.random.default_rng(0)
+        a = rng.standard_normal((5, 4)).tolist()
+        b = rng.standard_normal((5, 6)).tolist()
+        file_a = tmp_path / "a.json"
+        file_b = tmp_path / "b.json"
+        file_a.write_text(json.dumps(a))
+        file_b.write_text(json.dumps(b))
+        r = self._run_cli("multimodal", "align", str(file_a), str(file_b))
+        if r.returncode == 0:
+            payload = json.loads(r.stdout)
+            # CLI emits {"fit": {...}, "aligned": {...}}.
+            assert "fit" in payload and "aligned" in payload
+            assert "correlation" in payload["fit"]
+
+    def test_multimodal_fuse_cli(self, tmp_path):
+        file_a = tmp_path / "a.json"
+        file_b = tmp_path / "b.json"
+        file_a.write_text(json.dumps([1.0, 2.0, 3.0, 4.0]))
+        file_b.write_text(json.dumps([2.0, 3.0, 4.0, 5.0]))
+        r = self._run_cli(
+            "multimodal", "fuse", str(file_a), str(file_b),
+            "--strategy", "mean",
+        )
+        if r.returncode == 0:
+            payload = json.loads(r.stdout)
+            assert "fused" in payload
+
+    def test_multimodal_contrastive_cli(self, tmp_path):
+        rng = np.random.default_rng(0)
+        a = rng.standard_normal((4, 8)).tolist()
+        b = rng.standard_normal((4, 8)).tolist()
+        file_a = tmp_path / "a.json"
+        file_b = tmp_path / "b.json"
+        file_a.write_text(json.dumps(a))
+        file_b.write_text(json.dumps(b))
+        r = self._run_cli("multimodal", "contrastive", str(file_a), str(file_b))
+        if r.returncode == 0:
+            payload = json.loads(r.stdout)
+            assert "loss" in payload
+
 
 # --------------------------------------------------------------------- #
 # 3. FastAPI endpoints

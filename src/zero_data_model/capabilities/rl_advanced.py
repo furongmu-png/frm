@@ -43,7 +43,7 @@ class DynaQ:
         self.n_actions = int(n_actions)
         self.mdp = mdp or SyntheticMDP(self.n_states, self.n_actions, rules=rules)
         self.rules = rules or self.mdp.rules
-        self.rng = rng or np.random.default_rng()
+        self.rng = rng if rng is not None else np.random.default_rng()
         self.Q = np.zeros((self.n_states, self.n_actions))
         # Model: (next_state, reward) tables.
         self.model_next = np.zeros((self.n_states, self.n_actions), dtype=int)
@@ -164,7 +164,7 @@ class MonteCarloTreeSearch:
     ):
         self.mdp = mdp
         self.rules = rules or RLRules()
-        self.rng = rng or np.random.default_rng()
+        self.rng = rng if rng is not None else np.random.default_rng()
 
     def search(
         self,
@@ -300,7 +300,7 @@ class PosteriorSampling:
         self.n_actions = int(n_actions)
         self.mdp = mdp or SyntheticMDP(self.n_states, self.n_actions, rules=rules)
         self.rules = rules or self.mdp.rules
-        self.rng = rng or np.random.default_rng()
+        self.rng = rng if rng is not None else np.random.default_rng()
         # Posterior over R(s, a): mean + variance.
         self.posterior_mean = np.zeros((self.n_states, self.n_actions))
         self.posterior_var = np.ones((self.n_states, self.n_actions))

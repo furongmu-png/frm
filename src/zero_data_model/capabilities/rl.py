@@ -117,7 +117,7 @@ class QLearner:
         self.n_actions = int(n_actions)
         self.mdp = mdp or SyntheticMDP(self.n_states, self.n_actions, rules=rules)
         self.rules = rules or self.mdp.rules
-        self.rng = rng or np.random.default_rng()
+        self.rng = rng if rng is not None else np.random.default_rng()
         self.Q = np.zeros((self.n_states, self.n_actions))
 
     def update(
@@ -230,7 +230,7 @@ class PolicyOptimizer:
         self.n_actions = int(n_actions)
         self.mdp = mdp or SyntheticMDP(self.n_states, self.n_actions, rules=rules)
         self.rules = rules or self.mdp.rules
-        self.rng = rng or np.random.default_rng()
+        self.rng = rng if rng is not None else np.random.default_rng()
         # Policy logits: shape (n_states, n_actions).
         self.policy_logits = np.zeros((self.n_states, self.n_actions))
 
@@ -320,7 +320,7 @@ class ValueFunction:
     ):
         self.n_states = int(n_states)
         self.rules = rules or RLRules()
-        self.rng = rng or np.random.default_rng()
+        self.rng = rng if rng is not None else np.random.default_rng()
         self.V = np.zeros(self.n_states)
 
     def td0_update(

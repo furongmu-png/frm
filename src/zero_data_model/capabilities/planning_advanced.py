@@ -306,7 +306,7 @@ class PolicyGradientPlanner:
         self.n_states = int(n_states)
         self.n_actions = int(n_actions)
         self.rules = rules or PlanningRules()
-        self.rng = rng or np.random.default_rng()
+        self.rng = rng if rng is not None else np.random.default_rng()
         # Policy weights: shape (n_actions, n_states).
         self.weights = np.zeros((self.n_actions, self.n_states))
 

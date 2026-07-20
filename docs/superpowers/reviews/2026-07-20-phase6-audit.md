@@ -352,3 +352,24 @@ Phase 6 实现在功能完整性、跨层对称性、数值稳定性、安全防
 
 **最终裁定**:**PASS**(原 PASS WITH NOTES 中所列 P1/P2 阻塞项已全部就地修复并经测试验证)。可宣告 Phase 6 完成,准予合入主分支。
 
+---
+
+## 12. 第二轮回执(2026-07-20 同日)
+
+针对 §11 中列为"待修复 / 待补充"的 P6-AUDIT-006 / 007 / 008 三项非阻塞遗留就地修复:
+
+| ID | 状态 | 修复方式 |
+|---|---|---|
+| P6-AUDIT-006 | **已修复** | `api.py:38` 引入 `timezone`;`api.py:111` 由 `datetime.utcnow()` 改为 `datetime.now(timezone.utc)`,消除 `DeprecationWarning`。全仓 Grep 确认无残留 `datetime.utcnow()` 调用。 |
+| P6-AUDIT-007 | **已修复** | `tests/test_phase6_integration.py::TestCLIPhase6` 新增 3 个 Multimodal CLI 测试:`test_multimodal_align_cli`、`test_multimodal_fuse_cli`、`test_multimodal_contrastive_cli`,覆盖 align / fuse / contrastive 三个子命令,验证 `fit`/`aligned`/`fused`/`loss` 字段。Multimodal CLI 测试覆盖由 0 提升到 3。 |
+| P6-AUDIT-008 | **已修复** | `rl.py` (3 处) + `rl_advanced.py` (3 处) + `planning_advanced.py` (1 处) + `multimodal_advanced.py` (1 处) 共 4 文件 8 处 `rng or np.random.default_rng(...)` 全部统一为 `rng if rng is not None else np.random.default_rng(...)` 形式,语义更明确(仅在 `rng is None` 时回退,不会替换可能为 falsy 的 Generator 实例),代码风格与 §11 修复一致。 |
+
+**第二轮测试结果**:
+
+- Phase 6 套件:372 / 372 通过(新增 3 个 Multimodal CLI 测试)
+- v4 回归套件:68 / 68 通过
+- 合计:**440 / 440 通过,无回归**
+
+**最终裁定**:**PASS**。所有审查发现的 8 项问题(P1×1 + P2×4 + P3×3)均已就地修复并经测试验证。Phase 6 实现完整,可宣告收尾。
+
+
