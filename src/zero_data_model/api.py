@@ -851,6 +851,62 @@ class CodeCompareRequest(BaseModel):
 
 
 # --------------------------------------------------------------------------- #
+# Phase 7 — Reasoning request schemas.
+# --------------------------------------------------------------------------- #
+
+
+class ReasoningPropInferRequest(BaseModel):
+    """Forward-chain propositional facts + rules to a fixpoint."""
+    facts: dict[str, bool] = Field(default_factory=dict)
+    rules: list[list[str]] = Field(default_factory=list)
+    negation_rules: list[list[str]] = Field(default_factory=list)
+
+
+class ReasoningSyllogismRequest(BaseModel):
+    """Categorical syllogism (form, subject, predicate) for each premise."""
+    major: list = Field(..., min_length=3, max_length=3)
+    minor: list = Field(..., min_length=3, max_length=3)
+
+
+class ReasoningInductRequest(BaseModel):
+    """Induce a rule from labeled examples."""
+    examples: list[dict] = Field(..., min_length=1, max_length=1024)
+    labels: list[bool] = Field(..., min_length=1, max_length=1024)
+
+
+class ReasoningAnalogizeRequest(BaseModel):
+    """Find a structural analogy between source and target dicts."""
+    source: dict = Field(..., min_length=1)
+    target: dict = Field(..., min_length=1)
+
+
+class ReasoningAbduceRequest(BaseModel):
+    """Pick the best explanation for an observation."""
+    observation: str = Field(..., min_length=1, max_length=65536)
+    hypotheses: list[str] = Field(..., min_length=1, max_length=128)
+    priors: list[float] | None = Field(None, max_length=128)
+
+
+class ReasoningDefaultRule(BaseModel):
+    """A single defeasible default rule."""
+    rule: list = Field(..., min_length=2, max_length=3)
+    exception: list | None = Field(None, max_length=8)
+
+
+class ReasoningDefaultsRequest(BaseModel):
+    """Apply defeasible default rules to a set of facts."""
+    defaults: list[ReasoningDefaultRule] = Field(default_factory=list, max_length=128)
+    facts: dict[str, bool] = Field(default_factory=dict)
+
+
+class ReasoningCausalRequest(BaseModel):
+    """Trace a causal chain from a starting node."""
+    links: list[list[str]] = Field(default_factory=list, max_length=1024)
+    start: str = Field(..., min_length=1, max_length=1024)
+    max_depth: int = Field(5, ge=0, le=100)
+
+
+# --------------------------------------------------------------------------- #
 # Request tracing middleware (X-Request-ID, structured access log)
 # --------------------------------------------------------------------------- #
 
@@ -2631,6 +2687,131 @@ def create_app() -> FastAPI:
         model = get_model()
         with model._lock:
             result = model.build_dependency_graph(req.source)
+        return _to_jsonable(result)
+
+    # ------------------------------------------------------------------
+    # Phase 7 — Reasoning endpoints.
+    # ------------------------------------------------------------------
+    @app.post("/reasoning/prop-infer", tags=["reasoning"])
+    @_limit("30/minute")
+    async def reasoning_prop_infer(  # noqa: ANN202
+        request: Request,
+        req: ReasoningPropInferRequest,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Forward-chain propositional facts + rules to a fixpoint."""
+        model = get_model()
+        with model._lock:
+            for prop, val in req.facts.items():
+                model.add_logical_fact(prop, val)
+            for r in req.rules:
+                if len(r) >= 2:
+                    model.add_logical_rule(str(r[0]), str(r[1]))
+            for r in req.negation_rules:
+                if len(r) >= 2:
+                    model.reasoning_propositional.add_negation_rule(
+                        str(r[0]), str(r[1])
+                    )
+            result = model.infer_logical()
+        return _to_jsonable(result)
+
+    @app.post("/reasoning/syllogism", tags=["reasoning"])
+    @_limit("30/minute")
+    async def reasoning_syllogism(  # noqa: ANN202
+        request: Request,
+        req: ReasoningSyllogismRequest,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Run a categorical syllogism (Barbara / Celarent / Darii / Ferio)."""
+        major = tuple(req.major)
+        minor = tuple(req.minor)
+        model = get_model()
+        with model._lock:
+            result = model.syllogism(major, minor)
+        return _to_jsonable(result)
+
+    @app.post("/reasoning/induct", tags=["reasoning"])
+    @_limit("30/minute")
+    async def reasoning_induct(  # noqa: ANN202
+        request: Request,
+        req: ReasoningInductRequest,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Induce a (key, value) rule from labeled examples."""
+        if len(req.examples) != len(req.labels):
+            raise HTTPException(
+                status_code=400,
+                detail="examples and labels must have the same length",
+            )
+        model = get_model()
+        with model._lock:
+            result = model.induct_rule(req.examples, req.labels)
+        return _to_jsonable(result)
+
+    @app.post("/reasoning/analogize", tags=["reasoning"])
+    @_limit("30/minute")
+    async def reasoning_analogize(  # noqa: ANN202
+        request: Request,
+        req: ReasoningAnalogizeRequest,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Find a structural analogy between a source and target dict."""
+        model = get_model()
+        with model._lock:
+            result = model.analogize(req.source, req.target)
+        return _to_jsonable(result)
+
+    @app.post("/reasoning/abduce", tags=["reasoning"])
+    @_limit("30/minute")
+    async def reasoning_abduce(  # noqa: ANN202
+        request: Request,
+        req: ReasoningAbduceRequest,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Pick the best explanation for an observation."""
+        if req.priors is not None and len(req.priors) != len(req.hypotheses):
+            raise HTTPException(
+                status_code=400,
+                detail="priors length must match hypotheses length",
+            )
+        model = get_model()
+        with model._lock:
+            result = model.abduce(
+                req.observation, req.hypotheses, priors=req.priors
+            )
+        return _to_jsonable(result)
+
+    @app.post("/reasoning/defaults", tags=["reasoning"])
+    @_limit("30/minute")
+    async def reasoning_defaults(  # noqa: ANN202
+        request: Request,
+        req: ReasoningDefaultsRequest,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Apply defeasible default rules to a set of facts."""
+        model = get_model()
+        with model._lock:
+            for d in req.defaults:
+                rule_t = tuple(d.rule)
+                exc_t = tuple(d.exception) if d.exception is not None else None
+                model.add_default_rule(rule_t, exception=exc_t)
+            result = model.conclude_defaults(req.facts)
+        return _to_jsonable(result)
+
+    @app.post("/reasoning/causal", tags=["reasoning"])
+    @_limit("30/minute")
+    async def reasoning_causal(  # noqa: ANN202
+        request: Request,
+        req: ReasoningCausalRequest,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Trace a causal chain from a starting node."""
+        model = get_model()
+        with model._lock:
+            for link in req.links:
+                if len(link) >= 2:
+                    model.add_causal_link(str(link[0]), str(link[1]))
+            result = model.trace_causal_chain(req.start, max_depth=req.max_depth)
         return _to_jsonable(result)
 
     return app

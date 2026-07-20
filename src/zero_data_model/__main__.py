@@ -722,6 +722,184 @@ def _run_code_dependencies(args: argparse.Namespace) -> int:
     return _emit_json(result)
 
 
+# ------------------------------------------------------------------ #
+# Phase 7 — Reasoning CLI handlers.
+#
+# Unlike other Phase 7 domains which are stateless queries, the
+# Reasoning facade has 4 stateful `add_*` methods that mutate engine
+# state (propositional facts/rules, defeasible defaults, causal links).
+# CLI subprocesses don't persist that state between invocations, so the
+# CLI design is "compositional": each stateful query subcommand accepts
+# a JSON config file that supplies all the facts / rules / defaults /
+# causal links upfront, applies them to a fresh model, then runs the
+# query and emits the result.
+# ------------------------------------------------------------------ #
+
+
+def _load_json_file(path: str) -> dict | list:
+    """Read a JSON file as a Python object (dict or list)."""
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"JSON file not found: {path}")
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _run_reasoning_prop_infer(args: argparse.Namespace) -> int:
+    """Run propositional inference from a config file.
+
+    Config schema (JSON):
+        {
+            "facts": {"proposition": true/false, ...},
+            "rules": [["antecedent", "consequent"], ...],
+            "negation_rules": [["antecedent", "consequent"], ...]
+        }
+    All three keys are optional; missing keys default to empty.
+    """
+    config = _load_json_file(args.file)
+    if not isinstance(config, dict):
+        raise ValueError("config must be a JSON object")
+    facts = config.get("facts", {}) or {}
+    rules = config.get("rules", []) or []
+    neg_rules = config.get("negation_rules", []) or []
+    model = _build_model()
+    for prop, val in facts.items():
+        model.add_logical_fact(str(prop), bool(val))
+    for r in rules:
+        if len(r) >= 2:
+            model.add_logical_rule(str(r[0]), str(r[1]))
+    for r in neg_rules:
+        if len(r) >= 2:
+            model.reasoning_propositional.add_negation_rule(str(r[0]), str(r[1]))
+    result = model.infer_logical()
+    return _emit_json(result)
+
+
+def _run_reasoning_syllogism(args: argparse.Namespace) -> int:
+    """Run a categorical syllogism (Barbara/Celarent/Darii/Ferio).
+
+    Args are JSON files containing tuples of (form, subject, predicate):
+        major: ["A", "human", "mortal"]
+        minor: ["A", "socrates", "human"]
+    """
+    major = tuple(_load_json_file(args.major_file))
+    minor = tuple(_load_json_file(args.minor_file))
+    model = _build_model()
+    result = model.syllogism(major, minor)
+    return _emit_json(result)
+
+
+def _run_reasoning_induct(args: argparse.Namespace) -> int:
+    """Induce a rule from labeled examples.
+
+    Config schema (JSON):
+        {
+            "examples": [{"color": "red"}, ...],
+            "labels": [true, false, ...]
+        }
+    """
+    config = _load_json_file(args.file)
+    if not isinstance(config, dict):
+        raise ValueError("config must be a JSON object")
+    examples = config.get("examples", [])
+    labels = config.get("labels", [])
+    model = _build_model()
+    result = model.induct_rule(examples, [bool(l) for l in labels])
+    return _emit_json(result)
+
+
+def _run_reasoning_analogize(args: argparse.Namespace) -> int:
+    """Find a structural analogy between a source and target dict.
+
+    Two JSON files: `source_file` and `target_file`, each containing an
+    object mapping attribute names to values (numeric, string, etc.).
+    """
+    source = _load_json_file(args.source_file)
+    target = _load_json_file(args.target_file)
+    model = _build_model()
+    result = model.analogize(source, target)
+    return _emit_json(result)
+
+
+def _run_reasoning_abduce(args: argparse.Namespace) -> int:
+    """Pick the best explanation for an observation.
+
+    Config schema (JSON):
+        {
+            "observation": "patient has fever and cough",
+            "hypotheses": ["flu", "cold", "allergy"],
+            "priors": [0.3, 0.4, 0.3]  // optional
+        }
+    """
+    config = _load_json_file(args.file)
+    if not isinstance(config, dict):
+        raise ValueError("config must be a JSON object")
+    observation = str(config.get("observation", ""))
+    hypotheses = config.get("hypotheses", []) or []
+    priors = config.get("priors")
+    model = _build_model()
+    result = model.abduce(observation, hypotheses, priors=priors)
+    return _emit_json(result)
+
+
+def _run_reasoning_defaults(args: argparse.Namespace) -> int:
+    """Apply defeasible default rules to a set of facts.
+
+    Config schema (JSON):
+        {
+            "defaults": [
+                {"rule": ["bird", "flies", true],
+                 "exception": ["penguin"]},
+                ...
+            ],
+            "facts": {"bird": true, "penguin": false}
+        }
+    Both keys are optional.
+    """
+    config = _load_json_file(args.file)
+    if not isinstance(config, dict):
+        raise ValueError("config must be a JSON object")
+    defaults = config.get("defaults", []) or []
+    facts = config.get("facts", {}) or {}
+    model = _build_model()
+    for d in defaults:
+        if not isinstance(d, dict):
+            continue
+        rule = d.get("rule")
+        exception = d.get("exception")
+        if rule is None:
+            continue
+        rule_t = tuple(rule)
+        exc_t = tuple(exception) if exception is not None else None
+        model.add_default_rule(rule_t, exception=exc_t)
+    result = model.conclude_defaults(facts)
+    return _emit_json(result)
+
+
+def _run_reasoning_causal(args: argparse.Namespace) -> int:
+    """Trace a causal chain from a starting node.
+
+    Config schema (JSON):
+        {
+            "links": [["a", "b"], ["b", "c"], ...],
+            "start": "a",
+            "max_depth": 5
+        }
+    `max_depth` is optional (default 5).
+    """
+    config = _load_json_file(args.file)
+    if not isinstance(config, dict):
+        raise ValueError("config must be a JSON object")
+    links = config.get("links", []) or []
+    start = str(config.get("start", ""))
+    max_depth = int(config.get("max_depth", 5))
+    model = _build_model()
+    for link in links:
+        if len(link) >= 2:
+            model.add_causal_link(str(link[0]), str(link[1]))
+    result = model.trace_causal_chain(start, max_depth=max_depth)
+    return _emit_json(result)
+
+
 def _run_rl_step(args: argparse.Namespace) -> int:
     model = _build_model()
     result = model.step_mdp(int(args.state), int(args.action))
@@ -1256,6 +1434,86 @@ def _build_parser() -> argparse.ArgumentParser:
     c_dep.add_argument("file", help="Python source file (.py).")
     c_dep.set_defaults(func=_run_code_dependencies)
 
+    # ------------------------------------------------------------------ #
+    # Phase 7 — Reasoning subparser.
+    # ------------------------------------------------------------------ #
+    reasoning_parser = subparsers.add_parser(
+        "reasoning",
+        help="Reasoning capabilities (prop-infer / syllogism / induct / analogize / abduce / defaults / causal).",
+        description="Propositional + deductive + inductive + analogical + abductive + defeasible + causal-chain reasoning facade.",
+    )
+    reasoning_sub = reasoning_parser.add_subparsers(
+        dest="subcommand", required=True, metavar="<subcommand>",
+        help="prop-infer | syllogism | induct | analogize | abduce | defaults | causal",
+    )
+
+    r_pi = reasoning_sub.add_parser(
+        "prop-infer",
+        help="Forward-chain propositional facts and rules (modus ponens).",
+    )
+    r_pi.add_argument(
+        "file",
+        help="JSON config with `facts`, `rules`, `negation_rules` keys.",
+    )
+    r_pi.set_defaults(func=_run_reasoning_prop_infer)
+
+    r_syl = reasoning_sub.add_parser(
+        "syllogism",
+        help="Run a categorical syllogism (Barbara / Celarent / Darii / Ferio).",
+    )
+    r_syl.add_argument(
+        "major_file",
+        help="JSON array [form, subject, predicate] for the major premise.",
+    )
+    r_syl.add_argument(
+        "minor_file",
+        help="JSON array [form, subject, predicate] for the minor premise.",
+    )
+    r_syl.set_defaults(func=_run_reasoning_syllogism)
+
+    r_ind = reasoning_sub.add_parser(
+        "induct", help="Induce a (key, value) rule from labeled examples."
+    )
+    r_ind.add_argument(
+        "file",
+        help="JSON config with `examples` (list of dicts) and `labels` (list of bools).",
+    )
+    r_ind.set_defaults(func=_run_reasoning_induct)
+
+    r_ana = reasoning_sub.add_parser(
+        "analogize", help="Find a structural analogy between a source and target dict."
+    )
+    r_ana.add_argument("source_file", help="JSON object (source attributes).")
+    r_ana.add_argument("target_file", help="JSON object (target attributes).")
+    r_ana.set_defaults(func=_run_reasoning_analogize)
+
+    r_abd = reasoning_sub.add_parser(
+        "abduce", help="Pick the best explanation for an observation."
+    )
+    r_abd.add_argument(
+        "file",
+        help="JSON config with `observation`, `hypotheses`, and optional `priors`.",
+    )
+    r_abd.set_defaults(func=_run_reasoning_abduce)
+
+    r_def = reasoning_sub.add_parser(
+        "defaults", help="Apply defeasible default rules to a set of facts."
+    )
+    r_def.add_argument(
+        "file",
+        help="JSON config with `defaults` (list of {rule, exception}) and `facts`.",
+    )
+    r_def.set_defaults(func=_run_reasoning_defaults)
+
+    r_cau = reasoning_sub.add_parser(
+        "causal", help="Trace a causal chain from a starting node."
+    )
+    r_cau.add_argument(
+        "file",
+        help="JSON config with `links`, `start`, and optional `max_depth`.",
+    )
+    r_cau.set_defaults(func=_run_reasoning_causal)
+
     return parser
 
 
@@ -1270,7 +1528,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if getattr(args, "command", None) in (
         "emergence", "memory", "planning", "multimodal", "rl",
-        "audio", "graph", "robotics", "time", "code",
+        "audio", "graph", "robotics", "time", "code", "reasoning",
     ):
         # ``func`` is set via ``set_defaults`` on each subparser.
         try:

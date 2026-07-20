@@ -1981,6 +1981,295 @@ class ZeroDataMCPServer:
         return _to_py(self.model.build_dependency_graph(source))
 
     # ------------------------------------------------------------------
+    # Phase 7 — Reasoning tools.
+    # ------------------------------------------------------------------
+
+    @_error_to_dict
+    def reasoning_infer_logical(
+        self,
+        facts: dict[str, bool] | None = None,
+        rules: list[list[str]] | None = None,
+        negation_rules: list[list[str]] | None = None,
+    ) -> dict:
+        """Forward-chain propositional facts + rules to a fixpoint.
+
+        Applies the supplied ``facts`` and ``rules`` to a fresh model
+        instance (state does not persist across calls) and runs
+        modus-ponens inference up to ``max_inference_depth`` iterations.
+
+        Args:
+            facts: Dict mapping proposition strings to their truth
+                values (``True`` / ``False``). Defaults to ``{}``.
+            rules: List of ``[antecedent, consequent]`` pairs. When
+                ``antecedent`` resolves True, ``consequent`` is set True.
+                Defaults to ``[]``.
+            negation_rules: List of ``[antecedent, consequent]`` pairs.
+                When ``antecedent`` resolves True, ``consequent`` is set
+                False. Defaults to ``[]``.
+
+        Returns:
+            Dict with keys ``facts`` (dict[str, bool], the resulting
+            knowledge base after inference), ``inferences`` (list of
+            ``[antecedent, consequent, value]`` triples actually derived),
+            ``contradictions`` (list[str], sorted deduplicated
+            propositions inferred as both True and False).
+
+        Failure mode: returns ``{"error": "reasoning_infer_logical: ..."}``.
+        """
+        from zero_data_model.model import ZeroDataModel
+
+        facts = facts or {}
+        rules = rules or []
+        negation_rules = negation_rules or []
+        if not isinstance(facts, dict):
+            raise ValueError("facts must be a dict")
+        if not isinstance(rules, list):
+            raise ValueError("rules must be a list")
+        if not isinstance(negation_rules, list):
+            raise ValueError("negation_rules must be a list")
+        # Fresh model to avoid leaking state across MCP calls.
+        m = ZeroDataModel(dim=self.model.dim, seed=self.model._seed)
+        for prop, val in facts.items():
+            m.add_logical_fact(str(prop), bool(val))
+        for r in rules:
+            if not isinstance(r, (list, tuple)) or len(r) < 2:
+                raise ValueError(f"each rule must be [antecedent, consequent], got {r}")
+            m.add_logical_rule(str(r[0]), str(r[1]))
+        for r in negation_rules:
+            if not isinstance(r, (list, tuple)) or len(r) < 2:
+                raise ValueError(
+                    f"each negation_rule must be [antecedent, consequent], got {r}"
+                )
+            m.reasoning_propositional.add_negation_rule(str(r[0]), str(r[1]))
+        return _to_py(m.infer_logical())
+
+    @_error_to_dict
+    def reasoning_syllogism(self, major: list, minor: list) -> dict:
+        """Run a categorical syllogism (Barbara / Celarent / Darii / Ferio).
+
+        Args:
+            major: ``[form, subject, predicate]`` for the major premise.
+                ``form`` must be one of ``"A"`` (All S are P), ``"E"``
+                (No S are P), ``"I"`` (Some S are P), ``"O"`` (Some S
+                are not P).
+            minor: ``[form, subject, predicate]`` for the minor premise.
+                The minor's predicate must equal the major's subject
+                (the middle term M).
+
+        Returns:
+            Dict with keys ``conclusion`` (str, the rendered conclusion
+            like ``"All socrates are mortal"``), ``valid`` (bool), and
+            ``form`` (str like ``"Barbara (AAA-1)"`` or ``"invalid"``).
+            Invalid forms / mismatched middle terms return
+            ``{"conclusion": None, "valid": False, "form": "invalid"}``.
+
+        Failure mode: returns ``{"error": "reasoning_syllogism: ..."}``.
+        """
+        if not isinstance(major, (list, tuple)) or len(major) != 3:
+            raise ValueError("major must be a 3-element [form, subject, predicate]")
+        if not isinstance(minor, (list, tuple)) or len(minor) != 3:
+            raise ValueError("minor must be a 3-element [form, subject, predicate]")
+        return _to_py(self.model.syllogism(tuple(major), tuple(minor)))
+
+    @_error_to_dict
+    def reasoning_induct_rule(
+        self, examples: list[dict], labels: list[bool]
+    ) -> dict:
+        """Induce a (key, value) rule from labeled examples.
+
+        Args:
+            examples: List of dicts, each mapping feature names to
+                values. Must be non-empty and same length as ``labels``.
+            labels: List of booleans, ``True`` for positive examples
+                (rule should cover them) and ``False`` for negatives.
+
+        Returns:
+            Dict with keys ``rule`` (str like ``"color == 'red'"``),
+            ``confidence`` (float in [0, 1]), ``support`` (int, number
+            of positives matching the rule), ``coverage`` (float in
+            [0, 1], fraction of positives covered).
+            Empty / mismatched / no-positives returns
+            ``{"rule": "", "confidence": 0.0, "support": 0, "coverage": 0.0}``.
+
+        Failure mode: returns ``{"error": "reasoning_induct_rule: ..."}``.
+        """
+        if not isinstance(examples, list):
+            raise ValueError("examples must be a list")
+        if not isinstance(labels, list):
+            raise ValueError("labels must be a list")
+        if len(examples) != len(labels):
+            raise ValueError(
+                f"examples ({len(examples)}) and labels ({len(labels)}) "
+                "must have the same length"
+            )
+        return _to_py(self.model.induct_rule(examples, [bool(l) for l in labels]))
+
+    @_error_to_dict
+    def reasoning_analogize(self, source: dict, target: dict) -> dict:
+        """Find a structural analogy between a source and target dict.
+
+        Args:
+            source: Dict mapping attribute names to values (numeric,
+                string, list, dict, or other hashable). Must be non-empty.
+            target: Same shape as ``source``. Must be non-empty.
+
+        Returns:
+            Dict with keys ``mapping`` (dict[str, str], source key to
+            matched target key), ``similarity`` (float in [0, 1]),
+            ``transfer`` (dict[str, value], target key to source value
+            for matched numeric pairs only).
+
+        Failure mode: returns ``{"error": "reasoning_analogize: ..."}``.
+        """
+        if not isinstance(source, dict):
+            raise ValueError("source must be a dict")
+        if not isinstance(target, dict):
+            raise ValueError("target must be a dict")
+        if not source:
+            raise ValueError("source must be non-empty")
+        if not target:
+            raise ValueError("target must be non-empty")
+        return _to_py(self.model.analogize(source, target))
+
+    @_error_to_dict
+    def reasoning_abduce(
+        self,
+        observation: str,
+        hypotheses: list[str],
+        priors: list[float] | None = None,
+    ) -> dict:
+        """Pick the best explanation for an observation.
+
+        Args:
+            observation: A free-text observation (tokenized by
+                alphanumeric word boundaries, case-insensitive).
+            hypotheses: List of candidate hypothesis strings. Must be
+                non-empty.
+            priors: Optional priors aligned with ``hypotheses``. When
+                omitted, uniform priors are used. Must be same length
+                as ``hypotheses``.
+
+        Returns:
+            Dict with keys ``best`` (str, the winning hypothesis; or
+            ``None`` on empty/mismatched priors), ``scores`` (list[float]
+            aligned with ``hypotheses``), ``confidence`` (float in
+            [0, 1], the normalized score of the winner).
+
+        Failure mode: returns ``{"error": "reasoning_abduce: ..."}``.
+        """
+        if not isinstance(observation, str):
+            raise ValueError("observation must be a string")
+        if not isinstance(hypotheses, list):
+            raise ValueError("hypotheses must be a list")
+        if not hypotheses:
+            raise ValueError("hypotheses must be non-empty")
+        if priors is not None:
+            if not isinstance(priors, list):
+                raise ValueError("priors must be a list")
+            if len(priors) != len(hypotheses):
+                raise ValueError(
+                    f"priors ({len(priors)}) must match hypotheses "
+                    f"({len(hypotheses)})"
+                )
+        return _to_py(
+            self.model.abduce(observation, hypotheses, priors=priors)
+        )
+
+    @_error_to_dict
+    def reasoning_conclude_defaults(
+        self,
+        defaults: list[dict] | None = None,
+        facts: dict[str, bool] | None = None,
+    ) -> dict:
+        """Apply defeasible default rules to a set of facts.
+
+        Args:
+            defaults: List of dicts each with ``rule`` (a list
+                ``[antecedent, consequent]`` or
+                ``[antecedent, consequent, value]`` — value defaults to
+                True when omitted) and optional ``exception`` (a list
+                whose first element is the exception proposition; when
+                True in ``facts``, the rule is defeated). Defaults to
+                ``[]``.
+            facts: Dict of proposition -> truth value. Missing facts
+                are treated as False. Defaults to ``{}``.
+
+        Returns:
+            Dict with keys ``conclusions`` (dict[str, bool], the
+            non-ambiguous inferred propositions), ``defeated`` (list of
+            ``[antecedent, consequent]`` pairs blocked by exceptions),
+            ``ambiguous`` (list[str], sorted deduplicated propositions
+            inferred as both True and False by different rules).
+
+        Failure mode: returns ``{"error": "reasoning_conclude_defaults: ..."}``.
+        """
+        from zero_data_model.model import ZeroDataModel
+
+        defaults = defaults or []
+        facts = facts or {}
+        if not isinstance(defaults, list):
+            raise ValueError("defaults must be a list")
+        if not isinstance(facts, dict):
+            raise ValueError("facts must be a dict")
+        # Fresh model to avoid leaking state across MCP calls.
+        m = ZeroDataModel(dim=self.model.dim, seed=self.model._seed)
+        for d in defaults:
+            if not isinstance(d, dict):
+                raise ValueError(f"each default must be a dict, got {type(d).__name__}")
+            rule = d.get("rule")
+            exception = d.get("exception")
+            if rule is None:
+                raise ValueError("each default must have a 'rule' key")
+            if not isinstance(rule, (list, tuple)):
+                raise ValueError("rule must be a list")
+            rule_t = tuple(rule)
+            exc_t = tuple(exception) if exception is not None else None
+            m.add_default_rule(rule_t, exception=exc_t)
+        return _to_py(m.conclude_defaults(facts))
+
+    @_error_to_dict
+    def reasoning_trace_causal(
+        self,
+        links: list[list[str]] | None = None,
+        start: str = "root",
+        max_depth: int = 5,
+    ) -> dict:
+        """Trace a causal chain from a starting node.
+
+        Args:
+            links: List of ``[cause, effect]`` pairs defining the causal
+                graph. Defaults to ``[]`` (empty graph — ``start`` will
+                return a single-node chain).
+            start: The starting node for DFS. Coerced to ``str``.
+            max_depth: Maximum DFS depth. Default 5. Must be ``>= 0``.
+
+        Returns:
+            Dict with keys ``chain`` (list[str], DFS visit order
+            starting with ``start``), ``effects`` (list[str], sorted
+            distinct downstream effects), ``depth`` (int, max depth
+            reached), ``cycles`` (bool, True if a back-edge was
+            detected during traversal).
+
+        Failure mode: returns ``{"error": "reasoning_trace_causal: ..."}``.
+        """
+        from zero_data_model.model import ZeroDataModel
+
+        links = links or []
+        if not isinstance(links, list):
+            raise ValueError("links must be a list")
+        if not isinstance(start, str):
+            raise ValueError("start must be a string")
+        if not isinstance(max_depth, int) or max_depth < 0:
+            raise ValueError(f"max_depth must be a non-negative int, got {max_depth}")
+        # Fresh model to avoid leaking state across MCP calls.
+        m = ZeroDataModel(dim=self.model.dim, seed=self.model._seed)
+        for link in links:
+            if not isinstance(link, (list, tuple)) or len(link) < 2:
+                raise ValueError(f"each link must be [cause, effect], got {link}")
+            m.add_causal_link(str(link[0]), str(link[1]))
+        return _to_py(m.trace_causal_chain(start, max_depth=max_depth))
+
+    # ------------------------------------------------------------------
     # Registration / public API.
     # ------------------------------------------------------------------
 
@@ -2069,6 +2358,15 @@ class ZeroDataMCPServer:
             "code_analyze_control_flow": self.code_analyze_control_flow,
             "code_analyze_style": self.code_analyze_style,
             "code_build_dependency_graph": self.code_build_dependency_graph,
+            # Phase 7 — Reasoning (prop-infer / syllogism / induct /
+            # analogize / abduce / defaults / causal).
+            "reasoning_infer_logical": self.reasoning_infer_logical,
+            "reasoning_syllogism": self.reasoning_syllogism,
+            "reasoning_induct_rule": self.reasoning_induct_rule,
+            "reasoning_analogize": self.reasoning_analogize,
+            "reasoning_abduce": self.reasoning_abduce,
+            "reasoning_conclude_defaults": self.reasoning_conclude_defaults,
+            "reasoning_trace_causal": self.reasoning_trace_causal,
         }
 
     def list_tools(self) -> list[str]:
