@@ -1437,6 +1437,18 @@ def create_app() -> FastAPI:
             if req.obstacles is not None:
                 obs_arr = np.asarray(req.obstacles, dtype=float)
                 _ensure_finite(obs_arr, "obstacles")
+                # V4-NEW-M001: validate obstacle dim matches start_state to
+                # avoid engine ValueError surfacing as 500. Empty obstacles
+                # (K=0) is allowed and skips projection (fix L2 back-compat).
+                if obs_arr.ndim != 2 or obs_arr.shape[1] != start.shape[0]:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            "obstacles must be 2D with shape (K, dim) where "
+                            f"dim matches start_state; got shape "
+                            f"{obs_arr.shape} for start_state dim {start.shape[0]}"
+                        ),
+                    )
                 constraints["obstacles"] = obs_arr
             if req.margin is not None:
                 constraints["margin"] = float(req.margin)

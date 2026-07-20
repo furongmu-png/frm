@@ -6,6 +6,7 @@ the tool functions are still defined as plain callables for direct use.
 from __future__ import annotations
 
 import functools
+import math
 from collections.abc import Callable
 from typing import Any
 
@@ -22,7 +23,14 @@ except Exception:  # pragma: no cover - graceful degradation path.
 
 
 def _to_py(obj: Any) -> Any:
-    """Recursively convert numpy values to JSON-serializable Python types."""
+    """Recursively convert numpy values to JSON-serializable Python types.
+
+    Non-finite floats (NaN, +Inf, -Inf) are mapped to ``None`` to keep
+    output strict-JSON-safe — MCP clients using strict parsers (e.g.
+    standard ``json.loads``) reject non-finite floats, and persistence
+    diagrams routinely contain ``+Inf`` for essential homology classes
+    (V4-NEW-M002).
+    """
     if isinstance(obj, dict):
         return {str(k): _to_py(v) for k, v in obj.items()}
     if isinstance(obj, (list, tuple)):
@@ -34,7 +42,10 @@ def _to_py(obj: Any) -> Any:
     if isinstance(obj, np.integer):
         return int(obj)
     if isinstance(obj, np.floating):
-        return float(obj)
+        f = float(obj)
+        return None if not math.isfinite(f) else f
+    if isinstance(obj, float):
+        return None if not math.isfinite(obj) else obj
     return obj
 
 

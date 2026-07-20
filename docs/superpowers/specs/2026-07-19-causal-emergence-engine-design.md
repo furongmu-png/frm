@@ -1,4 +1,4 @@
-# 因果涌现引擎 — 设计规范（修订版 v4）
+# 因果涌现引擎 — 设计规范（修订版 v4.1）
 
 > **状态:** 已修订 (2026-07-20)
 > **作者:** Agent
@@ -6,12 +6,14 @@
 > - v2 (2026-07-19)：第一轮超级军事级审查发现 4 项 CRITICAL + 7 项 HIGH + 9 项 MEDIUM + 5 项 LOW + 2 项 INFO 问题
 > - v3 (2026-07-20)：实现完成后，两轮军事级审查（phase-4 + round-2）发现并修复了 12 项 spec 与实现的偏差；本 v3 将所有偏差反向同步到 spec，使 spec 与实现一致
 > - v3.1 (2026-07-20)：清理前两轮 LOW 残留（R2-NEW-L3 收紧 ESS 测试断言 + R2-NEW-M1 残留补 n_steps 边界测试）
-> - v4 (2026-07-20)：扩展 4 个集成入口（CLI emergence 子命令 + Web API 6 端点 + MCP 6 工具 + differential constraints 避障），测试总数从 241 增至 352
+> - v4 (2026-07-20)：扩展 4 个集成入口（CLI emergence 子命令 + Web API 6 端点 + MCP 6 工具 + differential constraints 避障），测试总数从 241 增至 306
+> - v4.1 (2026-07-20)：第四轮军事级审查发现的 2 项 MEDIUM 修复（V4-NEW-M001 API obstacles 维度校验 + V4-NEW-M002 MCP `_to_py` NaN/Inf → None），测试总数从 306 增至 311
 > **实现计划:** 后续文档位于 `docs/superpowers/plans/`
 > **审查报告:**
 > - `docs/superpowers/reviews/2026-07-20-causal-emergence-engine-phase4-implementation-review.md`
 > - `docs/superpowers/reviews/2026-07-20-causal-emergence-engine-round2-new-fixes-review.md`
 > - `docs/superpowers/reviews/2026-07-20-causal-emergence-engine-v3-final-reconciliation-review.md`
+> - `docs/superpowers/reviews/2026-07-20-causal-emergence-engine-v4-integration-entry-points-review.md`
 
 ---
 
@@ -838,7 +840,7 @@ def _deterministic_rng():
 ## 13. 验收标准
 
 - 5 个模块 + 引擎按本规范实现。
-- **11 个测试文件全部通过**（v4 同步：8 个模块/引擎/集成测试 + 3 个 v4 新增入口测试，共 **306 个测试**）：
+- **11 个测试文件全部通过**（v4.1 同步：8 个模块/引擎/集成测试 + 3 个 v4 新增入口测试，共 **311 个测试**）：
   - `test_causal_emergence_topology.py` — 18 tests
   - `test_causal_emergence_causal_discovery.py` — 24 tests
   - `test_causal_emergence_differential.py` — 53 tests（v4 新增 14 个避障测试）
@@ -848,17 +850,18 @@ def _deterministic_rng():
   - `test_causal_emergence_emergence_cycle.py` — 41 tests（v3 新增）
   - `test_zero_data_model_causal_emergence_integration.py` — 23 tests（v3 新增）
   - `test_cli_emergence.py` — 16 tests（v4 新增：CLI `python -m zero_data_model emergence ...` 4 个子命令）
-  - `test_api_emergence.py` — 15 tests（v4 新增：6 个 FastAPI 端点 + auth/rate-limit 边界）
-  - `test_mcp_emergence.py` — 20 tests（v4 新增：6 个 MCP 工具 + JSON 序列化 + docstring 契约）
+  - `test_api_emergence.py` — 17 tests（v4 新增 15 + v4.1 新增 2 个 obstacles 维度校验测试）
+  - `test_mcp_emergence.py` — 23 tests（v4 新增 20 + v4.1 新增 3 个 `_to_py` NaN/Inf 测试）
 - 现有 capability 测试仍通过（无回归）。
 - `ruff check` 在所有新文件上无告警。
-- 两轮军事级审查 + v3 最终对账审查完成并作为独立报告文档提交：
+- 两轮军事级审查 + v3 最终对账审查 + v4 集成入口审查完成并作为独立报告文档提交：
   - `docs/superpowers/reviews/2026-07-20-causal-emergence-engine-phase4-implementation-review.md`
   - `docs/superpowers/reviews/2026-07-20-causal-emergence-engine-round2-new-fixes-review.md`
   - `docs/superpowers/reviews/2026-07-20-causal-emergence-engine-v3-final-reconciliation-review.md`
+  - `docs/superpowers/reviews/2026-07-20-causal-emergence-engine-v4-integration-entry-points-review.md`
 - `ZeroDataModel` 集成：`emergence_cycle` 在合成观测 `(50, 4)` 上端到端运行无错误。
 - **集成入口（v4 新增）:** CLI / Web API / MCP 三层入口均路由通过 `ZeroDataModel` facade（不绕过 `model._lock`），且 constraints 避障在三层入口均可访问。
-- 性能：单次 `emergence_cycle` 在最大输入规模下 < 10 秒（v4 同步：306 个测试在 CI 上约 46 秒通过，隐式覆盖性能契约）。
+- 性能：单次 `emergence_cycle` 在最大输入规模下 < 10 秒（v4.1 同步：311 个测试在 CI 上约 28 秒通过，隐式覆盖性能契约）。
 
 ---
 
@@ -954,3 +957,14 @@ def _deterministic_rng():
    - 新增 20 个测试覆盖 6 工具 × (成功 + 边界 + 错误处理 + JSON 序列化 + docstring 保留)。
 
 5. **§13 / §14 / §10.3 同步：** 测试文件清单从 8 → 11 文件、241 → 306 tests；§14 移除"Web API 端点"与"constraints 避障"两条已实现项，新增"MCP `sample_posterior` 任意 log_prob_fn"作为已知限制。`ruff check` 全部通过。
+
+### v4.1 (2026-07-20)
+基于第四轮军事级审查报告（`docs/superpowers/reviews/2026-07-20-causal-emergence-engine-v4-integration-entry-points-review.md`）发现的 2 项 MEDIUM 与 8 项 LOW，本期集中修复 2 项 MEDIUM + 高影响测试覆盖，LOW 项作为后续维护周期候选。测试总数从 306 → 311。
+
+1. **V4-NEW-M001（API obstacles 维度校验，§13 / `api.py`）：** 原 `POST /emergence/trajectory` 端点未校验 `obstacles` 第二维是否与 `start_state` 维度匹配；当不匹配时引擎抛 `ValueError` → FastAPI 默认 500。修复：在 `obstacles` 解析后立即检查 `obs_arr.ndim == 2` 且 `obs_arr.shape[1] == start.shape[0]`，否则抛 `HTTPException(status_code=400, detail=...)`，错误消息含期望 dim 与实际 shape。空 obstacles（K=0）仍允许（与 `differential.py` 的 `_parse_constraints` 一致，跳过投影保持向后兼容）。新增 2 个测试：`test_emergence_trajectory_obstacles_wrong_dim_returns_400`（dim 2 vs start dim 3 → 400 + "obstacles must be 2D"）与 `test_emergence_trajectory_obstacles_1d_returns_400`（1D 数组 → 400 或 422，Pydantic schema 验证先于 handler）。
+
+2. **V4-NEW-M002（MCP `_to_py` NaN/Inf → None，§13 / `mcp_server.py`）：** 原 `_to_py()` 仅转换 numpy 标量/数组类型，不处理 NaN/Inf；而 `emergence_cycle` 返回的 `perception.persistence_diagram` 常含 `+Inf`（essential homology class 的 death），strict JSON 解析器（如标准 `json.loads`）会拒绝。修复：在 `_to_py()` 中对 `np.floating` 与 `float` 分支用 `math.isfinite(f)` 守卫，非有限值 → `None`；新增 `import math`。这使 MCP 输出契约与 Web API 的 `_to_jsonable()`（同样将 NaN/Inf → None）一致。新增 3 个测试：`test_to_py_converts_nan_to_none`（Python float NaN/±Inf）、`test_to_py_converts_numpy_non_finite_to_none`（numpy 标量）、`test_to_py_converts_non_finite_inside_nested_structures`（嵌套 dict/list/ndarray 递归替换 + 严格 JSON round-trip）。
+
+3. **未修复的 LOW（作为后续维护周期候选）：** V4-NEW-L001（CLI `--margin` 未暴露）、V4-NEW-L002（CLI 输出始终含 `obstacle_violations` 键）、V4-NEW-L003 / L004（API response 丢弃 `nearest_pattern` / `samples` 字段）、V4-NEW-L005（spec 头部"352"已修正为"306"）、V4-NEW-L006（MCP 工具未 `_ensure_finite`）、V4-NEW-L007（CLI `_load_observation` 不支持 `.json`）、V4-NEW-L008（投影公式 `q[k] == obs` 精确相等时失效，理论边界）。
+
+4. **§13 / §15 同步：** 测试计数 306 → 311（API +2 / MCP +3）；v4 changelog 修正"352"为"306"（V4-NEW-L005）。`ruff check` 全部通过。

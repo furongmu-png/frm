@@ -424,3 +424,60 @@ def test_emergence_tool_failure_surfaces_error_dict():
         server.model.perceive_topology = original  # type: ignore[method-assign]
     assert "error" in result
     assert "forced failure" in result["error"]
+
+
+# ----------------------------------------------------------------------
+# _to_py: non-finite float handling (V4-NEW-M002)
+# ----------------------------------------------------------------------
+
+def test_to_py_converts_nan_to_none():
+    """V4-NEW-M002: NaN floats are mapped to None for strict JSON safety."""
+    from zero_data_model.mcp_server import _to_py
+
+    assert _to_py(float("nan")) is None
+    assert _to_py(float("inf")) is None
+    assert _to_py(float("-inf")) is None
+    assert _to_py(1.5) == 1.5
+
+
+def test_to_py_converts_numpy_non_finite_to_none():
+    """V4-NEW-M002: numpy NaN/Inf scalars also map to None."""
+    from zero_data_model.mcp_server import _to_py
+
+    assert _to_py(np.float64("nan")) is None
+    assert _to_py(np.float64("inf")) is None
+    assert _to_py(np.float64(3.14)) == 3.14
+
+
+def test_to_py_converts_non_finite_inside_nested_structures():
+    """V4-NEW-M002: NaN inside dicts/lists/arrays is recursively replaced.
+
+    Persistence diagrams routinely contain ``+Inf`` for essential homology
+    classes; strict ``json.loads`` rejects non-finite floats. The fix must
+    reach into nested containers (the topology diagram is a list of tuples
+    that gets converted via ``obj.tolist()``).
+    """
+    from zero_data_model.mcp_server import _to_py
+
+    payload = {
+        "diagram": [
+            [0, 0.0, float("inf")],   # essential class
+            [1, 0.5, 1.5],
+            [0, 0.0, float("nan")],   # pathological NaN
+        ],
+        "stats": {"max": float("inf"), "mean": 0.42},
+        "arr": np.array([1.0, np.nan, 2.0]),
+    }
+    out = _to_py(payload)
+    # Top-level structure preserved.
+    assert set(out.keys()) == {"diagram", "stats", "arr"}
+    # Non-finite values replaced with None.
+    assert out["diagram"][0] == [0, 0.0, None]
+    assert out["diagram"][2] == [0, 0.0, None]
+    assert out["stats"]["max"] is None
+    assert out["arr"] == [1.0, None, 2.0]
+    # Finite values untouched.
+    assert out["diagram"][1] == [1, 0.5, 1.5]
+    assert out["stats"]["mean"] == 0.42
+    # Round-trip through strict JSON now succeeds.
+    json.dumps(out)

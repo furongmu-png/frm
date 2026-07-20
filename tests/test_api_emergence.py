@@ -194,6 +194,41 @@ def test_emergence_trajectory_with_obstacles(client):
     assert body["obstacle_violations"] >= 0
 
 
+def test_emergence_trajectory_obstacles_wrong_dim_returns_400(client):
+    """V4-NEW-M001: obstacle dim != start_state dim yields 400, not 500."""
+    r = client.post(
+        "/emergence/trajectory",
+        json={
+            "start_state": [0.0, 0.0, 0.0],
+            "end_state": [1.0, 1.0, 1.0],
+            "n_steps": 8,
+            "obstacles": [[0.5, 0.5]],  # dim 2 vs start dim 3
+            "margin": 0.3,
+        },
+    )
+    assert r.status_code == 400, r.text
+    assert "obstacles must be 2D" in r.json()["detail"]
+
+
+def test_emergence_trajectory_obstacles_1d_returns_400(client):
+    """V4-NEW-M001: 1D obstacles array (not 2D) is rejected pre-engine.
+
+    Pydantic catches the shape violation at schema-validation time (422)
+    before our handler runs; either 400 (handler-side) or 422 (schema-side)
+    is acceptable — the contract is "not 200/500 from the engine".
+    """
+    r = client.post(
+        "/emergence/trajectory",
+        json={
+            "start_state": [0.0, 0.0],
+            "end_state": [1.0, 1.0],
+            "n_steps": 8,
+            "obstacles": [0.5, 0.5],  # 1D, not (K, dim)
+        },
+    )
+    assert r.status_code in (400, 422), r.text
+
+
 # --------------------------------------------------------------------------- #
 # /emergence/sample
 # --------------------------------------------------------------------------- #
