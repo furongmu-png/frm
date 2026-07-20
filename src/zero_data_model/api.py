@@ -183,6 +183,9 @@ class _LoggerAdapter:
             exc_info = kwargs.get("exc_info")
             getattr(self._logger, level)(msg, extra=extra, exc_info=exc_info)
 
+    def debug(self, msg: str, **kwargs: Any) -> None:
+        self._emit("debug", msg, **kwargs)
+
     def info(self, msg: str, **kwargs: Any) -> None:
         self._emit("info", msg, **kwargs)
 
@@ -1684,7 +1687,7 @@ def create_app() -> FastAPI:
             # was already validated by the persistence sandbox).
             log.warning(
                 "load_failed_oserror",
-                name=req.name,
+                snapshot_name=req.name,
                 error_type=type(exc).__name__,
             )
             raise HTTPException(status_code=500, detail="load failed") from exc

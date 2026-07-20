@@ -12,6 +12,7 @@ from __future__ import annotations
 import time
 
 import numpy as np
+import pytest
 import scipy.stats
 
 from zero_data_model.biological import CellularAutomata
@@ -302,8 +303,19 @@ def test_model_think_output_finite_and_correct_shape_after_jit():
     assert out.metadata["cycle"] >= 1
 
 
+@pytest.mark.skipif(
+    not kernels.HAS_NUMBA,
+    reason="numba not installed in this environment",
+)
 def test_jit_kernels_module_imports_with_numba_present():
-    """The kernels module should expose the documented JIT functions."""
+    """The kernels module should expose the documented JIT functions.
+
+    Only runs when numba is actually installed — the test name's
+    ``_with_numba_present`` suffix encodes this precondition. Without
+    the skipif, environments without numba see a misleading failure
+    (the JIT functions are still defined as pure-numpy fallbacks, but
+    ``HAS_NUMBA`` is False).
+    """
     assert hasattr(kernels, "_predictive_layer_forward")
     assert hasattr(kernels, "_cosine_similarity")
     assert hasattr(kernels, "_topos_classify")

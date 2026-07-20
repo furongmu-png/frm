@@ -39,7 +39,6 @@ from zero_data_model.mcp_server import ZeroDataMCPServer
 from zero_data_model.model import ZeroDataModel
 from zero_data_model.persistence import set_persistence_root
 
-
 # --------------------------------------------------------------------- #
 # Shared fixtures — deterministic test data.
 # --------------------------------------------------------------------- #
@@ -184,9 +183,9 @@ class TestFacadeCausal:
     def test_solve_pomdp_returns_expected_keys(self):
         m = ZeroDataModel(dim=8, seed=42)
         T = np.asarray(POMDP_CONFIG["transitions"])
-        O = np.asarray(POMDP_CONFIG["observations"])
+        obs_arr = np.asarray(POMDP_CONFIG["observations"])
         R = np.asarray(POMDP_CONFIG["rewards"])
-        r = m.solve_pomdp(T, O, R)
+        r = m.solve_pomdp(T, obs_arr, R)
         assert {"policy", "value", "iterations", "converged"} <= set(r.keys())
         policy = np.asarray(r["policy"])
         assert policy.shape == (2,)

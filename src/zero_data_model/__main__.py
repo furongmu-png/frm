@@ -1686,8 +1686,9 @@ def _build_parser() -> argparse.ArgumentParser:
     # ------------------------------------------------------------------ #
     causal_parser = subparsers.add_parser(
         "causal",
-        help="Causal/decision capabilities (decision-tree / game / counterfactual / bandit / pomdp / discover-graph / intervene).",
-        description="Decision trees, game theory, counterfactual reasoning, multi-armed bandits, POMDP solving, causal-graph discovery, and intervention analysis.",
+        help="Causal/decision capabilities (decision-tree / game / counterfactual / bandit / pomdp / ...).",
+        description="Decision trees, game theory, counterfactual reasoning, multi-armed bandits, "
+                    "POMDP solving, causal-graph discovery, and intervention analysis.",
     )
     causal_sub = causal_parser.add_subparsers(
         dest="subcommand", required=True, metavar="<subcommand>",
