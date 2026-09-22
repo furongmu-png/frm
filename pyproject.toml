@@ -38,7 +38,7 @@ gpu = ["cupy-cuda12x>=13.0,<15"]
 web = [
     "fastapi>=0.100,<1",
     "uvicorn>=0.20,<1",
-    "websockets>=12,<14",
+    "websockets>=12,<17",
     "pydantic>=2,<3",
     "slowapi>=0.1,<1",
     "structlog>=24,<27",
