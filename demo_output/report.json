@@ -1,0 +1,121 @@
+{
+  "title": "ZeroDataModel 认知起源演示报告",
+  "timestamp": "2026-07-24T20:28:26.049398",
+  "total_steps": 170,
+  "model_dim": 64,
+  "stages": {
+    "physics": {
+      "steps": "见自由能曲线",
+      "status": "完成"
+    },
+    "text": {
+      "steps": "见自由能曲线",
+      "status": "完成"
+    },
+    "crossmodal": {
+      "steps": "见自由能曲线",
+      "status": "完成"
+    },
+    "qa": {
+      "steps": "见自由能曲线",
+      "status": "完成"
+    }
+  },
+  "milestones": [
+    {
+      "step": 0,
+      "type": "concept_cluster",
+      "title": "New Concept Cluster",
+      "description": "New modality category appeared: 'physics'.",
+      "stage": "physics"
+    },
+    {
+      "step": 50,
+      "type": "concept_cluster",
+      "title": "New Concept Cluster",
+      "description": "New modality category appeared: 'text'.",
+      "stage": "text"
+    },
+    {
+      "step": 100,
+      "type": "concept_cluster",
+      "title": "New Concept Cluster",
+      "description": "New modality category appeared: 'crossmodal'.",
+      "stage": "crossmodal"
+    },
+    {
+      "step": 150,
+      "type": "concept_cluster",
+      "title": "New Concept Cluster",
+      "description": "New modality category appeared: 'qa'.",
+      "stage": "qa"
+    }
+  ],
+  "milestone_count": 4,
+  "final_free_energy": 36.50753869920287,
+  "fe_history_length": 170,
+  "deep_memory": {
+    "enabled": true,
+    "components": {
+      "s4": {
+        "state_dim": 128,
+        "input_dim": 64,
+        "output_dim": 64,
+        "spectral_radius": 0.9051131794641109,
+        "state_norm": 0.04592238078830339
+      },
+      "pcn": {
+        "l0_dim": 64,
+        "l1_dim": 64,
+        "l2_dim": 32,
+        "l0_error": 0.31763325882207627,
+        "l1_error": 0.29445193984604023,
+        "l2_error": 0.0
+      },
+      "hopfield": {
+        "size": 1,
+        "capacity": 2048,
+        "beta": 32.0,
+        "fill_ratio": 0.00048828125
+      }
+    },
+    "stats": {
+      "total_steps": 170,
+      "novel_count": 1,
+      "stored_count": 1,
+      "avg_free_energy": 0.1755932592758216,
+      "avg_similarity": 0.9941176470588236
+    },
+    "snapshots_collected": 1
+  },
+  "material_index": {
+    "frames": {
+      "count": 2,
+      "dir": "demo_output/frames",
+      "samples": [
+        "crossmodal_000100.png",
+        "physics_000000.png"
+      ]
+    },
+    "text_snapshots": {
+      "count": 1,
+      "dir": "demo_output/text"
+    },
+    "latent_snapshots": {
+      "count": 1,
+      "dir": "demo_output/latent"
+    },
+    "kg_snapshots": {
+      "count": 4,
+      "dir": "demo_output/graphs"
+    },
+    "qa_logs": {
+      "count": 0,
+      "dir": "demo_output/qa"
+    },
+    "curves": {
+      "free_energy_csv": "demo_output/curves/free_energy.csv",
+      "deep_memory_csv": "demo_output/curves/deep_memory.csv"
+    }
+  }
+}

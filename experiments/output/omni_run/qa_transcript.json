@@ -1,0 +1,842 @@
+[
+  {
+    "step": 1,
+    "question": "Why does Computer Science_2 have high prediction error?",
+    "gap_type": "high_fe",
+    "entities": [
+      "Computer Science_2"
+    ],
+    "answer": "Geography_1. This article discusses concepts related to mathematics_4.",
+    "matched_article": "Computer Science_2",
+    "fe_before": 36.647622885136784,
+    "fe_after": 36.8877884954995,
+    "pred_err_before": 0.4619253666910069,
+    "pred_err_after": 0.3993019823024858,
+    "delta_pred_err": 0.06262338438852111,
+    "answered": true,
+    "confidence": 0.13557035162871106,
+    "metadata": {
+      "template": "Why does {entity} have high prediction error?",
+      "priority": 2.3275429066168165
+    }
+  },
+  {
+    "step": 2,
+    "question": "Why does Mathematics_3 have high prediction error?",
+    "gap_type": "high_fe",
+    "entities": [
+      "Mathematics_3"
+    ],
+    "answer": "Geography_4. This article discusses concepts related to biology_4.",
+    "matched_article": "Mathematics_3",
+    "fe_before": 36.88793955347774,
+    "fe_after": 37.42931096295824,
+    "pred_err_before": 0.3980701899353822,
+    "pred_err_after": 0.3774043687453591,
+    "delta_pred_err": 0.02066582119002308,
+    "answered": true,
+    "confidence": 0.0519150182870456,
+    "metadata": {
+      "template": "Why does {entity} have high prediction error?",
+      "priority": 1.72998386933632
+    }
+  },
+  {
+    "step": 3,
+    "question": "Why does Biology_1 have high prediction error?",
+    "gap_type": "high_fe",
+    "entities": [
+      "Biology_1"
+    ],
+    "answer": "Geography_1. This article discusses concepts related to mathematics_4. The study of geography_0. The study of geography_0 involves several related to history_0.",
+    "matched_article": "Biology_1",
+    "fe_before": 37.42922243077835,
+    "fe_after": 37.282403019851756,
+    "pred_err_before": 0.356601051929497,
+    "pred_err_after": 0.34530206641312444,
+    "delta_pred_err": 0.01129898551637254,
+    "answered": true,
+    "confidence": 0.03168522766614397,
+    "metadata": {
+      "template": "Why does {entity} have high prediction error?",
+      "priority": 1.2900630992796365
+    }
+  },
+  {
+    "step": 4,
+    "question": "Why does Geography_4 have high prediction error?",
+    "gap_type": "high_fe",
+    "entities": [
+      "Geography_4"
+    ],
+    "answer": "Geography_1. This article discusses concepts related to history_0. This article discusses concepts related ideas.",
+    "matched_article": "Geography_4",
+    "fe_before": 37.28245746189659,
+    "fe_after": 36.788762391576086,
+    "pred_err_before": 0.354555194400089,
+    "pred_err_after": 0.35500647781588535,
+    "delta_pred_err": -0.00045128341579636633,
+    "answered": false,
+    "confidence": 0.0,
+    "metadata": {
+      "template": "Why does {entity} have high prediction error?",
+      "priority": 1.0385713741821776
+    }
+  },
+  {
+    "step": 5,
+    "question": "Why does Computer Science_1 have high prediction error?",
+    "gap_type": "high_fe",
+    "entities": [
+      "Computer Science_1"
+    ],
+    "answer": "Computer Science_0. This article discusses concepts related to biology_1.",
+    "matched_article": "Computer Science_1",
+    "fe_before": 37.88450929822901,
+    "fe_after": 38.00344595407207,
+    "pred_err_before": 0.32685654741740866,
+    "pred_err_after": 0.34560193917306364,
+    "delta_pred_err": -0.018745391755654983,
+    "answered": false,
+    "confidence": 0.0,
+    "metadata": {
+      "template": "Why does {entity} have high prediction error?",
+      "priority": 3.3422908526367623
+    }
+  },
+  {
+    "step": 6,
+    "question": "Why does Physics_3 have high prediction error?",
+    "gap_type": "high_fe",
+    "entities": [
+      "Physics_3"
+    ],
+    "answer": "Geography_1. This article discusses concepts related to computer science_2 involves several related to mathematics_3.",
+    "matched_article": "Physics_3",
+    "fe_before": 38.00341394050547,
+    "fe_after": 37.85972837372024,
+    "pred_err_before": 0.3388548201629283,
+    "pred_err_after": 0.341055428806192,
+    "delta_pred_err": -0.002200608643263713,
+    "answered": false,
+    "confidence": 0.0,
+    "metadata": {
+      "template": "Why does {entity} have high prediction error?",
+      "priority": 2.0096909384998507
+    }
+  },
+  {
+    "step": 7,
+    "question": "Why does Biology_1 have high prediction error?",
+    "gap_type": "high_fe",
+    "entities": [
+      "Biology_1"
+    ],
+    "answer": "Geography_1. This article discusses concepts related to mathematics_4 involves several related ideas.",
+    "matched_article": "Biology_1",
+    "fe_before": 37.85976355363886,
+    "fe_after": 38.23538123153293,
+    "pred_err_before": 0.3290296464738678,
+    "pred_err_after": 0.33496331683966113,
+    "delta_pred_err": -0.005933670365793342,
+    "answered": false,
+    "confidence": 0.0,
+    "metadata": {
+      "template": "Why does {entity} have high prediction error?",
+      "priority": 1.3422551427867426
+    }
+  },
+  {
+    "step": 8,
+    "question": "Why does Biology_3 have high prediction error?",
+    "gap_type": "high_fe",
+    "entities": [
+      "Biology_3"
+    ],
+    "answer": "Geography_4. This article discusses concepts related to biology_1 involves several related ideas.",
+    "matched_article": "Biology_3",
+    "fe_before": 38.23538226939084,
+    "fe_after": 38.01327041494776,
+    "pred_err_before": 0.33451745761902313,
+    "pred_err_after": 0.3380057130119252,
+    "delta_pred_err": -0.0034882553929020954,
+    "answered": false,
+    "confidence": 0.0,
+    "metadata": {
+      "template": "Why does {entity} have high prediction error?",
+      "priority": 1.024633148277104
+    }
+  },
+  {
+    "step": 10,
+    "question": "Why does Computer Science_1 have high prediction error?",
+    "gap_type": "high_fe",
+    "entities": [
+      "Computer Science_1"
+    ],
+    "answer": "Computer Science_0. This article discusses concepts related ideas.",
+    "matched_article": "Computer Science_1",
+    "fe_before": 36.68968935844796,
+    "fe_after": 37.00192132009467,
+    "pred_err_before": 0.4016491972420198,
+    "pred_err_after": 0.37680840774815355,
+    "delta_pred_err": 0.024840789493866255,
+    "answered": true,
+    "confidence": 0.0618469790664067,
+    "metadata": {
+      "template": "Why does {entity} have high prediction error?",
+      "priority": 1.8269659383336159
+    }
+  },
+  {
+    "step": 11,
+    "question": "Why does Computer Science_2 have high prediction error?",
+    "gap_type": "high_fe",
+    "entities": [
+      "Computer Science_2"
+    ],
+    "answer": "Computer Science_0. This article discusses concepts related to geography_4.",
+    "matched_article": "Computer Science_2",
+    "fe_before": 37.00192375956624,
+    "fe_after": 37.52485441352881,
+    "pred_err_before": 0.3758221957548158,
+    "pred_err_after": 0.36137796947502265,
+    "delta_pred_err": 0.014444226279793138,
+    "answered": true,
+    "confidence": 0.038433670078433756,
+    "metadata": {
+      "template": "Why does {entity} have high prediction error?",
+      "priority": 1.43691742178117
+    }
+  },
+  {
+    "step": 12,
+    "question": "Why does Physics_0 have high prediction error?",
+    "gap_type": "high_fe",
+    "entities": [
+      "Physics_0"
+    ],
+    "answer": "Geography_1. This article discusses concepts related to history_0.",
+    "matched_article": "Physics_0",
+    "fe_before": 37.52482859656545,
+    "fe_after": 37.8638889424265,
+    "pred_err_before": 0.350038406124469,
+    "pred_err_after": 0.34875773545725935,
+    "delta_pred_err": 0.0012806706672096602,
+    "answered": true,
+    "confidence": 0.003658657578146641,
+    "metadata": {
+      "template": "Why does {entity} have high prediction error?",
+      "priority": 1.4226333569511536
+    }
+  },
+  {
+    "step": 13,
+    "question": "Why does Biology_1 have high prediction error?",
+    "gap_type": "high_fe",
+    "entities": [
+      "Biology_1"
+    ],
+    "answer": "Geography_1. This article discusses concepts related to history_0.",
+    "matched_article": "Biology_1",
+    "fe_before": 37.86391979305436,
+    "fe_after": 38.165074897875435,
+    "pred_err_before": 0.33664684401467493,
+    "pred_err_after": 0.33916974281589707,
+    "delta_pred_err": -0.00252289880122214,
+    "answered": false,
+    "confidence": 0.0,
+    "metadata": {
+      "template": "Why does {entity} have high prediction error?",
+      "priority": 1.165678662975566
+    }
+  },
+  {
+    "step": 14,
+    "question": "Why does History_4 have high prediction error?",
+    "gap_type": "high_fe",
+    "entities": [
+      "History_4"
+    ],
+    "answer": "Geography_1. This article discusses concepts related to history_0. The study of biology_3 involves several related to biology_1.",
+    "matched_article": "History_4",
+    "fe_before": 38.16505891667701,
+    "fe_after": 37.836625697031536,
+    "pred_err_before": 0.3396356170208401,
+    "pred_err_after": 0.34385173948918263,
+    "delta_pred_err": -0.00421612246834252,
+    "answered": false,
+    "confidence": 0.0,
+    "metadata": {
+      "template": "Why does {entity} have high prediction error?",
+      "priority": 1.010953159600617
+    }
+  },
+  {
+    "step": 15,
+    "question": "Why does Computer Science_1 have high prediction error?",
+    "gap_type": "high_fe",
+    "entities": [
+      "Computer Science_1"
+    ],
+    "answer": "Computer Science_0. This article discusses concepts related ideas.",
+    "matched_article": "Computer Science_1",
+    "fe_before": 38.00413047574338,
+    "fe_after": 37.98276263911194,
+    "pred_err_before": 0.3883180121208381,
+    "pred_err_after": 0.38523938090082355,
+    "delta_pred_err": 0.0030786312200145605,
+    "answered": true,
+    "confidence": 0.007928118510908893,
+    "metadata": {
+      "template": "Why does {entity} have high prediction error?",
+      "priority": 1.4376335641617919
+    }
+  },
+  {
+    "step": 16,
+    "question": "Why does Computer Science_2 have high prediction error?",
+    "gap_type": "high_fe",
+    "entities": [
+      "Computer Science_2"
+    ],
+    "answer": "Computer Science_0. This article discusses concepts related to biology_1 involves several related to biology_1.",
+    "matched_article": "Computer Science_2",
+    "fe_before": 37.982740483233655,
+    "fe_after": 37.7173180800369,
+    "pred_err_before": 0.3829307632116076,
+    "pred_err_after": 0.377499996597566,
+    "delta_pred_err": 0.005430766614041627,
+    "answered": true,
+    "confidence": 0.014182111064920067,
+    "metadata": {
+      "template": "Why does {entity} have high prediction error?",
+      "priority": 1.1819840542823756
+    }
+  },
+  {
+    "step": 17,
+    "question": "Why does Biology_1 have high prediction error?",
+    "gap_type": "high_fe",
+    "entities": [
+      "Biology_1"
+    ],
+    "answer": "Geography_1. This article discusses concepts related to biology_1 involves several related ideas.",
+    "matched_article": "Biology_1",
+    "fe_before": 37.71734930588608,
+    "fe_after": 37.31610608252426,
+    "pred_err_before": 0.36420510354545005,
+    "pred_err_after": 0.36291510767892987,
+    "delta_pred_err": 0.0012899958665201772,
+    "answered": true,
+    "confidence": 0.0035419489017654454,
+    "metadata": {
+      "template": "Why does {entity} have high prediction error?",
+      "priority": 1.0195707124457742
+    }
+  },
+  {
+    "step": 19,
+    "question": "Why does Computer Science_1 have high prediction error?",
+    "gap_type": "high_fe",
+    "entities": [
+      "Computer Science_1"
+    ],
+    "answer": "Computer Science_0. This article discusses concepts related ideas.",
+    "matched_article": "Computer Science_1",
+    "fe_before": 37.166537674462894,
+    "fe_after": 37.25354259036668,
+    "pred_err_before": 0.34960178512126755,
+    "pred_err_after": 0.36575049710803403,
+    "delta_pred_err": -0.016148711986766484,
+    "answered": false,
+    "confidence": 0.0,
+    "metadata": {
+      "template": "Why does {entity} have high prediction error?",
+      "priority": 1.354957537774323
+    }
+  },
+  {
+    "step": 20,
+    "question": "Why does Physics_0 have high prediction error?",
+    "gap_type": "high_fe",
+    "entities": [
+      "Physics_0"
+    ],
+    "answer": "Geography_1. This article discusses concepts related to biology_1 involves several related to mathematics_3 involves several related to mathematics_3.",
+    "matched_article": "Physics_0",
+    "fe_before": 37.25350068811808,
+    "fe_after": 37.03291827916029,
+    "pred_err_before": 0.35434605710701755,
+    "pred_err_after": 0.3538779149675452,
+    "delta_pred_err": 0.0004681421394723273,
+    "answered": true,
+    "confidence": 0.0013211439215505133,
+    "metadata": {
+      "template": "Why does {entity} have high prediction error?",
+      "priority": 1.180063623317741
+    }
+  },
+  {
+    "step": 21,
+    "question": "Why does Computer Science_1 have high prediction error?",
+    "gap_type": "high_fe",
+    "entities": [
+      "Computer Science_1"
+    ],
+    "answer": "Computer Science_0. This article discusses concepts related ideas. The study of biology_1 involves several related ideas.",
+    "matched_article": "Computer Science_1",
+    "fe_before": 37.821789088894214,
+    "fe_after": 37.21645729357665,
+    "pred_err_before": 0.3589945049651088,
+    "pred_err_after": 0.35328027466674694,
+    "delta_pred_err": 0.005714230298361878,
+    "answered": true,
+    "confidence": 0.015917319678520572,
+    "metadata": {
+      "template": "Why does {entity} have high prediction error?",
+      "priority": 1.9327013542471698
+    }
+  },
+  {
+    "step": 22,
+    "question": "Why does Computer Science_2 have high prediction error?",
+    "gap_type": "high_fe",
+    "entities": [
+      "Computer Science_2"
+    ],
+    "answer": "Computer Science_0. This article discusses concepts related ideas. This article discusses concepts related ideas. The study of mathematics_4.",
+    "matched_article": "Computer Science_2",
+    "fe_before": 37.21646378246632,
+    "fe_after": 37.261786846518724,
+    "pred_err_before": 0.35136904460999957,
+    "pred_err_after": 0.3490456743344142,
+    "delta_pred_err": 0.002323370275585379,
+    "answered": true,
+    "confidence": 0.0066123362636119325,
+    "metadata": {
+      "template": "Why does {entity} have high prediction error?",
+      "priority": 1.0121449654274306
+    }
+  },
+  {
+    "step": 24,
+    "question": "Why does Computer Science_1 have high prediction error?",
+    "gap_type": "high_fe",
+    "entities": [
+      "Computer Science_1"
+    ],
+    "answer": "Computer Science_0. This article discusses concepts related to mathematics_4 involves several related ideas.",
+    "matched_article": "Computer Science_1",
+    "fe_before": 38.23916624878969,
+    "fe_after": 38.556708498284344,
+    "pred_err_before": 0.36380794551779283,
+    "pred_err_after": 0.3773110762763588,
+    "delta_pred_err": -0.013503130758565962,
+    "answered": false,
+    "confidence": 0.0,
+    "metadata": {
+      "template": "Why does {entity} have high prediction error?",
+      "priority": 1.5638194020483862
+    }
+  },
+  {
+    "step": 25,
+    "question": "Why does Computer Science_0 have high prediction error?",
+    "gap_type": "high_fe",
+    "entities": [
+      "Computer Science_0"
+    ],
+    "answer": "Computer Science_0 is an article about computer science involves several related ideas.",
+    "matched_article": "Computer Science_0",
+    "fe_before": 38.55669120732205,
+    "fe_after": 38.65482468963175,
+    "pred_err_before": 0.37299015777296113,
+    "pred_err_after": 0.3718421509662816,
+    "delta_pred_err": 0.0011480068066795357,
+    "answered": true,
+    "confidence": 0.0030778474518845795,
+    "metadata": {
+      "template": "Why does {entity} have high prediction error?",
+      "priority": 1.4233774111554016
+    }
+  },
+  {
+    "step": 26,
+    "question": "Why does Geography_4 have high prediction error?",
+    "gap_type": "high_fe",
+    "entities": [
+      "Geography_4"
+    ],
+    "answer": "Geography_1. This article discusses concepts related to biology_1 involves several related ideas.",
+    "matched_article": "Geography_4",
+    "fe_before": 38.65492555319034,
+    "fe_after": 38.849602774306575,
+    "pred_err_before": 0.36662415491151623,
+    "pred_err_after": 0.37270180170988887,
+    "delta_pred_err": -0.006077646798372638,
+    "answered": false,
+    "confidence": 0.0,
+    "metadata": {
+      "template": "Why does {entity} have high prediction error?",
+      "priority": 1.2201912439496845
+    }
+  },
+  {
+    "step": 27,
+    "question": "Why does Biology_4 have high prediction error?",
+    "gap_type": "high_fe",
+    "entities": [
+      "Biology_4"
+    ],
+    "answer": "Geography_1. This article discusses concepts related to biology_1. This article discusses concepts related to biology_1. The study of geography_1.",
+    "matched_article": "Biology_4",
+    "fe_before": 38.84946893015097,
+    "fe_after": 38.61158569818844,
+    "pred_err_before": 0.3568802463413191,
+    "pred_err_after": 0.3604975813644795,
+    "delta_pred_err": -0.0036173350231604173,
+    "answered": false,
+    "confidence": 0.0,
+    "metadata": {
+      "template": "Why does {entity} have high prediction error?",
+      "priority": 1.1355756899976324
+    }
+  },
+  {
+    "step": 28,
+    "question": "Why does Mathematics_3 have high prediction error?",
+    "gap_type": "high_fe",
+    "entities": [
+      "Mathematics_3"
+    ],
+    "answer": "Geography_4. This article discusses concepts related to history_4 involves several related to history_0. The study of geography_1.",
+    "matched_article": "Mathematics_3",
+    "fe_before": 38.611610652174626,
+    "fe_after": 38.33484435857256,
+    "pred_err_before": 0.37427232760713736,
+    "pred_err_after": 0.37592729423127763,
+    "delta_pred_err": -0.001654966624140275,
+    "answered": false,
+    "confidence": 0.0,
+    "metadata": {
+      "template": "Why does {entity} have high prediction error?",
+      "priority": 1.0297779660190547
+    }
+  },
+  {
+    "step": 29,
+    "question": "Why does Computer Science_1 have high prediction error?",
+    "gap_type": "high_fe",
+    "entities": [
+      "Computer Science_1"
+    ],
+    "answer": "Computer Science_0. This article discusses concepts related to history_0 involves several related to geography_0.",
+    "matched_article": "Computer Science_1",
+    "fe_before": 37.48301156233562,
+    "fe_after": 37.481214771683376,
+    "pred_err_before": 0.3414474054310548,
+    "pred_err_after": 0.35446170985614583,
+    "delta_pred_err": -0.01301430442509105,
+    "answered": false,
+    "confidence": 0.0,
+    "metadata": {
+      "template": "Why does {entity} have high prediction error?",
+      "priority": 1.581125409435899
+    }
+  },
+  {
+    "step": 30,
+    "question": "Why does Mathematics_3 have high prediction error?",
+    "gap_type": "high_fe",
+    "entities": [
+      "Mathematics_3"
+    ],
+    "answer": "Geography_4 is an article about geography. It discusses concepts related to history_3.",
+    "matched_article": "Mathematics_3",
+    "fe_before": 37.481221637066,
+    "fe_after": 37.30345696465759,
+    "pred_err_before": 0.34703508615444406,
+    "pred_err_after": 0.34686819940490327,
+    "delta_pred_err": 0.00016688674954079552,
+    "answered": true,
+    "confidence": 0.0004808930168707047,
+    "metadata": {
+      "template": "Why does {entity} have high prediction error?",
+      "priority": 1.491067342283976
+    }
+  },
+  {
+    "step": 31,
+    "question": "Why does Computer Science_0 have high prediction error?",
+    "gap_type": "high_fe",
+    "entities": [
+      "Computer Science_0"
+    ],
+    "answer": "Computer Science_0 is an article about computer science involves several related ideas. The study of biology_2. The study of biology_1.",
+    "matched_article": "Computer Science_0",
+    "fe_before": 37.30343734418768,
+    "fe_after": 37.64456125673544,
+    "pred_err_before": 0.3517581115486789,
+    "pred_err_after": 0.35418614604767934,
+    "delta_pred_err": -0.00242803449900042,
+    "answered": false,
+    "confidence": 0.0,
+    "metadata": {
+      "template": "Why does {entity} have high prediction error?",
+      "priority": 1.3157752843455681
+    }
+  },
+  {
+    "step": 32,
+    "question": "Why does Geography_4 have high prediction error?",
+    "gap_type": "high_fe",
+    "entities": [
+      "Geography_4"
+    ],
+    "answer": "Geography_1. This article discusses concepts related to geography_0. The study of biology_4 involves several related ideas.",
+    "matched_article": "Geography_4",
+    "fe_before": 37.64465558845692,
+    "fe_after": 37.08184228157217,
+    "pred_err_before": 0.34359587886363563,
+    "pred_err_after": 0.3524062873420287,
+    "delta_pred_err": -0.008810408478393095,
+    "answered": false,
+    "confidence": 0.0,
+    "metadata": {
+      "template": "Why does {entity} have high prediction error?",
+      "priority": 1.169725146388051
+    }
+  },
+  {
+    "step": 33,
+    "question": "Why does Computer Science_2 have high prediction error?",
+    "gap_type": "high_fe",
+    "entities": [
+      "Computer Science_2"
+    ],
+    "answer": "Computer Science_0 is an article about computer science involves several related to history_0 involves several related ideas. The study of biology_1.",
+    "matched_article": "Computer Science_2",
+    "fe_before": 37.08174025657112,
+    "fe_after": 37.24496797507654,
+    "pred_err_before": 0.3640821188163112,
+    "pred_err_after": 0.3690251594634153,
+    "delta_pred_err": -0.004943040647104102,
+    "answered": false,
+    "confidence": 0.0,
+    "metadata": {
+      "template": "Why does {entity} have high prediction error?",
+      "priority": 1.090189059085089
+    }
+  },
+  {
+    "step": 35,
+    "question": "Why does Biology_3 have high prediction error?",
+    "gap_type": "high_fe",
+    "entities": [
+      "Biology_3"
+    ],
+    "answer": "Geography_4 is an article about geography. It discusses concepts related to biology_1 involves several related ideas.",
+    "matched_article": "Biology_3",
+    "fe_before": 39.08444831271578,
+    "fe_after": 39.04733517388719,
+    "pred_err_before": 0.5082998098003967,
+    "pred_err_after": 0.48064596436901325,
+    "delta_pred_err": 0.02765384543138344,
+    "answered": true,
+    "confidence": 0.054404595276639545,
+    "metadata": {
+      "template": "Why does {entity} have high prediction error?",
+      "priority": 1.5250180378568765
+    }
+  },
+  {
+    "step": 36,
+    "question": "Why does Computer Science_1 have high prediction error?",
+    "gap_type": "high_fe",
+    "entities": [
+      "Computer Science_1"
+    ],
+    "answer": "Computer Science_0. This article discusses concepts related to geography_0. This article discusses concepts related ideas. See also: [Biology_2], and dna",
+    "matched_article": "Computer Science_1",
+    "fe_before": 39.047360214125504,
+    "fe_after": 38.97756618021077,
+    "pred_err_before": 0.49420552168117615,
+    "pred_err_after": 0.4675480472042653,
+    "delta_pred_err": 0.02665747447691086,
+    "answered": true,
+    "confidence": 0.05394005794639469,
+    "metadata": {
+      "template": "Why does {entity} have high prediction error?",
+      "priority": 1.4817521745461635
+    }
+  },
+  {
+    "step": 37,
+    "question": "Why does Mathematics_3 have high prediction error?",
+    "gap_type": "high_fe",
+    "entities": [
+      "Mathematics_3"
+    ],
+    "answer": "Geography_4. This article discusses concepts related to geography_4. The study of biology_1. The study of biology_2 involves several related ideas.",
+    "matched_article": "Mathematics_3",
+    "fe_before": 38.97767327421051,
+    "fe_after": 39.290406648898944,
+    "pred_err_before": 0.46234772614734354,
+    "pred_err_after": 0.4460528016999802,
+    "delta_pred_err": 0.016294924447363357,
+    "answered": true,
+    "confidence": 0.035243872794932705,
+    "metadata": {
+      "template": "Why does {entity} have high prediction error?",
+      "priority": 1.404435415570458
+    }
+  },
+  {
+    "step": 38,
+    "question": "Why does Physics_2 have high prediction error?",
+    "gap_type": "high_fe",
+    "entities": [
+      "Physics_2"
+    ],
+    "answer": "Geography_1. This article discusses concepts related to history_0 involves several related to computer science involves several related ideas.",
+    "matched_article": "Physics_2",
+    "fe_before": 39.29030259713875,
+    "fe_after": 38.824889577825275,
+    "pred_err_before": 0.4415801985421979,
+    "pred_err_after": 0.4281688947568173,
+    "delta_pred_err": 0.01341130378538058,
+    "answered": true,
+    "confidence": 0.03037116208936842,
+    "metadata": {
+      "template": "Why does {entity} have high prediction error?",
+      "priority": 1.2076356879516772
+    }
+  },
+  {
+    "step": 39,
+    "question": "Why does Computer Science_0 have high prediction error?",
+    "gap_type": "high_fe",
+    "entities": [
+      "Computer Science_0"
+    ],
+    "answer": "Computer Science_0. This article discusses concepts related ideas. The study of geography_0. The study of computer science_2.",
+    "matched_article": "Computer Science_0",
+    "fe_before": 38.82490024911515,
+    "fe_after": 38.6071494642301,
+    "pred_err_before": 0.436279160744078,
+    "pred_err_after": 0.4293642991456832,
+    "delta_pred_err": 0.006914861598394828,
+    "answered": true,
+    "confidence": 0.015849626158172373,
+    "metadata": {
+      "template": "Why does {entity} have high prediction error?",
+      "priority": 1.1496514569310656
+    }
+  },
+  {
+    "step": 40,
+    "question": "Why does Mathematics_3 have high prediction error?",
+    "gap_type": "high_fe",
+    "entities": [
+      "Mathematics_3"
+    ],
+    "answer": "Geography_4. This article discusses concepts related to computer science_2 involves several related to mathematics_4 involves several related to biology_1.",
+    "matched_article": "Mathematics_3",
+    "fe_before": 37.42238144066967,
+    "fe_after": 37.30611187434235,
+    "pred_err_before": 0.801385047914353,
+    "pred_err_after": 0.6998980031901136,
+    "delta_pred_err": 0.10148704472423942,
+    "answered": true,
+    "confidence": 0.1266395535933255,
+    "metadata": {
+      "template": "Why does {entity} have high prediction error?",
+      "priority": 1.8642792981263827
+    }
+  },
+  {
+    "step": 41,
+    "question": "Why does Mathematics_4 have high prediction error?",
+    "gap_type": "high_fe",
+    "entities": [
+      "Mathematics_4"
+    ],
+    "answer": "Geography_4. This article discusses concepts related to geography_1. The study of history_0 involves several related ideas.",
+    "matched_article": "Mathematics_4",
+    "fe_before": 37.30599652748748,
+    "fe_after": 37.51645024039408,
+    "pred_err_before": 0.692118833929222,
+    "pred_err_after": 0.6209649894529394,
+    "delta_pred_err": 0.07115384447628259,
+    "answered": true,
+    "confidence": 0.10280582031316168,
+    "metadata": {
+      "template": "Why does {entity} have high prediction error?",
+      "priority": 1.617350564892833
+    }
+  },
+  {
+    "step": 42,
+    "question": "Why does Computer Science_0 have high prediction error?",
+    "gap_type": "high_fe",
+    "entities": [
+      "Computer Science_0"
+    ],
+    "answer": "Computer Science_0. This article discusses concepts related to history_0 involves several related to biology_4 involves several related ideas.",
+    "matched_article": "Computer Science_0",
+    "fe_before": 37.516242409817835,
+    "fe_after": 37.341810799601426,
+    "pred_err_before": 0.6299037808757224,
+    "pred_err_after": 0.5811919531901804,
+    "delta_pred_err": 0.04871182768554205,
+    "answered": true,
+    "confidence": 0.077332172253071,
+    "metadata": {
+      "template": "Why does {entity} have high prediction error?",
+      "priority": 1.603715063051265
+    }
+  },
+  {
+    "step": 43,
+    "question": "Why does Computer Science_1 have high prediction error?",
+    "gap_type": "high_fe",
+    "entities": [
+      "Computer Science_1"
+    ],
+    "answer": "Computer Science_0 is an article about computer science. This article discusses concepts related to geography_4.",
+    "matched_article": "Computer Science_1",
+    "fe_before": 37.34183344527396,
+    "fe_after": 36.911284918574516,
+    "pred_err_before": 0.5819987080565461,
+    "pred_err_after": 0.5333259860207195,
+    "delta_pred_err": 0.04867272203582662,
+    "answered": true,
+    "confidence": 0.083630292236143,
+    "metadata": {
+      "template": "Why does {entity} have high prediction error?",
+      "priority": 1.4388908403246032
+    }
+  },
+  {
+    "step": 44,
+    "question": "Why does Biology_3 have high prediction error?",
+    "gap_type": "high_fe",
+    "entities": [
+      "Biology_3"
+    ],
+    "answer": "Geography_4.",
+    "matched_article": "Biology_3",
+    "fe_before": 36.91128819124865,
+    "fe_after": 36.90966810053045,
+    "pred_err_before": 0.5189230958645745,
+    "pred_err_after": 0.49447238081706546,
+    "delta_pred_err": 0.024450715047509064,
+    "answered": true,
+    "confidence": 0.04711818618666776,
+    "metadata": {
+      "template": "Why does {entity} have high prediction error?",
+      "priority": 1.3984152630138338
+    }
+  }
+]

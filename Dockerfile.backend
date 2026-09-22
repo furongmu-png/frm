@@ -1,0 +1,32 @@
+# Backend: ZeroDataModel + WebSocket streamer + REST API
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install system deps for numpy/scipy/PIL
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential libffi-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy project metadata and install. The repo uses pyproject.toml (there is
+# no requirements.txt), so we install via pip extras — mirroring the runtime
+# Dockerfile. [web] pulls fastapi/uvicorn/pydantic for the visualization
+# REST API; [quantum,jit,parallel] match the runtime image extras.
+COPY pyproject.toml README.md LICENSE MANIFEST.in ./
+RUN pip install --no-cache-dir ".[web,quantum,jit,parallel]"
+
+# Copy source. The demo script inserts `src/` and `experiments/` onto
+# sys.path, so both trees must be present in the image.
+COPY src/ ./src/
+COPY experiments/ ./experiments/
+
+# Flush stdout/stderr immediately so logs appear without buffering.
+ENV PYTHONUNBUFFERED=1
+
+# Expose REST API (8000) and WebSocket (8765)
+EXPOSE 8000 8765
+
+# Start the visualization demo (streamer + API + model loop).
+# Bind to 0.0.0.0 so the REST API and WebSocket are reachable from
+# sibling containers (caddy/frontend) via the compose network.
+CMD ["python", "experiments/run_visualization_demo.py", "--steps", "100000", "--ws_host", "0.0.0.0", "--rest_host", "0.0.0.0", "--ws_port", "8765", "--rest_port", "8000"]

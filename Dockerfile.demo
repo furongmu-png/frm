@@ -1,0 +1,59 @@
+# syntax=docker/dockerfile:1
+#
+# Dockerfile.demo — 认知起源完整演示镜像
+#
+# 包含：
+#   - ZeroDataModel 核心模型（src/）
+#   - 实验组件（experiments/）
+#   - 认知起源演示脚本（demo_cognitive_origin.py）
+#   - 演示视频生成器（render_demo_video.py）
+#   - 素材索引生成器（build_material_index.py）
+#   - ffmpeg + imagemagick（视频生成系统依赖）
+#   - matplotlib（自由能曲线 + 隐空间投影渲染）
+#   - DejaVu 字体（drawtext 字幕渲染需要）
+#
+# 用法：
+#   docker build -f Dockerfile.demo -t zdm-demo:latest .
+#   docker run --rm -v $PWD/demo_output:/app/demo_output zdm-demo:latest \
+#       python demo_cognitive_origin.py --steps 5000 --no-streamer
+#   docker run --rm -v $PWD/demo_output:/app/demo_output zdm-demo:latest \
+#       python render_demo_video.py --input demo_output --out video_assets
+#
+# Base image: python:3.12-slim (与生产 Dockerfile 一致)
+FROM python:3.12-slim
+
+# 系统依赖：ffmpeg (视频) + fonts-dejavu (字幕) + imagemagick (可选)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ffmpeg \
+        fonts-dejavu-core \
+        fonts-dejavu-extra \
+        build-essential \
+        libffi-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# 验证 ffmpeg 可用
+RUN ffmpeg -version | head -1
+
+WORKDIR /app
+
+# 复制项目元数据并安装 Python 依赖
+COPY pyproject.toml README.md LICENSE MANIFEST.in ./
+# 安装：核心 + web (fastapi/uvicorn) + matplotlib (视频曲线渲染)
+# Pillow 已是 web extra 的依赖；matplotlib 单独列出
+RUN pip install --no-cache-dir ".[web]" matplotlib
+
+# 复制源码、实验组件、演示脚本
+COPY src/ ./src/
+COPY experiments/ ./experiments/
+COPY demo_cognitive_origin.py render_demo_video.py build_material_index.py ./
+
+# 创建素材输出目录（便于无挂载运行）
+RUN mkdir -p /app/demo_output /app/video_assets
+
+# 不暴露端口（演示脚本默认 --no-streamer）
+# 若需 WebSocket 推流，去掉 --no-streamer 并 EXPOSE 8765
+ENV PYTHONUNBUFFERED=1 \
+    MPLBACKEND=Agg
+
+# 默认入口：打印帮助
+CMD ["python", "demo_cognitive_origin.py", "--help"]

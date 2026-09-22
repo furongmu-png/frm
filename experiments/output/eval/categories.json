@@ -1,0 +1,100 @@
+{
+  "n_snapshots": 100,
+  "n_belief_dims": 32,
+  "label_source": "engine",
+  "n_categories": 3,
+  "category_names": [
+    "NLP",
+    "CV",
+    "Analytics"
+  ],
+  "engine_error": null,
+  "kmeans_silhouette": 0.2935174126574034,
+  "kmeans_purity": {
+    "purity": 0.56,
+    "nmi": 0.09263418295723636,
+    "contingency_table": [
+      [
+        7,
+        7,
+        7,
+        5,
+        5,
+        5,
+        9,
+        5,
+        6
+      ],
+      [
+        2,
+        5,
+        4,
+        4,
+        3,
+        2,
+        0,
+        0,
+        1
+      ],
+      [
+        0,
+        1,
+        1,
+        2,
+        2,
+        5,
+        5,
+        4,
+        3
+      ]
+    ],
+    "n_bins": 3,
+    "n_categories": 3
+  },
+  "engine_or_kmeans_purity": {
+    "purity": 0.7,
+    "nmi": 0.10323679211336265,
+    "contingency_table": [
+      [
+        2,
+        4,
+        1,
+        2,
+        2,
+        2,
+        3,
+        1,
+        1
+      ],
+      [
+        7,
+        9,
+        9,
+        5,
+        8,
+        10,
+        6,
+        7,
+        9
+      ],
+      [
+        0,
+        0,
+        2,
+        4,
+        0,
+        0,
+        5,
+        1,
+        0
+      ]
+    ],
+    "n_bins": 3,
+    "n_categories": 3
+  },
+  "label_counts": {
+    "NLP": 18,
+    "CV": 70,
+    "Analytics": 12
+  }
+}

@@ -3,8 +3,10 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import threading
+from typing import Any
 
 import numpy as np
 
@@ -44,52 +46,6 @@ from .capabilities.causal_advanced import (
     InterventionAnalyzer,
     POMDPApproximator,
 )
-from .capabilities.memory import (
-    ContextMemory,
-    EpisodicMemory,
-    MemoryConsolidator,
-    WorkingMemory,
-)
-from .capabilities.memory_advanced import (
-    ForgetfulMemory,
-    HierarchicalMemory,
-    MemoryIndexer,
-    SpreadingActivationMemory,
-)
-from .capabilities.planning import (
-    ActionSequencer,
-    GoalDecomposer,
-    HierarchicalPlanner,
-    TrajectoryPlanner,
-)
-from .capabilities.planning_advanced import (
-    ContingencyPlanner,
-    MonteCarloTreePlanner,
-    PolicyGradientPlanner,
-    SymbolicPlanner,
-)
-from .capabilities.multimodal import (
-    CrossModalAligner,
-    ModalityEncoder,
-    ModalityFuser,
-    SharedLatentSpace,
-)
-from .capabilities.multimodal_advanced import (
-    AttentionBasedFuser,
-    ContrastiveAligner,
-    MultimodalRetriever,
-)
-from .capabilities.rl import (
-    PolicyOptimizer,
-    QLearner,
-    SyntheticMDP,
-    ValueFunction,
-)
-from .capabilities.rl_advanced import (
-    DynaQ,
-    MonteCarloTreeSearch,
-    PosteriorSampling,
-)
 from .capabilities.code import (
     ASTAnalyzer,
     CodeEncoder,
@@ -112,11 +68,46 @@ from .capabilities.graph_advanced import (
     GraphIsomorphismDetector,
     SpanningTreeExtractor,
 )
+from .capabilities.memory import (
+    ContextMemory,
+    EpisodicMemory,
+    MemoryConsolidator,
+    WorkingMemory,
+)
+from .capabilities.memory_advanced import (
+    ForgetfulMemory,
+    HierarchicalMemory,
+    MemoryIndexer,
+    SpreadingActivationMemory,
+)
+from .capabilities.multimodal import (
+    CrossModalAligner,
+    ModalityEncoder,
+    ModalityFuser,
+    SharedLatentSpace,
+)
+from .capabilities.multimodal_advanced import (
+    AttentionBasedFuser,
+    ContrastiveAligner,
+    MultimodalRetriever,
+)
 from .capabilities.nlp import SemanticComparator, TextEncoder, TextGenerator, ZeroShotClassifier
 from .capabilities.nlp_advanced import (
     MultiLingualEncoder,
     SentenceEncoder,
     SyntacticAnalyzer,
+)
+from .capabilities.planning import (
+    ActionSequencer,
+    GoalDecomposer,
+    HierarchicalPlanner,
+    TrajectoryPlanner,
+)
+from .capabilities.planning_advanced import (
+    ContingencyPlanner,
+    MonteCarloTreePlanner,
+    PolicyGradientPlanner,
+    SymbolicPlanner,
 )
 from .capabilities.reasoning import (
     AnalogicalReasoner,
@@ -128,6 +119,17 @@ from .capabilities.reasoning_advanced import (
     AbductiveReasoner,
     CausalChainReasoner,
     DefeasibleReasoner,
+)
+from .capabilities.rl import (
+    PolicyOptimizer,
+    QLearner,
+    SyntheticMDP,
+    ValueFunction,
+)
+from .capabilities.rl_advanced import (
+    DynaQ,
+    MonteCarloTreeSearch,
+    PosteriorSampling,
 )
 from .capabilities.robotics import (
     GaitGenerator,
@@ -150,8 +152,8 @@ from .capabilities.rules import (
     MultimodalRules,
     NLPRules,
     PlanningRules,
-    RLRules,
     ReasoningRules,
+    RLRules,
     RoboticsRules,
     TimeRules,
     VisionRules,
@@ -179,7 +181,40 @@ from .consciousness_core import ConsciousnessCore
 from .hardware import accel as _accel
 from .hardware.parallel import ParallelExecutor
 from .math_universe import MathematicalUniverse
+from .metrics import ZDM_METRICS
 from .quantum_hybrid import QuantumClassicalHybrid
+
+# Module-level logger used by the cognitive-upgrade hooks in ``think()``.
+# Each hook is wrapped in try/except and logs a warning on failure so a
+# single optional optimization can never crash a full think() cycle.
+_logger = logging.getLogger(__name__)
+
+
+def _sanitize_for_json(obj: Any) -> Any:
+    """Convert numpy types/arrays in ``obj`` to plain Python for JSON serialization.
+
+    The cognitive-upgrade hooks (architect, layered_predictor, meta_cognition,
+    ...) frequently return numpy scalars / ndarrays inside their result dicts.
+    Those values are surfaced via ``Signal.metadata`` and may be serialized to
+    JSON by API callers (FastAPI's ``jsonable_encoder`` raises on ``np.float64``
+    / ``np.ndarray``). This helper walks the structure recursively and
+    replaces every numpy leaf with its native Python equivalent, mapping
+    NaN/inf to ``None`` (JSON ``null``) so the output is always JSON-safe.
+    """
+    if isinstance(obj, dict):
+        return {str(k): _sanitize_for_json(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_sanitize_for_json(v) for v in obj]
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    if isinstance(obj, np.integer):
+        return int(obj)
+    if isinstance(obj, np.floating):
+        v = float(obj)
+        return v if np.isfinite(v) else None  # NaN/inf -> null
+    if isinstance(obj, np.bool_):
+        return bool(obj)
+    return obj
 
 
 class ZeroDataModel:
@@ -200,7 +235,25 @@ class ZeroDataModel:
     - Analytics: time-series forecasting, anomaly detection, pattern mining, trend analysis
     """
 
-    def __init__(self, dim: int = 64, seed: int | None = None):
+    def __init__(
+        self,
+        dim: int = 64,
+        seed: int | None = None,
+        *,
+        enable_architect: bool = False,
+        enable_layered_predictor: bool = False,
+        enable_episodic_memory: bool = False,
+        enable_logic_layer: bool = False,
+        enable_meta_cognition: bool = False,
+        enable_experiment_planner: bool = False,
+        enable_multiagent: bool = False,
+        # --- Phase G (四.3): 三项核心认知升级开关 ----------------------- #
+        # 默认 False 保证零回归；显式传 True 或设环境变量 ZDM_USE_* 启用。
+        # 详见 zero_data_model.config。
+        use_s4: bool | None = None,
+        use_pcn: bool | None = None,
+        use_hopfield: bool | None = None,
+    ):
         # Round-3 audit: validate dim to prevent OOM / confusing downstream
         # errors. ``dim`` drives every cognitive module to allocate ``dim x
         # dim`` arrays; unbounded values cause silent OOM, and ``dim <= 0``
@@ -210,6 +263,20 @@ class ZeroDataModel:
                 f"dim must be an int in [1, 4096], got {dim!r}"
             )
         self.dim = dim
+
+        # Phase G (四.3): 解析三项认知升级开关。
+        # 显式参数优先；None 时回退到 config 模块的环境变量默认值。
+        from zero_data_model.config import (
+            get_default_use_s4,
+            get_default_use_pcn,
+            get_default_use_hopfield,
+        )
+        self._use_s4 = bool(use_s4) if use_s4 is not None else get_default_use_s4()
+        self._use_pcn = bool(use_pcn) if use_pcn is not None else get_default_use_pcn()
+        self._use_hopfield = (
+            bool(use_hopfield) if use_hopfield is not None
+            else get_default_use_hopfield()
+        )
         # Optional RNG seed (Fix 9). Round-3 audit CRIT-1: each cognitive
         # module now holds its own ``np.random.Generator`` (``self._rng``)
         # seeded from this seed, instead of drawing from the global
@@ -267,7 +334,9 @@ class ZeroDataModel:
         _child_rngs = self._rng.spawn(_N_COGNITIVE_MODULES + 1)
         self.consciousness = ConsciousnessCore(dim=dim, rng=_child_rngs[0])
         self.active_inference = ActiveInferenceEngine(
-            state_dim=dim, obs_dim=dim, action_dim=dim // 2, rng=_child_rngs[1]
+            state_dim=dim, obs_dim=dim, action_dim=dim // 2, rng=_child_rngs[1],
+            # Phase G (四.1): 透传 S4 开关到生成模型
+            use_s4=self._use_s4, s4_seed=self._seed,
         )
         self.category_engine = CategoryTheoryEngine(dim=dim, rng=_child_rngs[2])
         # When a seed is set (Fix 9), force the deterministic pure-NumPy
@@ -652,6 +721,147 @@ class ZeroDataModel:
         self.parallel_executor = ParallelExecutor(
             n_workers=1 if seed is not None else None
         )
+        # ================================================================ #
+        # 第七阶段认知升级模块（可插拔，默认关闭以保持向后兼容）。
+        #
+        # 各模块通过 feature flag 启用。启用后在 think() 末尾被调用，
+        # 但不会修改核心 6 模块的计算逻辑——它们只读取状态、记录
+        # 历史、或返回建议性元数据。这样确保已有测试零回归。
+        # ================================================================ #
+        # LOW-1 audit fix: ``_seed_val`` previously diverged from ``self._seed``
+        # (it was forced to ``42`` when ``seed is None``). Now both hold the
+        # raw user-supplied seed (``None`` when unseeded). All cognitive-upgrade
+        # module constructors below call ``np.random.default_rng(seed)``, which
+        # accepts ``None`` (seeds from OS entropy) — so passing ``None`` here is
+        # safe and consistent with the rest of the model's unseeded semantics.
+        self._seed_val = self._seed
+        # 第一阶段：架构可塑性
+        self.architect = None
+        if enable_architect:
+            from zero_data_model.plasticity.architect import ArchitectureOptimizer
+            self.architect = ArchitectureOptimizer(dim=dim, seed=self._seed_val)
+        # 第二阶段：层次化时间
+        self.layered_predictor = None
+        self.temporal_memory = None
+        if enable_layered_predictor:
+            from zero_data_model.cogtime.layered_predictor import LayeredPredictor
+            from zero_data_model.cogtime.temporal_memory import TemporalMemory
+            # LOW-2 audit fix: when ``dim`` is small (e.g. ``dim=1``),
+            # ``dim // 2`` and ``dim // 4`` collapse to 0, producing
+            # degenerate 0-width L1/L2 layers (``np.zeros(0)``,
+            # ``np.eye(0)``) that later crash on indexing / weighting.
+            # Floor each sub-dim at 1 so the layered predictor remains
+            # functional for any valid ``dim >= 1``.
+            _dim_l1 = max(dim // 2, 1)
+            _dim_l2 = max(dim // 4, 1)
+            self.layered_predictor = LayeredPredictor(
+                dim_l0=dim, dim_l1=_dim_l1, dim_l2=_dim_l2, seed=self._seed_val
+            )
+            self.temporal_memory = TemporalMemory(
+                input_dim=dim, hidden_dim=32, output_dim=dim, seed=self._seed_val
+            )
+        # 第三阶段：结构化记忆
+        self.episodic_graph = None
+        self.semantic_index = None
+        if enable_episodic_memory:
+            from zero_data_model.cogmem.episodic_graph import EpisodicGraph
+            from zero_data_model.cogmem.semantic_index import SemanticIndex
+            self.episodic_graph = EpisodicGraph()
+            self.semantic_index = SemanticIndex(dim=dim)
+        # 第四阶段：神经符号融合
+        self.logic_layer = None
+        self.causal_inference = None
+        if enable_logic_layer:
+            # Alias to avoid shadowing the top-level ``CausalInference``
+            # import (from ``.capabilities.analytics_advanced``) used at
+            # ``self.analytics_causal = CausalInference(...)`` above. A bare
+            # ``from ... import CausalInference`` here would make
+            # ``CausalInference`` a local variable throughout ``__init__``
+            # (Python compile-time scope rule), triggering
+            # ``UnboundLocalError`` at line 405 when ``enable_logic_layer``
+            # is False (the default).
+            from zero_data_model.knowledge.causal_inference import (
+                CausalInference as _KnowledgeCausalInference,
+            )
+            from zero_data_model.knowledge.logic_layer import LogicLayer
+            self.logic_layer = LogicLayer()
+            self.causal_inference = _KnowledgeCausalInference()
+        # 第五阶段：元认知
+        self.meta_cognition = None
+        if enable_meta_cognition:
+            from zero_data_model.metacog.meta_cognition import MetaCognition
+            self.meta_cognition = MetaCognition(dim=dim, seed=self._seed_val)
+        # 第六阶段：主动实验设计
+        self.experiment_planner = None
+        self.hypothesis_tester = None
+        if enable_experiment_planner:
+            from zero_data_model.experiment.experiment_planner import (
+                BayesianExperimentPlanner,
+            )
+            from zero_data_model.experiment.hypothesis_tester import HypothesisTester
+            self.experiment_planner = BayesianExperimentPlanner(seed=self._seed_val)
+            self.experiment_planner.default_candidates(dim=dim)
+            self.hypothesis_tester = HypothesisTester(seed=self._seed_val)
+        # 第七阶段 b：多智能体协作——承载多智能体世界、符号通信与文化传承。
+        # 与其他升级模块一致：默认 None（opt-in），启用时惰性导入并构造。
+        # ``MultiAgentWorld`` 内部为每个智能体构造独立 ZeroDataModel（使用
+        # 默认 flag，故不会递归触发 multiagent hook，无无限递归）。注意
+        # ``MultiAgentWorld`` 用 ``seed + i`` 派生各智能体种子，因此 seed
+        # 不能为 None；当模型未播种时从 ``self._rng`` 派生一个具体种子。
+        self.multiagent_world = None
+        self.multiagent_communication = None
+        self.multiagent_culture = None
+        if enable_multiagent:
+            from zero_data_model.multiagent.communication import (
+                CommunicationChannel,
+            )
+            from zero_data_model.multiagent.culture import CulturePropagation
+            from zero_data_model.multiagent.world import MultiAgentWorld
+
+            _ma_seed = (
+                self._seed_val
+                if self._seed_val is not None
+                else int(self._rng.integers(0, 2_000_000_000))
+            )
+            self.multiagent_world = MultiAgentWorld(
+                n_agents=2, dim=dim, seed=_ma_seed
+            )
+            self.multiagent_communication = CommunicationChannel(seed=_ma_seed)
+            self.multiagent_culture = CulturePropagation(seed=_ma_seed)
+
+        # ---------------------------------------------------------------- #
+        # Phase G (四.3): 三项核心认知升级模块构造
+        # ---------------------------------------------------------------- #
+        # 1. S4 状态空间模型：已在 ActiveInferenceEngine 内部通过 use_s4
+        #    透传构造（见上方）。此处仅保留属性引用供 think() 钩子读取。
+        self.s4_state_cache = None  # think() 中缓存 S4 隐状态前几维
+
+        # 2. 层次化预测编码网络（PCN）：3 层 L0/L1/L2
+        #    HierarchicalZeroDataModel 组合持有 ZeroDataModel（self），
+        #    但 think() 钩子通过 run_pcn_cycle() 调用 PCN 层级（不递归
+        #    调用 self.think()），避免循环。
+        self.pcn_hierarchy = None
+        if self._use_pcn:
+            from zero_data_model.pcn.hierarchical_model import (
+                HierarchicalZeroDataModel,
+            )
+            self.pcn_hierarchy = HierarchicalZeroDataModel(
+                self, use_pcn=True, pcn_lr=0.01,
+            )
+
+        # 3. 现代 Hopfield 联想记忆：模型内部用于快速模式补全。
+        #    ExperienceBuffer 的 Hopfield 集成在 experiments/ 中处理；
+        #    此处的 HopfieldMemory 供 think() 钩子做在线联想检索。
+        self.hopfield_memory = None
+        if self._use_hopfield:
+            from zero_data_model.hopfield import HopfieldMemory
+            # memory_dim = dim，容量 = 1024（可扩展）
+            _hf_beta = max(2.0, dim / 2.0)  # 归一化向量的可分辨 beta
+            self.hopfield_memory = HopfieldMemory(
+                memory_dim=dim, capacity=1024, beta=_hf_beta,
+                seed=self._seed_val,
+            )
+
         self.cycle_count = 0
 
     # Round-8 audit R8-HIGH-3: pickle support. ``ZeroDataModel`` holds two
@@ -712,6 +922,9 @@ class ZeroDataModel:
         # We exclude ``_lock`` (model-level RLock, not picklable) and
         # ``parallel_executor`` (wraps a ThreadPoolExecutor, not picklable)
         # from the top-level dict; ``__setstate__`` rebuilds them.
+        # Phase G: also exclude ``pcn_hierarchy`` — it holds a reference to
+        # ``self`` (circular) and its own ``_lock`` (not picklable). It is
+        # rebuilt in ``__setstate__`` when ``_use_pcn`` is True.
         with self._lock, \
              self.consciousness._lock, \
              self.active_inference._lock, \
@@ -721,7 +934,7 @@ class ZeroDataModel:
              self.math_universe._lock:
             return {
                 k: v for k, v in self.__dict__.items()
-                if k not in ("_lock", "parallel_executor")
+                if k not in ("_lock", "parallel_executor", "pcn_hierarchy")
             }
 
     def __setstate__(self, state: dict) -> None:
@@ -735,6 +948,17 @@ class ZeroDataModel:
         self.parallel_executor = ParallelExecutor(
             n_workers=1 if seed is not None else None
         )
+        # Phase G (四.3): rebuild PCN hierarchy if it was enabled.
+        # The old instance was excluded from pickle state (circular ref +
+        # _lock); reconstruct a fresh wrapper around the restored self.
+        self.pcn_hierarchy = None
+        if getattr(self, "_use_pcn", False):
+            from zero_data_model.pcn.hierarchical_model import (
+                HierarchicalZeroDataModel,
+            )
+            self.pcn_hierarchy = HierarchicalZeroDataModel(
+                self, use_pcn=True, pcn_lr=0.01,
+            )
 
     @property
     def hardware_info(self) -> dict:
@@ -789,6 +1013,12 @@ class ZeroDataModel:
         # — the Signal is a fresh ndarray copied from the caller's input.
         if input_data is None:
             signal = self._self_generate()
+        elif isinstance(input_data, str):
+            # Tolerate raw-string callers (e.g. ``think("test")``): encode
+            # the text via the existing NLP text encoder into a ``dim``-length
+            # vector so the rest of the cycle operates on a numeric signal.
+            # The ndarray / None paths below are unchanged (zero regression).
+            signal = Signal(data=self.nlp_text_encoder.encode(input_data))
         else:
             padded = np.zeros(self.dim)
             padded[: len(input_data)] = input_data[: self.dim]
@@ -815,13 +1045,22 @@ class ZeroDataModel:
         # ``nan > 1e-8`` is False, so the first argument wins). Explicitly
         # reject non-finite uncertainties so a single NaN-poisoned module
         # cannot corrupt the entire softmax weighting.
-        uncertainties = np.array(
-            [
-                max(float(p.uncertainty), 1e-8)
-                if np.isfinite(float(p.uncertainty))
-                else 1e8
-                for p in preds
-            ]
+        #
+        # P2.11 性能优化: 向量化替代 Python 列表解析。原代码每周期对
+        # 6 个模块逐个 float() + isfinite() + max()，产生 6 次属性
+        # 访问与 Python 层分支。改为一次性 np.fromiter 提取，再用
+        # np.where + np.maximum 在 numpy 层完成，避免 Python 循环。
+        raw_unc = np.fromiter(
+            (float(p.uncertainty) for p in preds),
+            dtype=np.float64,
+            count=len(preds),
+        )
+        finite_mask = np.isfinite(raw_unc)
+        # 非有限值 -> 1e8（上限惩罚），有限值 -> max(raw, 1e-8)。
+        uncertainties = np.where(
+            finite_mask,
+            np.maximum(raw_unc, 1e-8),
+            1e8,
         )
 
         # C-7: Weighted integration by inverse uncertainty. ``_integrate``
@@ -849,16 +1088,43 @@ class ZeroDataModel:
         # the mean-squared distance between the predicted observation and
         # the input signal. Fall back to ``pred.uncertainty`` if the
         # prediction is non-finite (defensive — keeps update() callable).
-        for module, pred in zip(self.modules, preds, strict=False):
+        # Week-1 perf: parallelise the per-module ``update`` dispatch. Each
+        # module's ``update`` holds its own per-module RLock internally, so
+        # writes to different modules are independent and safe to run
+        # concurrently -- the previous sequential ``for module, pred in zip(...)``
+        # loop ran each ``module.update(error)`` in series even though the
+        # modules never contend on each other's state. The per-module error
+        # computation (cheap numpy ops reading ``pred.value`` and
+        # ``signal.data``) is kept identical to the original zipping logic;
+        # only the final ``module.update(error)`` calls move onto the thread
+        # pool via ``parallel_executor.map``.
+        errors: list[float] = []
+        # P2.11 内存优化: 原代码每模块分配一个临时 ``diff`` 数组
+        # (``diff = pred_val - sig_slice``) 仅为 ``np.dot(diff, diff)`` 读取
+        # 一次。由于 ``np.asarray(...).flatten()`` 总返回新拷贝（非 view），
+        # 可安全地用它作为 ``np.subtract`` 的 ``out=`` 目标，原地写入差值
+        # 并复用于 ``np.dot``，省去每模块一次 dim 长度数组分配。
+        # 数值结果与原实现逐位一致（同一次减法 + 同一次点积，仅落点不同）。
+        # 原实现（保留为 fallback 注释）:
+        #   diff = pred_val - sig_slice
+        #   error = float(np.dot(diff, diff)) / max(len(pred_val), 1)
+        # float32 评估: 此 error 直接驱动 ``module.update(error)`` 的学习率
+        # (lr = 0.001 * error) 与 architect 的 split/prune 决策，float32 的
+        # ~7 位有效数字会改变学习动力学与结构可塑性触发点 → 跳过 float32。
+        for _module, pred in zip(self.modules, preds, strict=False):
             pred_val = np.asarray(pred.value, dtype=float).flatten()
             sig_slice = signal.data[: len(pred_val)]
             if len(sig_slice) < len(pred_val):
                 sig_slice = np.pad(sig_slice, (0, len(pred_val) - len(sig_slice)))
-            diff = pred_val - sig_slice
-            error = float(np.dot(diff, diff)) / max(len(pred_val), 1)
+            np.subtract(pred_val, sig_slice, out=pred_val)
+            error = float(np.dot(pred_val, pred_val)) / max(len(pred_val), 1)
             if not np.isfinite(error):
                 error = float(pred.uncertainty)
-            module.update(error)
+            errors.append(error)
+        self.parallel_executor.map(
+            lambda me: me[0].update(me[1]),
+            list(zip(self.modules, errors, strict=False)),
+        )
 
         # ``cycle_count`` is the only remaining shared state in think().
         # Use a brief global lock to serialise just the counter increment
@@ -880,21 +1146,569 @@ class ZeroDataModel:
         # confidence -> 0. The 1/(1+x) form keeps it bounded and smooth.
         mean_uncertainty = float(np.mean(uncertainties))
         confidence = float(1.0 / (1.0 + mean_uncertainty))
+
+        # ================================================================ #
+        # 第七阶段认知升级钩子（仅在对应 feature flag 启用时调用）。
+        #
+        # 所有钩子都在 think() 末尾执行，只读取已计算的状态，
+        # 不修改核心 6 模块的逻辑。结果收集到 upgrade_meta dict
+        # 并附加到返回的 Signal.metadata 中，供可视化前端使用。
+        # ================================================================ #
+        upgrade_meta: dict[str, Any] = {}
+        # 第一阶段：架构可塑性——记录各模块误差，定期评估分裂/剪枝。
+        # HIGH-1 (try/except): the architect hook is the only cognitive-upgrade
+        # hook that was NOT wrapped in try/except. If ``architect.evaluate()``
+        # raises (e.g. ``RuntimeError: list changed size during iteration``),
+        # it crashed the entire ``think()`` cycle. The architect is an optional
+        # optimization and must never crash think() — match the pattern used by
+        # the other hooks below (which already have try/except + ``pass``).
+        #
+        # HIGH-2 (pass a copy): ``architect.evaluate`` historically mutated
+        # ``self.modules`` (append/pop), which later broke
+        # ``zip([type(m).__name__ for m in self.modules], errors)`` (silent
+        # truncation when a module was added, or positional mislabeling when
+        # one was pruned, because ``errors`` still had N entries). The
+        # architect.py post-batch-1-fix now operates on an internal copy and
+        # does NOT mutate the input — but pass a defensive copy here so even a
+        # future regression in architect.py cannot corrupt the live list.
+        #
+        # HIGH-3 (self._lock): Phase D made think() lockless except for the
+        # ``cycle_count`` counter (per-module RLocks protect ``process`` /
+        # ``predict`` / ``update``). The architect hook is the one remaining
+        # write-adjacent operation that touches ``self.modules`` without any
+        # lock; if a concurrent metadata reader (or another ``think()``'s
+        # ``record_errors`` call) iterates ``self.modules`` while the architect
+        # reads it, the read could see a torn snapshot. ``self._lock`` is an
+        # RLock so acquisition is safe even if a future caller already holds
+        # it; here think() does NOT hold ``self._lock`` at the hook point
+        # (Phase D dropped the global lock), so acquiring it serializes the
+        # architect against any concurrent reader that also takes
+        # ``self._lock`` (every public read API in this class does).
+        if self.architect is not None:
+            with self._lock:
+                try:
+                    module_names = [type(m).__name__ for m in self.modules]
+                    self.architect.record_errors(module_names, errors)
+                    # Pass a copy so architect cannot mutate the live
+                    # modules list (HIGH-2 audit fix; architect.py also
+                    # self-defends by copying internally).
+                    arch_result = self.architect.evaluate(
+                        list(self.modules), cycle
+                    )
+                    if arch_result:
+                        upgrade_meta["architecture"] = arch_result
+                except Exception as exc:
+                    _logger.warning(
+                        "architect hook failed: %s: %s",
+                        type(exc).__name__,
+                        exc,
+                    )
+            # Best-effort specialized gauge update (never crashes think()).
+            try:
+                _arch_meta = upgrade_meta.get("architecture") or {}
+                ZDM_METRICS.architect_dormant_count.set(
+                    int(_arch_meta.get("dormant_count", 0))
+                )
+                for _action in _arch_meta.get("actions", []):
+                    ZDM_METRICS.architect_actions_total.labels(
+                        action_type=_action.get("action", "unknown")
+                    ).inc()
+            except Exception as exc:
+                _logger.warning(
+                    "architect metric update failed: %s: %s",
+                    type(exc).__name__,
+                    exc,
+                )
+        # 第二阶段：层次化时间——多层预测编码 + 时态记忆。
+        if self.layered_predictor is not None:
+            try:
+                lp_result = self.layered_predictor.update(signal.data, cycle)
+                upgrade_meta["layered_predictor"] = lp_result
+            except Exception:
+                pass
+            try:
+                _lp_meta = upgrade_meta.get("layered_predictor") or {}
+                ZDM_METRICS.layered_belief_norm.set(
+                    float(_lp_meta.get("l2_belief_norm", 0.0))
+                )
+            except Exception as exc:
+                _logger.warning(
+                    "layered_predictor metric update failed: %s: %s",
+                    type(exc).__name__,
+                    exc,
+                )
+        if self.temporal_memory is not None:
+            try:
+                tm_error = self.temporal_memory.update(
+                    signal.data, signal.data, lr=0.01
+                )
+                upgrade_meta["temporal_memory_error"] = float(tm_error)
+            except Exception:
+                pass
+            try:
+                ZDM_METRICS.temporal_spectral_radius.set(
+                    float(self.temporal_memory.spectral_radius)
+                )
+                ZDM_METRICS.temporal_mse.set(
+                    float(upgrade_meta.get("temporal_memory_error", 0.0))
+                )
+            except Exception as exc:
+                _logger.warning(
+                    "temporal_memory metric update failed: %s: %s",
+                    type(exc).__name__,
+                    exc,
+                )
+        # 第三阶段：结构化记忆——情节图插入 + 语义索引。
+        if self.episodic_graph is not None:
+            try:
+                belief = self.active_inference.generative_model.belief_state
+                action = (
+                    self.active_inference.action_history[-1]
+                    if self.active_inference.action_history
+                    else None
+                )
+                fe = (
+                    float(self.active_inference.free_energy_history[-1])
+                    if self.active_inference.free_energy_history
+                    else 0.0
+                )
+                self.episodic_graph.insert(
+                    state=belief, action=action, next_state=None,
+                    free_energy=fe, step=cycle,
+                )
+                upgrade_meta["episodic_nodes"] = self.episodic_graph.node_count
+            except Exception:
+                pass
+            try:
+                ZDM_METRICS.episodic_node_count.set(
+                    int(self.episodic_graph.node_count)
+                )
+                ZDM_METRICS.episodic_edge_count.set(
+                    int(self.episodic_graph.edge_count)
+                )
+            except Exception as exc:
+                _logger.warning(
+                    "episodic_graph metric update failed: %s: %s",
+                    type(exc).__name__,
+                    exc,
+                )
+        # 第三阶段 b：语义索引——为当前 belief 向量建立可检索索引。
+        # MEDIUM-1 audit fix: ``semantic_index`` was constructed in ``__init__``
+        # (gated by ``enable_episodic_memory``) but never invoked, so it was
+        # dead weight. Wire it up as an OPTIONAL hook (guarded by ``is not
+        # None``) that indexes the current belief vector each cycle. ``Signal``
+        # (base.py) only carries ``data`` / ``metadata`` / ``confidence`` —
+        # there is no ``belief_state`` field — so we index ``signal.data``
+        # (the integrated belief vector for this cycle).
+        if self.semantic_index is not None:
+            try:
+                _vec = np.asarray(signal.data).ravel()
+                self.semantic_index.add(
+                    _vec, node_id=cycle,
+                    metadata={"cycle": cycle, "label": "belief"},
+                )
+                # ``size`` is a @property on SemanticIndex (not a method).
+                upgrade_meta["semantic_index_size"] = self.semantic_index.size
+            except Exception as exc:
+                _logger.warning(
+                    "semantic_index hook failed: %s: %s",
+                    type(exc).__name__,
+                    exc,
+                )
+            try:
+                ZDM_METRICS.semantic_index_size.set(
+                    int(self.semantic_index.size)
+                )
+            except Exception as exc:
+                _logger.warning(
+                    "semantic_index metric update failed: %s: %s",
+                    type(exc).__name__,
+                    exc,
+                )
+        # 第四阶段：逻辑约束层——检查规则违反并产生惩罚。
+        # P2.11 性能优化: ``check_all()`` 与 ``get_penalty_signal()`` 各自遍历
+        # 全部规则。原实现每周期调用 ``check_all()`` 两次（一次检测违反、一次
+        # 更新指标）外加 ``get_penalty_signal()`` 一次，共 3 次规则遍历。改为
+        # 复用首次 ``check_all()`` 的结果更新指标，消除冗余的第二次遍历；保留
+        # fallback：仅当首次调用异常时才在指标块里重新调用（与原实现的独立
+        # 异常隔离语义一致）。``get_penalty_signal()`` 仍需独立调用以获取每条
+        # 规则的惩罚数组（``check_all`` 只返回汇总 ``total_penalty``）。
+        if self.logic_layer is not None:
+            try:
+                logic_result = self.logic_layer.check_all()
+            except Exception:
+                logic_result = None
+            if logic_result is not None:
+                try:
+                    if logic_result["n_violations"] > 0:
+                        upgrade_meta["logic_violations"] = logic_result
+                except Exception:
+                    pass
+            try:
+                # 复用已计算的 logic_result；仅在首次调用失败时 fallback 重算。
+                _lr = (
+                    logic_result
+                    if logic_result is not None
+                    else self.logic_layer.check_all()
+                )
+                ZDM_METRICS.logic_violation_count.set(
+                    int(_lr.get("n_violations", 0))
+                )
+                _ps = np.asarray(self.logic_layer.get_penalty_signal(), dtype=float)
+                ZDM_METRICS.logic_penalty.set(
+                    float(_ps.mean()) if _ps.size else 0.0
+                )
+            except Exception as exc:
+                _logger.warning(
+                    "logic_layer metric update failed: %s: %s",
+                    type(exc).__name__,
+                    exc,
+                )
+        # 第四阶段 b：因果推断——表面当前转移矩阵维度，保持模型"热"。
+        # MEDIUM-1 audit fix: ``causal_inference`` was constructed in
+        # ``__init__`` (gated by ``enable_logic_layer``) but never invoked.
+        # Wire it up as an OPTIONAL hook that surfaces the transition-matrix
+        # dimension in metadata. The model constructs ``CausalInference()`` with
+        # no args, so ``transition_matrix`` may be ``None``; guard explicitly.
+        if self.causal_inference is not None:
+            try:
+                _tm = getattr(self.causal_inference, "transition_matrix", None)
+                _n = (
+                    int(_tm.shape[0])
+                    if _tm is not None and hasattr(_tm, "shape") and _tm.ndim >= 1
+                    else 0
+                )
+                upgrade_meta["causal_dim"] = _n
+            except Exception as exc:
+                _logger.warning(
+                    "causal_inference hook failed: %s: %s",
+                    type(exc).__name__,
+                    exc,
+                )
+        # 第五阶段：元认知——更新不确定性估计。
+        if self.meta_cognition is not None:
+            try:
+                fe = (
+                    float(self.active_inference.free_energy_history[-1])
+                    if self.active_inference.free_energy_history
+                    else 0.0
+                )
+                param_norm = float(
+                    np.linalg.norm(
+                        self.active_inference.generative_model.transition
+                    )
+                )
+                meta_result = self.meta_cognition.update(
+                    prediction_error=fe, param_update_norm=param_norm
+                )
+                upgrade_meta["meta_cognition"] = meta_result
+            except Exception:
+                pass
+            try:
+                _mc_meta = upgrade_meta.get("meta_cognition") or {}
+                ZDM_METRICS.metacog_confidence.set(
+                    float(_mc_meta.get("confidence", 0.0))
+                )
+                ZDM_METRICS.metacog_uncertainty.set(
+                    float(_mc_meta.get("mean_uncertainty", 0.0))
+                )
+            except Exception as exc:
+                _logger.warning(
+                    "meta_cognition metric update failed: %s: %s",
+                    type(exc).__name__,
+                    exc,
+                )
+        # 第六阶段：主动实验设计——定期评估候选实验。
+        if self.experiment_planner is not None:
+            try:
+                exp_result = self.experiment_planner.evaluate(
+                    current_uncertainty=mean_uncertainty, step=cycle
+                )
+                if exp_result is not None:
+                    upgrade_meta["experiment"] = exp_result
+            except Exception:
+                pass
+            try:
+                ZDM_METRICS.experiment_candidates.set(
+                    int(len(self.experiment_planner.candidates))
+                )
+                _exp_meta = upgrade_meta.get("experiment") or {}
+                ZDM_METRICS.experiment_info_gain.set(
+                    float(_exp_meta.get("predicted_gain", 0.0))
+                )
+            except Exception as exc:
+                _logger.warning(
+                    "experiment_planner metric update failed: %s: %s",
+                    type(exc).__name__,
+                    exc,
+                )
+        # 第六阶段 b：假设检验器——报告当前已支持的假设数量。
+        # MEDIUM-1 audit fix: ``hypothesis_tester`` was constructed in
+        # ``__init__`` (gated by ``enable_experiment_planner``) but never
+        # invoked. Wire it up as an OPTIONAL hook that surfaces the number
+        # of currently-supported hypotheses in metadata.
+        if self.hypothesis_tester is not None:
+            try:
+                _supported = self.hypothesis_tester.get_supported()
+                upgrade_meta["supported_hypotheses"] = len(_supported)
+            except Exception as exc:
+                _logger.warning(
+                    "hypothesis_tester hook failed: %s: %s",
+                    type(exc).__name__,
+                    exc,
+                )
+            try:
+                ZDM_METRICS.hypothesis_supported.set(
+                    int(upgrade_meta.get("supported_hypotheses", 0))
+                )
+            except Exception as exc:
+                _logger.warning(
+                    "hypothesis_tester metric update failed: %s: %s",
+                    type(exc).__name__,
+                    exc,
+                )
+        # 第七阶段 c：多智能体协作——推进多智能体世界、驱动符号通信与
+        # 文化传承，并把三个特化指标（collaboration_events /
+        # communication_usage / culture_generations）更新到 Prometheus。
+        # 与其他 hook 一致：try/except 包裹，异常绝不拖垮 think()。
+        # ``MultiAgentWorld.step`` 返回信号列表（非 dict），故这里通过
+        # 各组件的 stats 属性聚合所需字段。
+        if self.multiagent_world is not None:
+            try:
+                # 推进世界一步：让每个内部智能体思考并检测协作。
+                self.multiagent_world.step()
+                # 驱动通信通道：本轮记录一次符号使用，使"语言涌现"
+                # 统计随周期推进。符号按 cycle 取模选取，保证落在词表内。
+                _sym = int(cycle) % int(
+                    self.multiagent_communication.vocab_size
+                )
+                self.multiagent_communication.record_usage(
+                    _sym, event_type="think_cycle"
+                )
+                # 记录一代文化快照：用当前自由能与（可选）情节图规模
+                # 作为该代的知识量代理，n_steps 用当前 cycle。
+                _fe = (
+                    float(self.active_inference.free_energy_history[-1])
+                    if self.active_inference.free_energy_history
+                    else 0.0
+                )
+                _kg = (
+                    int(self.episodic_graph.node_count)
+                    if self.episodic_graph is not None
+                    else 0
+                )
+                self.multiagent_culture.record_generation(
+                    knowledge_graph_size=_kg,
+                    mean_free_energy=_fe,
+                    n_steps=int(cycle),
+                )
+                # 聚合三个组件的统计到 metadata。
+                _collab = self.multiagent_world.get_collaboration_stats()
+                _comm = self.multiagent_communication.stats
+                _cult = self.multiagent_culture.stats
+                _collab_events = int(_collab.get("n_events", 0))
+                _comm_usage = int(_comm.get("total_usage", 0))
+                _culture_gens = int(_cult.get("n_generations", 0))
+                upgrade_meta["phase7_multiagent"] = {
+                    "collaboration_events": _collab_events,
+                    "communication_usage": _comm_usage,
+                    "culture_generations": _culture_gens,
+                    "agents": int(self.multiagent_world.agent_count),
+                    "step": int(self.multiagent_world.step_count),
+                }
+            except Exception as exc:
+                _logger.warning(
+                    "multiagent hook failed: %s: %s",
+                    type(exc).__name__,
+                    exc,
+                )
+            try:
+                _ma_meta = upgrade_meta.get("phase7_multiagent") or {}
+                ZDM_METRICS.multiagent_collaboration_events.set(
+                    int(_ma_meta.get("collaboration_events", 0))
+                )
+                ZDM_METRICS.communication_usage.set(
+                    int(_ma_meta.get("communication_usage", 0))
+                )
+                ZDM_METRICS.culture_generations.set(
+                    int(_ma_meta.get("culture_generations", 0))
+                )
+            except Exception as exc:
+                _logger.warning(
+                    "multiagent metric update failed: %s: %s",
+                    type(exc).__name__,
+                    exc,
+                )
+
+        # ---------------------------------------------------------------- #
+        # Phase G (四.3): S4 / PCN / Hopfield think() 钩子
+        # ---------------------------------------------------------------- #
+        # 与其他认知升级钩子一致：每个钩子 try/except 包裹，绝不拖垮
+        # think() 主流程。结果写入 upgrade_meta，经 _sanitize_for_json
+        # 后暴露在 signal.metadata["cognitive_upgrades"] 中。
+
+        # --- G.1: S4 隐状态暴露 ----------------------------------------- #
+        # S4 的 step()/update() 已在 active_inference.process() 内部完成
+        # （predict_next_state + update_belief 的延迟 Hebbian 更新）。
+        # 此钩子仅读取 S4 隐状态前几维供可视化/诊断。
+        if self._use_s4 and self.active_inference is not None:
+            try:
+                _s4 = getattr(
+                    self.active_inference.generative_model, "_s4_layer", None
+                )
+                if _s4 is not None:
+                    _s4_state = getattr(_s4, "_state", None)
+                    if _s4_state is not None and np.all(np.isfinite(_s4_state)):
+                        # 缓存前 8 维（或更少）用于快照
+                        _n_show = min(8, len(_s4_state))
+                        self.s4_state_cache = [
+                            float(x) for x in _s4_state[:_n_show]
+                        ]
+                        upgrade_meta["s4_state"] = self.s4_state_cache
+                        upgrade_meta["s4_spectral_radius"] = float(
+                            getattr(_s4, "spectral_radius", 0.0)
+                        )
+            except Exception as exc:
+                _logger.warning(
+                    "S4 state hook failed: %s: %s",
+                    type(exc).__name__,
+                    exc,
+                )
+
+        # --- G.2: PCN 层次化预测编码 ------------------------------------ #
+        # 将集成后的观测喂入 L0/L1/L2 层级，执行自顶向下预测 + 自底向上
+        # 误差更新。run_pcn_cycle 不调用 self.think()（避免循环递归）。
+        if self._use_pcn and self.pcn_hierarchy is not None:
+            try:
+                _pcn_obs = integrated.data
+                _pcn_result = self.pcn_hierarchy.run_pcn_cycle(_pcn_obs)
+                if _pcn_result is not None:
+                    upgrade_meta["pcn"] = _pcn_result
+            except Exception as exc:
+                _logger.warning(
+                    "PCN hook failed: %s: %s",
+                    type(exc).__name__,
+                    exc,
+                )
+
+        # --- G.3: Hopfield 联想记忆检索 --------------------------------- #
+        # 用当前观测查询 Hopfield 记忆矩阵，返回 top-k 最相似的记忆
+        # 摘要（存储数量、top-1 相似度）。若记忆库为空则跳过。
+        if self._use_hopfield and self.hopfield_memory is not None:
+            try:
+                _hf = self.hopfield_memory
+                if _hf.size > 0:
+                    _query = integrated.data
+                    # 归一化查询向量（与存储时一致）
+                    _q_norm = np.linalg.norm(_query)
+                    _query = _query / _q_norm if _q_norm > 1e-12 else _query
+                    _retrieved, _sims = _hf.retrieve(_query, k=1)
+                    upgrade_meta["memory_retrieved"] = {
+                        "n_memories": int(_hf.size),
+                        "top1_similarity": (
+                            float(_sims[0]) if len(_sims) > 0 else 0.0
+                        ),
+                    }
+            except Exception as exc:
+                _logger.warning(
+                    "Hopfield retrieve hook failed: %s: %s",
+                    type(exc).__name__,
+                    exc,
+                )
+
+        # ---------------------------------------------------------------- #
+        # Build the return Signal metadata dict.
+        # ---------------------------------------------------------------- #
+        # HIGH-2 (recompute names): ``errors`` is computed from the modules
+        # list at the START of think(). If an upgrade hook mutated
+        # ``self.modules`` (split / prune) between then and now, the lengths
+        # diverge. Recompute ``_final_module_names`` from the CURRENT
+        # ``self.modules`` right before the zip, and truncate to the shorter
+        # of (names, errors) — preferring ``errors``' length since it
+        # reflects the modules that actually ran this cycle. This prevents
+        # both the silent truncation (KeyError) and the positional
+        # mislabeling (errors[N-1] mapped to a different module's name).
+        #
+        # MEDIUM-2: disambiguate split modules that share a class name so
+        # ``dict(zip(...))`` does not collapse them (last one wins). After a
+        # split the architect may produce two modules of the same class —
+        # append an ``#index`` suffix to keep both entries visible.
+        _seen: dict[str, int] = {}
+        _final_module_names: list[str] = []
+        for _m in self.modules:
+            _nm = type(_m).__name__
+            if _nm in _seen:
+                _seen[_nm] += 1
+                _nm = f"{_nm}#{_seen[_nm]}"
+            else:
+                _seen[_nm] = 0
+            _final_module_names.append(_nm)
+        _n = min(len(_final_module_names), len(errors))
+
+        # MEDIUM-4: only surface ``module_errors`` / ``cognitive_upgrades``
+        # when at least one cognitive-upgrade module is enabled. The default
+        # (no-upgrades) configuration must keep the original metadata
+        # key-set so strict-key-set tests do not regress.
+        _cognitive_active = any(
+            getattr(self, _attr, None) is not None
+            for _attr in (
+                "architect",
+                "layered_predictor",
+                "episodic_graph",
+                "logic_layer",
+                "meta_cognition",
+                "experiment_planner",
+                "semantic_index",
+                "causal_inference",
+                "hypothesis_tester",
+                "multiagent_world",
+                # Phase G (四.3): PCN 与 Hopfield 模块
+                "pcn_hierarchy",
+                "hopfield_memory",
+            )
+        ) or (
+            # Phase G (四.1): S4 层在 active_inference.generative_model
+            # 内部，非 self 直接属性，单独检查
+            self._use_s4
+            and self.active_inference is not None
+            and getattr(
+                self.active_inference.generative_model, "_s4_layer", None
+            ) is not None
+        )
+
+        _metadata: dict[str, Any] = {
+            "cycle": cycle,
+            "self_reflection": reflection.metadata,
+            "module_count": len(self.modules),
+            # Round-10 audit R10-C-010: propagate the
+            # ``self_generated`` flag from ``_self_generate`` so
+            # callers can tell whether this cycle ran on a real
+            # input or on internally-generated content. Previously
+            # the metadata was rebuilt here and the flag was lost,
+            # so any downstream code reading
+            # ``result.metadata["self_generated"]`` raised KeyError.
+            "self_generated": input_data is None,
+        }
+        if _cognitive_active:
+            # 第七阶段：暴露各模块预测误差供架构优化器使用。
+            # MEDIUM-3: sanitize numpy floats / arrays so the dict is
+            # always JSON-serializable (FastAPI ``jsonable_encoder`` raises
+            # on ``np.float64``).
+            _metadata["module_errors"] = _sanitize_for_json(
+                dict(
+                    zip(
+                        _final_module_names[:_n],
+                        errors[:_n],
+                        strict=False,
+                    )
+                )
+            )
+            # 第七阶段：认知升级钩子结果（仅启用时存在）。
+            _metadata["cognitive_upgrades"] = _sanitize_for_json(upgrade_meta)
+
         return Signal(
             data=integrated.data,
-            metadata={
-                "cycle": cycle,
-                "self_reflection": reflection.metadata,
-                "module_count": len(self.modules),
-                # Round-10 audit R10-C-010: propagate the
-                # ``self_generated`` flag from ``_self_generate`` so
-                # callers can tell whether this cycle ran on a real
-                # input or on internally-generated content. Previously
-                # the metadata was rebuilt here and the flag was lost,
-                # so any downstream code reading
-                # ``result.metadata["self_generated"]`` raised KeyError.
-                "self_generated": input_data is None,
-            },
+            metadata=_metadata,
             confidence=confidence,
         )
 
@@ -947,10 +1761,24 @@ class ZeroDataModel:
             # Confident modules (low uncertainty) weigh more; the softmax
             # normalises weights to sum to 1 and is numerically stable when
             # some uncertainties are very small (via max-subtraction).
-            inv_unc = 1.0 / np.asarray(uncertainties, dtype=float)
-            inv_unc = inv_unc - np.max(inv_unc)  # numerical stability
-            weights = np.exp(inv_unc)
-            weights = weights / (np.sum(weights) + 1e-12)
+            # P2.11 内存优化: 用 ``out=`` 原地写入 inv_unc / weights，省去
+            # 中间临时数组（原代码每次 rebind 都新建一个数组）。数值结果
+            # 与原实现逐位一致（同序同算，仅落点不同）。
+            # 原实现（保留为 fallback 注释）:
+            #   inv_unc = 1.0 / np.asarray(uncertainties, dtype=float)
+            #   inv_unc = inv_unc - np.max(inv_unc)  # numerical stability
+            #   weights = np.exp(inv_unc)
+            #   weights = weights / (np.sum(weights) + 1e-12)
+            # float32 评估: softmax 的 max-subtraction 数值稳定性依赖
+            # float64 的 ~15 位有效数字；当某模块 uncertainty 极小(1e-8)
+            # 时 float32 (~7 位) 会损失精度导致权重偏移 → 跳过 float32。
+            unc_arr = np.asarray(uncertainties, dtype=float)
+            inv_unc = np.empty_like(unc_arr)
+            np.divide(1.0, unc_arr, out=inv_unc)
+            np.subtract(inv_unc, np.max(inv_unc), out=inv_unc)
+            weights = np.empty_like(inv_unc)
+            np.exp(inv_unc, out=weights)
+            np.divide(weights, np.sum(weights) + 1e-12, out=weights)
             # Weighted sum: each row weighted by its module's confidence.
             mean_signal = (weights[:, None] * padded).sum(axis=0)
 

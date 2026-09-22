@@ -1,0 +1,117 @@
+# Default values for zero-data-model.
+# Override per-environment with -f values-<env>.yaml or --set.
+
+# -- Global namespace override. By default resources are created in the
+# release namespace; set this to deploy into a fixed namespace.
+namespaceOverride: ""
+
+# -- Number of deployment replicas for the backend (overridden by HPA when
+# autoscaling is enabled).
+backend:
+  image:
+    repository: zero-data-model-backend
+    tag: latest
+    pullPolicy: IfNotPresent
+  replicas: 1
+  resources:
+    requests:
+      cpu: 500m
+      memory: 512Mi
+    limits:
+      cpu: 2000m
+      memory: 2Gi
+  # REST API port (FastAPI / uvicorn).
+  restPort: 8000
+  # WebSocket streamer port.
+  wsPort: 8765
+  # Non-sensitive runtime configuration. Surfaced via the backend ConfigMap.
+  env:
+    ZDM_DIM: "64"
+    ZDM_ENV: "production"
+    ZDM_LOG_LEVEL: "INFO"
+    ZDM_CORS_ORIGINS: "http://localhost:8000,http://localhost:3000"
+    ZDM_ALLOWED_HOSTS: "localhost,127.0.0.1"
+    ZDM_ENABLE_ARCHITECT: "false"
+    ZDM_ENABLE_LAYERED_PREDICTOR: "false"
+    ZDM_ENABLE_CAUSAL_EMERGENCE: "false"
+    ZDM_ENABLE_METACOG: "false"
+    ZDM_ENABLE_MULTIAGENT: "false"
+    PYTHONUNBUFFERED: "1"
+  # Sensitive values (API key, tokens). Surfaced via the backend Secret.
+  # Leave empty to skip creating the Secret entry; provide real values via
+  # --set or an external secret manager in production.
+  secret:
+    ZDM_API_KEY: ""
+    IBM_QUANTUM_TOKEN: ""
+  # Probes hit the REST /health and /ready endpoints.
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: rest
+    initialDelaySeconds: 15
+    periodSeconds: 30
+    timeoutSeconds: 5
+    failureThreshold: 3
+  readinessProbe:
+    httpGet:
+      path: /ready
+      port: rest
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+  # Optional image pull secret names (list).
+  imagePullSecrets: []
+
+frontend:
+  image:
+    repository: zero-data-model-frontend
+    tag: latest
+    pullPolicy: IfNotPresent
+  replicas: 2
+  port: 80
+  resources:
+    requests:
+      cpu: 100m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+  imagePullSecrets: []
+
+ingress:
+  enabled: true
+  className: nginx
+  host: zdm.local
+  # Optional additional hosts (list of {host, tlsSecret}).
+  hosts: []
+  tls:
+    enabled: false
+    # Name of an existing TLS Secret when tls.enabled is true.
+    secretName: ""
+  # Annotations applied to the Ingress. The defaults configure the nginx
+  # ingress controller: rewrite-target strips the /api prefix (the backend
+  # serves routes at root, e.g. /health), and long timeouts keep WebSocket
+  # connections alive.
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /$2
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "86400"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "86400"
+
+# HorizontalPodAutoscaler for the backend (CPU-based).
+autoscaling:
+  enabled: true
+  minReplicas: 1
+  maxReplicas: 4
+  targetCPUUtilizationPercentage: 70
+
+# PodDisruptionBudget — keeps at least 1 pod available during disruptions.
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+# Service account created and used by the workloads.
+serviceAccount:
+  create: true
+  name: ""

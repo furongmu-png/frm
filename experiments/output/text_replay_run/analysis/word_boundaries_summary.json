@@ -1,0 +1,16 @@
+{
+  "n_snapshots": 20,
+  "full_text_length": 2560,
+  "n_rare_positions_in_full_text": 125,
+  "n_space_positions_in_full_text": 387,
+  "median_rare_density": 0.5039370078740157,
+  "n_high_group": 9,
+  "n_low_group": 11,
+  "mean_pe_high_rare_density": 0.3292094070129411,
+  "mean_pe_low_rare_density": 0.3515261368378048,
+  "std_pe_high_rare_density": 0.016225090416919746,
+  "std_pe_low_rare_density": 0.021901864758565075,
+  "t_stat": -2.4815389264513787,
+  "p_value": 0.023242699609560238,
+  "significant_at_0.05": true
+}

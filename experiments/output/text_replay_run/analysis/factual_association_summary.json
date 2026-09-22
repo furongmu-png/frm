@@ -1,0 +1,128 @@
+{
+  "n_snapshots": 20,
+  "n_entities": 14,
+  "entity_counts": {
+    "England": 0,
+    "France": 0,
+    "Japan": 0,
+    "London": 0,
+    "Paris": 0,
+    "Tokyo": 0,
+    "active": 2,
+    "cognitive": 4,
+    "emergence": 4,
+    "energy": 8,
+    "free": 7,
+    "history": 0,
+    "inference": 2,
+    "particle": 0
+  },
+  "pair_results": [
+    {
+      "entity_a": "Paris",
+      "entity_b": "France",
+      "related": true,
+      "n_a": 0,
+      "n_b": 0,
+      "cos_sim_between": 0.0,
+      "cos_sim_within_a": 0.0,
+      "cos_sim_within_b": 0.0
+    },
+    {
+      "entity_a": "Tokyo",
+      "entity_b": "Japan",
+      "related": true,
+      "n_a": 0,
+      "n_b": 0,
+      "cos_sim_between": 0.0,
+      "cos_sim_within_a": 0.0,
+      "cos_sim_within_b": 0.0
+    },
+    {
+      "entity_a": "London",
+      "entity_b": "England",
+      "related": true,
+      "n_a": 0,
+      "n_b": 0,
+      "cos_sim_between": 0.0,
+      "cos_sim_within_a": 0.0,
+      "cos_sim_within_b": 0.0
+    },
+    {
+      "entity_a": "energy",
+      "entity_b": "free",
+      "related": true,
+      "n_a": 8,
+      "n_b": 7,
+      "cos_sim_between": 0.9918572683444056,
+      "cos_sim_within_a": 0.9910370236994147,
+      "cos_sim_within_b": 0.9902366839858617
+    },
+    {
+      "entity_a": "active",
+      "entity_b": "inference",
+      "related": true,
+      "n_a": 2,
+      "n_b": 2,
+      "cos_sim_between": 0.9994326987466264,
+      "cos_sim_within_a": 0.9988653974932528,
+      "cos_sim_within_b": 0.9988653974932528
+    },
+    {
+      "entity_a": "cognitive",
+      "entity_b": "emergence",
+      "related": true,
+      "n_a": 4,
+      "n_b": 4,
+      "cos_sim_between": 0.9980594999948895,
+      "cos_sim_within_a": 0.9974126666598524,
+      "cos_sim_within_b": 0.9974126666598524
+    },
+    {
+      "entity_a": "Paris",
+      "entity_b": "Tokyo",
+      "related": false,
+      "n_a": 0,
+      "n_b": 0,
+      "cos_sim_between": 0.0,
+      "cos_sim_within_a": 0.0,
+      "cos_sim_within_b": 0.0
+    },
+    {
+      "entity_a": "France",
+      "entity_b": "Japan",
+      "related": false,
+      "n_a": 0,
+      "n_b": 0,
+      "cos_sim_between": 0.0,
+      "cos_sim_within_a": 0.0,
+      "cos_sim_within_b": 0.0
+    },
+    {
+      "entity_a": "energy",
+      "entity_b": "history",
+      "related": false,
+      "n_a": 8,
+      "n_b": 0,
+      "cos_sim_between": 0.0,
+      "cos_sim_within_a": 0.9910370236994147,
+      "cos_sim_within_b": 0.0
+    },
+    {
+      "entity_a": "inference",
+      "entity_b": "particle",
+      "related": false,
+      "n_a": 2,
+      "n_b": 0,
+      "cos_sim_between": 0.0,
+      "cos_sim_within_a": 0.9988653974932528,
+      "cos_sim_within_b": 0.0
+    }
+  ],
+  "mean_cos_related": 0.9964498223619739,
+  "mean_cos_unrelated": null,
+  "n_related_pairs_with_data": 3,
+  "n_unrelated_pairs_with_data": 0,
+  "hypothesis_supported": null,
+  "note": "Insufficient co-occurrence data to test hypothesis. Try a longer text or different entity pairs."
+}

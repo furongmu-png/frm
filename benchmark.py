@@ -9,7 +9,14 @@ import sys
 
 sys.path.insert(0, "src")
 
+import argparse
+import json
+import platform
+import statistics
 import time
+import tracemalloc
+from datetime import datetime, timezone
+from pathlib import Path
 
 import numpy as np
 
@@ -256,7 +263,364 @@ def bench_jit_kernels():
     print(f"  ZeroDataModel.think (dim=64, single cycle): {t_jit*1000:.2f} ms")
 
 
+# ============================================================================
+# Cognitive Upgrade Module Benchmarks (Phase 7)
+# ============================================================================
+
+_COGNITIVE_FLAGS = (
+    "enable_architect",
+    "enable_layered_predictor",
+    "enable_episodic_memory",
+    "enable_logic_layer",
+    "enable_meta_cognition",
+    "enable_experiment_planner",
+)
+
+
+def _json_default(obj):
+    """Fallback JSON serializer for numpy types (defensive)."""
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    if isinstance(obj, np.integer):
+        return int(obj)
+    if isinstance(obj, np.floating):
+        v = float(obj)
+        return v if np.isfinite(v) else None
+    if isinstance(obj, np.bool_):
+        return bool(obj)
+    return str(obj)
+
+
+def _build_cog_model(dim, **flags):
+    """Construct a deterministic model (re-seeded for reproducibility)."""
+    np.random.seed(42)
+    return ZeroDataModel(dim=dim, seed=42, **flags)
+
+
+def _measure_one_config(dim, cycles, flags, extra_fn=None, n_median=10):
+    """Measure construct + think for one flag configuration.
+
+    Returns dict with construct_ms, think_median_ms, think_total_ms,
+    mem_delta_kb (tracemalloc peak during construct), metadata_bytes.
+    """
+    tracemalloc.start()
+    tracemalloc.clear_traces()
+    t0 = time.perf_counter()
+    model = _build_cog_model(dim, **flags)
+    construct_s = time.perf_counter() - t0
+    _, peak = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+
+    rng = np.random.default_rng(0)
+    signal = rng.standard_normal(dim)
+
+    # Warm up (not measured).
+    model.think(signal)
+    if extra_fn is not None:
+        extra_fn(model, signal, rng)
+
+    # Single-cycle median (of n_median runs).
+    single_times = []
+    for _ in range(n_median):
+        t0 = time.perf_counter()
+        model.think(signal)
+        if extra_fn is not None:
+            extra_fn(model, signal, rng)
+        single_times.append(time.perf_counter() - t0)
+    median_s = statistics.median(single_times)
+
+    # cycles total.
+    t0 = time.perf_counter()
+    for _ in range(cycles):
+        model.think(signal)
+        if extra_fn is not None:
+            extra_fn(model, signal, rng)
+    total_s = time.perf_counter() - t0
+
+    # metadata bytes (from one more think).
+    last_sig = model.think(signal)
+    md_bytes = len(json.dumps(last_sig.metadata, default=_json_default))
+
+    return {
+        "construct_ms": construct_s * 1000,
+        "think_median_ms": median_s * 1000,
+        "think_total_ms": total_s * 1000,
+        "mem_delta_kb": peak / 1024.0,
+        "metadata_bytes": md_bytes,
+    }
+
+
+def _episodic_plan_extra(model, signal, rng):
+    """Exercise episodic_graph.plan after think (insert happens in think)."""
+    if model.episodic_graph is not None:
+        goal = rng.standard_normal(model.dim)
+        try:
+            model.episodic_graph.plan(signal, goal)
+        except Exception:
+            pass
+
+
+def benchmark_cognitive_upgrade(dim: int = 64, cycles: int = 10) -> dict:
+    """Benchmark the 7 cognitive-upgrade module dimensions.
+
+    For each dimension, measures enabled vs disabled:
+      - construct time (model creation)
+      - single-cycle think() median (of 10 runs, via statistics.median)
+      - 10-cycle think() total latency
+      - memory delta (tracemalloc peak during construction)
+      - metadata JSON serialization size (json.dumps bytes)
+
+    Returns a dict with per-dimension on/off metrics and overhead.
+    """
+    print(f"\n[Cognitive Upgrade] dim={dim}, cycles={cycles}")
+
+    # 7 dimensions: (name, flags_on, extra_fn)
+    dims = [
+        ("architect", {"enable_architect": True}, None),
+        ("layered_predictor", {"enable_layered_predictor": True}, None),
+        ("episodic_memory", {"enable_episodic_memory": True}, _episodic_plan_extra),
+        ("logic_layer", {"enable_logic_layer": True}, None),
+        ("meta_cognition", {"enable_meta_cognition": True}, None),
+        ("experiment_planner", {"enable_experiment_planner": True}, None),
+        ("all_upgrades", {f: True for f in _COGNITIVE_FLAGS}, None),
+    ]
+
+    # Disabled baseline (shared across all dimensions).
+    off = _measure_one_config(dim, cycles, {})
+
+    results = {
+        "dim": dim,
+        "cycles": cycles,
+        "baseline_disabled": off,
+        "dimensions": [],
+    }
+
+    for name, flags, extra in dims:
+        try:
+            on = _measure_one_config(dim, cycles, flags, extra_fn=extra)
+        except Exception as exc:
+            print(f"  [WARN] {name} measurement failed: {exc}")
+            on = {
+                "construct_ms": 0.0, "think_median_ms": 0.0,
+                "think_total_ms": 0.0, "mem_delta_kb": 0.0,
+                "metadata_bytes": 0, "error": str(exc),
+            }
+        off_med = off["think_median_ms"]
+        on_med = on["think_median_ms"]
+        overhead_ms = on_med - off_med
+        overhead_pct = (overhead_ms / off_med * 100) if off_med > 0 else 0.0
+        mem_inc = on["mem_delta_kb"] - off["mem_delta_kb"]
+        results["dimensions"].append({
+            "name": name,
+            "construct_ms": {"on": on["construct_ms"], "off": off["construct_ms"]},
+            "think_median_ms": {"on": on_med, "off": off_med},
+            "think_total_ms": {"on": on["think_total_ms"], "off": off["think_total_ms"]},
+            "mem_delta_kb": {
+                "on": on["mem_delta_kb"], "off": off["mem_delta_kb"],
+                "increment": mem_inc,
+            },
+            "metadata_bytes": {"on": on["metadata_bytes"], "off": off["metadata_bytes"]},
+            "overhead_ms": overhead_ms,
+            "overhead_pct": overhead_pct,
+        })
+
+    _print_cognitive_table(results)
+    return results
+
+
+def _print_cognitive_table(results):
+    """Print the cognitive upgrade benchmark results table."""
+    dims = results["dimensions"]
+    print(
+        f"  {'dimension':<20} {'construct_on':>12} {'think_med_on':>13} "
+        f"{'think_med_off':>14} {'overhead_ms':>12} {'overhead_%':>11} "
+        f"{'meta_on':>8} {'mem_inc_KB':>11}"
+    )
+    print("  " + "-" * 105)
+    for d in dims:
+        print(
+            f"  {d['name']:<20} {d['construct_ms']['on']:>12.2f} "
+            f"{d['think_median_ms']['on']:>13.3f} {d['think_median_ms']['off']:>14.3f} "
+            f"{d['overhead_ms']:>12.3f} {d['overhead_pct']:>11.1f} "
+            f"{d['metadata_bytes']['on']:>8} {d['mem_delta_kb']['increment']:>11.1f}"
+        )
+    base = results["baseline_disabled"]
+    print(
+        f"\n  baseline (all disabled): think_med={base['think_median_ms']:.3f}ms  "
+        f"construct={base['construct_ms']:.2f}ms  "
+        f"meta_bytes={base['metadata_bytes']}  "
+        f"mem_KB={base['mem_delta_kb']:.1f}"
+    )
+
+
+# ============================================================================
+# Baseline storage & regression comparison
+# ============================================================================
+
+def _run_all_benchmarks(dim: int = 64, cycles: int = 10) -> dict:
+    """Run all benchmarks and collect results into a serializable dict."""
+    return {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "python_version": sys.version,
+        "numpy_version": np.__version__,
+        "platform": platform.platform(),
+        "cognitive_upgrade": benchmark_cognitive_upgrade(dim=dim, cycles=cycles),
+    }
+
+
+def _compare_results(old: dict, new: dict, threshold: float = 0.10) -> dict:
+    """Compare two benchmark result sets; flag regressions > threshold (10%)."""
+    report = {
+        "threshold": threshold,
+        "regressions": [],
+        "improvements": [],
+        "summary": "",
+    }
+    old_cog = old.get("cognitive_upgrade", {})
+    new_cog = new.get("cognitive_upgrade", {})
+    old_dims = {d["name"]: d for d in old_cog.get("dimensions", [])}
+    new_dims = {d["name"]: d for d in new_cog.get("dimensions", [])}
+
+    for name, new_d in new_dims.items():
+        old_d = old_dims.get(name)
+        if not old_d:
+            continue
+        for metric in ("think_median_ms", "think_total_ms", "construct_ms"):
+            old_v = old_d.get(metric, {}).get("on")
+            new_v = new_d.get(metric, {}).get("on")
+            if old_v and new_v and old_v > 0:
+                ratio = (new_v - old_v) / old_v
+                if ratio > threshold:
+                    report["regressions"].append({
+                        "dimension": name, "metric": metric,
+                        "old": old_v, "new": new_v,
+                        "pct_slower": round(ratio * 100, 1),
+                    })
+                elif ratio < -threshold:
+                    report["improvements"].append({
+                        "dimension": name, "metric": metric,
+                        "old": old_v, "new": new_v,
+                        "pct_faster": round(-ratio * 100, 1),
+                    })
+
+    n_reg = len(report["regressions"])
+    n_imp = len(report["improvements"])
+    report["summary"] = (
+        f"{n_reg} regression(s) > {threshold*100:.0f}%, {n_imp} improvement(s)"
+    )
+    return report
+
+
+def _print_regression(report: dict) -> None:
+    """Print a regression report."""
+    if "summary" in report:
+        print(f"\n  Regression report: {report['summary']}")
+    if report.get("regressions"):
+        thr = report.get("threshold", 0.1) * 100
+        print(f"  REGRESSIONS (> {thr:.0f}% slower):")
+        print(f"    {'dimension':<20} {'metric':<20} {'old':>10} {'new':>10} {'%slower':>10}")
+        for r in report["regressions"]:
+            print(
+                f"    {r['dimension']:<20} {r['metric']:<20} "
+                f"{r['old']:>10.3f} {r['new']:>10.3f} {r['pct_slower']:>10.1f}"
+            )
+    else:
+        print("  No regressions detected.")
+    if report.get("improvements"):
+        print("  IMPROVEMENTS:")
+        for r in report["improvements"]:
+            print(
+                f"    {r['dimension']:<20} {r['metric']:<20} "
+                f"{r['old']:>10.3f} -> {r['new']:>10.3f}  ({r['pct_faster']:.1f}% faster)"
+            )
+
+
+def save_baseline(path: str = ".benchmarks/baseline.json"):
+    """Run all benchmarks and save as baseline JSON.
+
+    If the file already exists, compares new vs old and marks regressions
+    (>10% slower). Returns (results, regression_report).
+    """
+    results = _run_all_benchmarks()
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    regression = None
+    if p.exists():
+        try:
+            old = json.loads(p.read_text())
+            regression = _compare_results(old, results)
+        except Exception as exc:
+            print(f"  (could not compare with existing baseline: {exc})")
+    p.write_text(json.dumps(results, indent=2, default=_json_default))
+    print(f"\n  Baseline saved to {p}")
+    if regression:
+        _print_regression(regression)
+    return results, regression
+
+
+def compare_baseline(path: str = ".benchmarks/baseline.json") -> dict:
+    """Run current benchmark and compare with stored baseline.
+
+    Returns the regression report dict.
+    """
+    current = _run_all_benchmarks()
+    p = Path(path)
+    if not p.exists():
+        print(f"  Baseline not found at {p}; run --save-baseline first.")
+        return {"error": "baseline not found", "path": str(p), "current": current}
+    try:
+        old = json.loads(p.read_text())
+    except Exception as exc:
+        print(f"  Could not load baseline: {exc}")
+        return {"error": str(exc), "path": str(p)}
+    report = _compare_results(old, current)
+    _print_regression(report)
+    return report
+
+
+# ============================================================================
+# CLI entry point
+# ============================================================================
+
 def main():
+    parser = argparse.ArgumentParser(
+        description="Zero-Data Model performance benchmark"
+    )
+    parser.add_argument(
+        "--save-baseline", action="store_true",
+        help="Run all benchmarks and store as baseline JSON",
+    )
+    parser.add_argument(
+        "--compare", action="store_true",
+        help="Run benchmarks and compare with stored baseline",
+    )
+    parser.add_argument(
+        "--cognitive-only", action="store_true",
+        help="Only run the cognitive-upgrade module benchmarks",
+    )
+    parser.add_argument(
+        "--dim", type=int, default=64,
+        help="Model dimension (default: 64)",
+    )
+    parser.add_argument(
+        "--cycles", type=int, default=10,
+        help="Number of think() cycles per dimension (default: 10)",
+    )
+    args = parser.parse_args()
+
+    if args.cognitive_only:
+        benchmark_cognitive_upgrade(dim=args.dim, cycles=args.cycles)
+        return
+
+    if args.save_baseline:
+        save_baseline()
+        return
+
+    if args.compare:
+        compare_baseline()
+        return
+
+    # Default: run all benchmarks and print tables.
     print("=" * 60)
     print("  Zero-Data Model — Performance Benchmark")
     print("=" * 60)
@@ -267,6 +631,7 @@ def main():
     bench_parallel_vs_sequential()
     bench_full_model()
     bench_jit_kernels()
+    benchmark_cognitive_upgrade(dim=args.dim, cycles=args.cycles)
 
     print("\n" + "=" * 60)
     print("  Benchmark complete.")

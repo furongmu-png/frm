@@ -2,7 +2,7 @@
 
 This document describes the architecture of the Zero-Data Model: a self-sufficient
 cognitive system that requires **no external training data**. It covers the
-three-layer stack, module dependencies, the `think()` data flow, the hardware
+four-layer stack, module dependencies, the `think()` data flow, the hardware
 acceleration stack, the on-disk file tree, and the design principles that hold
 the system together.
 
@@ -13,7 +13,7 @@ All class and method names cited below are taken verbatim from the source under
 
 ## 1. High-Level Architecture
 
-The system is organized as three layers, with `ZeroDataModel` (in
+The system is organized as four layers, with `ZeroDataModel` (in
 `src/zero_data_model/model.py`) as the single integration point that owns one
 instance of every core module and every domain capability.
 
@@ -38,6 +38,24 @@ instance of every core module and every domain capability.
   │  rule priors         │     │  BiologicalSubstrate         │    │  auto-detected, graceful │
   │                      │     │  MathematicalUniverse        │    │  degradation to NumPy    │
   └──────────────────────┘     └──────────────────────────────┘    └──────────────────────────┘
+                                              │
+                                              ▼  feature-flagged hooks (all default OFF)
+                         ┌────────────────────────────────────────────────────────────┐
+                         │            COGNITIVE-UPGRADE LAYER (Phase 7)               │
+                         │   plasticity/ cogtime/ cogmem/ knowledge/ metacog/         │
+                         │   experiment/ multiagent/                                  │
+                         │                                                            │
+                         │  1. ArchitectureOptimizer    (enable_architect)            │
+                         │  2. LayeredPredictor, TemporalMemory (enable_layered_…)    │
+                         │  3. EpisodicGraph, SemanticIndex    (enable_episodic_…)    │
+                         │  4. LogicLayer, CausalInference     (enable_logic_layer)   │
+                         │  5. MetaCognition                   (enable_meta_cognition)│
+                         │  6. BayesianExperimentPlanner, HypothesisTester            │
+                         │                                     (enable_experiment_…)   │
+                         │  7. MultiAgentWorld, CommunicationChannel, CulturePropagation│
+                         │                                                            │
+                         │  reads core state, appends metadata — never mutates core  │
+                         └────────────────────────────────────────────────────────────┘
 ```
 
 - **Hardware layer** (`src/zero_data_model/hardware/`) — auto-selects the best
@@ -51,12 +69,27 @@ instance of every core module and every domain capability.
   user-facing capabilities across NLP, Vision and Analytics. Each one composes
   one or more core modules with a small rule library (`rules.py`) used as
   inductive prior — never as learned weights.
+- **Cognitive-upgrade layer** (`src/zero_data_model/{plasticity,cogtime,cogmem,
+  knowledge,metacog,experiment,multiagent}/`) — seven optional phases that grow
+  the fixed six-module core into a plastic, time-layered, structured-memory,
+  neuro-symbolic, meta-cognitive, actively-experimenting, multi-agent
+  architecture. Every phase is gated by a `ZeroDataModel.__init__` feature flag
+  (e.g. `enable_architect`, `enable_meta_cognition`) and defaults to **off**.
+  When enabled, each phase registers a hook at the end of `think()` that reads
+  already-computed core state and appends keys to
+  `Signal.metadata["cognitive_upgrades"]`; it never alters the six core modules'
+  computation, so the no-upgrade baseline is byte-for-byte zero-regression.
+  Phases 1–6 are wired into `think()` via feature flags; phase 7 (multi-agent)
+  ships as library modules whose model-level integration is being staged.
 
 `ZeroDataModel.__init__` wires the layers together: it instantiates the six core
 modules, then constructs each capability, injecting the shared core-module
 instances (e.g. `SemanticComparator(self.nlp_text_encoder, self.math_universe,
 self.category_engine)`). All capabilities therefore share a single set of core
-modules, which is what makes cross-domain transfer cheap.
+modules, which is what makes cross-domain transfer cheap. When a cognitive-upgrade
+feature flag is set, the corresponding phase module is lazily imported and
+constructed (`self.architect`, `self.layered_predictor`, …, `self.hypothesis_tester`)
+and left as `None` otherwise, so the import cost is paid only when used.
 
 ---
 
@@ -187,6 +220,58 @@ Key points (all in `src/zero_data_model/model.py`):
 - Every module's `update(mean_err)` nudges its internal parameters by a
   prediction-error-scaled noise term, closing the predictive-processing loop.
 
+### 3.1 Cognitive-upgrade hooks
+
+After the core `process → integrate → reflect → predict → update` cycle
+completes, `think()` runs the **cognitive-upgrade hooks** — but only for the
+phases whose feature flag was set. Each hook reads already-computed state
+(`signal.data`, `errors`, `mean_uncertainty`, `active_inference` history) and
+writes into a local `upgrade_meta` dict; that dict is only attached to the
+returned `Signal.metadata["cognitive_upgrades"]` when at least one phase is
+active, so the no-upgrade metadata key-set is unchanged (zero-regression for
+strict-key-set tests).
+
+The hook call order (each guarded by `is not None`, each wrapped in its own
+`try/except`; failures only `warning`-log and `pass`, never crash `think()`):
+
+```
+core cycle done
+      │
+      ▼
+1. architect            record_errors(names, errors) → evaluate(copy(modules), cycle)
+                        [under self._lock; result → upgrade_meta["architecture"]]
+2. layered_predictor    update(signal.data, cycle)    → upgrade_meta["layered_predictor"]
+   temporal_memory      update(signal.data, signal.data, lr=0.01)
+                                                    → upgrade_meta["temporal_memory_error"]
+3. episodic_graph       insert(state=belief, action, free_energy, step=cycle)
+                                                    → upgrade_meta["episodic_nodes"]
+   semantic_index       add(signal.data, node_id=cycle, metadata) → ["semantic_index_size"]
+4. logic_layer          check_all()  → upgrade_meta["logic_violations"] (only if n>0)
+   causal_inference     surface transition_matrix shape → upgrade_meta["causal_dim"]
+5. meta_cognition       update(prediction_error=fe, param_update_norm) → ["meta_cognition"]
+6. experiment_planner   evaluate(current_uncertainty=mean_uncertainty, step=cycle) → ["experiment"]
+   hypothesis_tester    get_supported() → upgrade_meta["supported_hypotheses"]
+      │
+      ▼
+upgrade_meta  ──►  Signal.metadata["cognitive_upgrades"]   (only if any phase active)
+```
+
+Key invariants:
+
+- **Read-only on the core.** Hooks observe `errors`, `signal.data`,
+  `active_inference.free_energy_history`, etc., but never call back into a core
+  module's `process`/`predict`/`update`. The architect is the one
+  write-adjacent hook (it can split/prune `self.modules`); it is therefore run
+  under `self._lock` and is passed a **defensive copy** of the modules list so a
+  regression in `architect.py` cannot corrupt the live list.
+- **Try/except per hook.** Every hook is wrapped individually. A failure in
+  `meta_cognition.update` cannot prevent `hypothesis_tester.get_supported` from
+  running, and none of them can abort `think()`.
+- **Conditional metadata.** `_cognitive_active` checks whether any upgrade
+  attribute is non-`None`; only then are `module_errors` and
+  `cognitive_upgrades` added to the returned metadata, preserving the legacy
+  key-set otherwise.
+
 ---
 
 ## 4. Hardware Acceleration Stack
@@ -281,12 +366,49 @@ virtualenvs per `.gitignore`):
 │       │   ├── rules.py              # DomainRules, NLPRules, VisionRules, AnalyticsRules
 │       │   ├── nlp.py                # TextEncoder, SemanticComparator, ZeroShotClassifier, TextGenerator
 │       │   ├── vision.py             # ImageEncoder, FeatureExtractor, PatternRecognizer, ShapeAnalyzer
-│       │   └── analytics.py          # TimeSeriesForecaster, AnomalyDetector, PatternMiner, TrendAnalyzer
-│       └── hardware
+│       │   ├── analytics.py          # TimeSeriesForecaster, AnomalyDetector, PatternMiner, TrendAnalyzer
+│       │   └── *_advanced.py         # phase 6 extended capabilities (audio/code/graph/...)
+│       ├── hardware
+│       │   ├── __init__.py
+│       │   ├── accel.py              # xp, has_gpu, backend_name, to_gpu/to_cpu/asnumpy
+│       │   ├── quantum.py            # QuantumBackend, QiskitQuantumBackend, SimulatorQuantumBackend, get_quantum_backend
+│       │   └── parallel.py           # ParallelExecutor
+│       ├── plasticity                # Phase 1 — architecture plasticity
+│       │   ├── __init__.py
+│       │   └── architect.py          # ArchitectureOptimizer (module split / prune)
+│       ├── cogtime                   # Phase 2 — layered time
+│       │   ├── __init__.py
+│       │   ├── layered_predictor.py  # LayeredPredictor, Layer (multi-timescale predictive coding)
+│       │   └── temporal_memory.py    # TemporalMemory (Echo-State-style recurrent memory)
+│       ├── cogmem                    # Phase 3 — structured memory
+│       │   ├── __init__.py
+│       │   ├── episodic_graph.py     # EpisodicGraph, Episode, EpisodeEdge
+│       │   └── semantic_index.py     # SemanticIndex (retrieval index over belief vectors)
+│       ├── knowledge                 # Phase 4 — neuro-symbolic fusion
+│       │   ├── __init__.py
+│       │   ├── logic_layer.py        # LogicLayer, LogicRule (rule constraints)
+│       │   └── causal_inference.py   # CausalInference (causal transition inference)
+│       ├── metacog                   # Phase 5 — meta-cognition
+│       │   ├── __init__.py
+│       │   └── meta_cognition.py     # MetaCognition (second-order beliefs)
+│       ├── experiment                # Phase 6 — active experiment
+│       │   ├── __init__.py
+│       │   ├── experiment_planner.py # BayesianExperimentPlanner, CandidateExperiment
+│       │   └── hypothesis_tester.py  # HypothesisTester, Hypothesis (Bayes-factor testing)
+│       ├── multiagent                # Phase 7 — multi-agent
+│       │   ├── __init__.py
+│       │   ├── world.py              # MultiAgentWorld, AgentState
+│       │   ├── communication.py      # CommunicationChannel
+│       │   └── culture.py            # CulturePropagation, Generation
+│       └── causal_emergence          # causal-emergence engine (topology/causal/differential/hmc/chaotic)
 │           ├── __init__.py
-│           ├── accel.py              # xp, has_gpu, backend_name, to_gpu/to_cpu/asnumpy
-│           ├── quantum.py            # QuantumBackend, QiskitQuantumBackend, SimulatorQuantumBackend, get_quantum_backend
-│           └── parallel.py           # ParallelExecutor
+│           ├── engine.py             # emergence engine entry point
+│           ├── topology.py           # topological feature extraction
+│           ├── causal_discovery.py   # causal structure discovery
+│           ├── differential.py       # differential / gradient analysis
+│           ├── hmc.py                # Hamiltonian / hybrid Monte Carlo step
+│           ├── chaotic_memory.py     # chaotic-memory attractor store
+│           └── rules.py              # engine-local rules
 └── tests
     ├── test_base.py
     ├── test_consciousness_core.py
@@ -314,9 +436,67 @@ virtualenvs per `.gitignore`):
 
 ---
 
-## 6. Design Principles
+## 6. Thread Model
 
-### 6.1 Zero-data
+The model supports concurrent callers (a long-running `think()` plus concurrent
+read APIs like `classify_text`, `detect_anomalies`) via a **Phase D lockless**
+design with narrow per-module locks.
+
+### 6.1 Phase D lockless core
+
+`think()` does **not** hold a global lock for the duration of the cycle. Instead:
+
+- Each core `CognitiveModule` owns a private `threading.RLock` that serializes
+  only its own `process` / `predict` / `update`. Two different modules can run
+  concurrently (via `ParallelExecutor.map_modules`), and a read API that touches
+  only module A does not block a `think()` writing to module B.
+- `ZeroDataModel._lock` (a single `threading.RLock`) is retained but acquired
+  only around the few operations that are genuinely model-wide: the
+  `cycle_count` counter increment, `pickle`/`__getstate__` (so pickle cannot
+  serialize a half-mutated array), and the `architect` hook (the one
+  upgrade hook that is write-adjacent to `self.modules`). `RLock` is reentrant,
+  so a caller that already holds `_lock` (e.g. a future `think` that calls
+  pickle internally) does not self-deadlock.
+- The read-only analytics methods (`compute_free_energy`, `classify_text`, …)
+  are pure functions of their arguments and never touch the shared RNG, so they
+  remain safe to call concurrently without any lock.
+
+### 6.2 Cognitive-upgrade module locking
+
+Each Phase 7 module that holds mutable state carries its own
+`threading.RLock` and takes it around every state-mutating method, matching the
+core-module pattern:
+
+- `ArchitectureOptimizer` — lock around `record_errors` / `evaluate` (the error
+  history and pending split/prune plan are read by `think()`'s architect hook,
+  so they must not be torn).
+- `LayeredPredictor` / `TemporalMemory` — lock around `update` (in-place weight
+  / reservoir updates).
+- `EpisodicGraph` — lock around `insert` and `_next_id` (the monotonically
+  increasing episode id is the CRITICAL race fixed in this phase; the id counter
+  is read-then-incremented, so without the lock two concurrent `insert` calls
+  could hand out the same id).
+- `SemanticIndex` — lock around `add` / `search`.
+- `LogicLayer` / `CausalInference` — lock around `add_rule` / `check_all` and
+  the transition-matrix update.
+- `MetaCognition` — lock around `update`.
+- `BayesianExperimentPlanner` / `HypothesisTester` — lock around
+  `evaluate` / `record_result` / `get_supported`.
+- `MultiAgentWorld` / `CommunicationChannel` / `CulturePropagation` — lock
+  around `step` / `send` / `propagate`.
+
+Because each lock is **per-module** (not a single global lock), enabling several
+phases does not serialize the hooks against each other any more than necessary;
+the only model-wide serialization is the architect hook's brief `self._lock`
+acquisition. NaN guards (`_last_valid_context`) and length-capped histories are
+applied under the same lock so a concurrent read never observes a NaN that a
+writer is in the middle of purging.
+
+---
+
+## 7. Design Principles
+
+### 7.1 Zero-data
 
 No module reads an external dataset, model weights, or pre-trained embedding. The
 only "knowledge" the system has is (a) mathematical structure (random matrices
@@ -327,7 +507,7 @@ hand-written rule priors in `capabilities/rules.py`. `ZeroDataModel.think(None)`
 demonstrates this concretely: it produces a coherent output from
 `_self_generate()` alone.
 
-### 6.2 Compositional
+### 7.2 Compositional
 
 Every `CognitiveModule` exposes the same trio — `process(Signal) -> Signal`,
 `predict(Signal) -> Prediction`, `update(prediction_error) -> None` (defined in
@@ -337,7 +517,7 @@ single mean. Domain capabilities are pure compositions: e.g.
 `TimeSeriesForecaster` is `ActiveInferenceEngine` + `QuantumClassicalHybrid` +
 `AnalyticsRules`; nothing new is learned.
 
-### 6.3 Rule-augmented
+### 7.3 Rule-augmented
 
 `capabilities/rules.py` ships three rule libraries — `NLPRules` (stop-words,
 sentiment lexicon, topic keywords), `VisionRules` (Sobel/Gaussian kernels,
@@ -347,7 +527,7 @@ linguistic/image/statistical universals and are consumed deterministically by
 the capabilities (e.g. `TextEncoder.encode` hashes topic-keyword matches into
 the embedding; `FeatureExtractor.extract` convolves Sobel kernels).
 
-### 6.4 Graceful degradation
+### 7.4 Graceful degradation
 
 Every optional dependency (`cupy`, `qiskit`, `numba`, `joblib`) is wrapped in a
 `try/except ImportError` with a working pure-NumPy fallback. The system therefore
@@ -356,7 +536,7 @@ transparently upgrades as each dependency appears. `ZeroDataModel.hardware_info`
 surfaces which path is active so users can confirm acceleration without
 instrumenting the code themselves.
 
-### 6.5 Theory-driven, not data-driven
+### 7.5 Theory-driven, not data-driven
 
 Each core module is a direct implementation of a named scientific theory —
 Global Workspace Theory, Predictive Processing, the Free Energy Principle,

@@ -1,0 +1,21 @@
+step,pos,label,text_preview,belief_norm,free_energy,pca_x,pca_y,tsne_x,tsne_y
+50,3456,physics,of the text loop focuses on th,0.191337,0.000703,-0.051391,0.004260,14.643885,56.504883
+100,4608,cognitive,"ics of the text, free energy s",0.215088,0.000452,-0.008128,0.002290,9.946095,40.831490
+150,5376,physics,ation of the text loop focuses,0.223355,0.000512,0.002234,0.001435,15.973084,-15.272948
+200,3840,cognitive,tion error. Cognitive emergenc,0.215242,0.000287,0.000467,-0.010133,-58.813110,13.497931
+250,4224,cognitive,om scratch. Active inference p,0.215482,0.000276,0.002991,-0.005650,-47.823963,-12.435634
+300,4608,cognitive,"ics of the text, free energy s",0.225011,0.000447,0.008098,0.005347,30.518000,-11.069713
+350,5376,physics,ation of the text loop focuses,0.225491,0.000514,0.005809,-0.003224,-37.527565,35.679852
+400,256,language,"ned embeddings, no tokeniser, ",0.212283,0.000279,0.000366,-0.017555,-77.242218,7.716442
+450,512,cognitive,"ree energy, which is the surpr",0.226791,0.000439,0.005923,0.018334,55.734909,-36.042263
+500,0,cognitive,Cognitive emergence is the spo,0.218948,0.000296,0.002603,0.000068,2.002042,-2.264681
+550,2304,cognitive,atch. Active inference provide,0.210384,0.000277,0.000727,-0.014188,-68.434837,-5.972851
+600,1408,language,tor using a random projection ,0.217144,0.000296,0.000031,0.002600,4.359540,24.366982
+650,1920,cognitive,rror. Cognitive emergence is t,0.221845,0.000311,0.005175,0.005794,34.066185,-43.790134
+700,2816,language,xtended with an information-ga,0.220495,0.000236,0.002838,0.002782,22.442257,-47.747459
+750,1792,physics,gnostic signals. A successful ,0.215720,0.000314,0.002630,-0.005674,-41.429707,-1.434700
+800,1280,language,"h character blocks in order, w",0.223486,0.000249,0.002441,0.008778,33.620869,2.052508
+850,640,cognitive,ergy reflects how predictable ,0.228447,0.000493,0.009008,0.011207,47.501053,-16.544283
+900,1152,language, phase comes next. The text st,0.217800,0.000434,0.001584,-0.000579,-6.130107,7.664853
+950,2560,cognitive,ree energy reflects how predic,0.216848,0.000535,0.001679,-0.007355,-44.949841,19.226772
+1000,1920,cognitive,rror. Cognitive emergence is t,0.217662,0.000312,0.004914,0.001464,-13.563988,-10.603466

@@ -38,6 +38,7 @@ gpu = ["cupy-cuda12x>=13.0,<15"]
 web = [
     "fastapi>=0.100,<1",
     "uvicorn>=0.20,<1",
+    "websockets>=12,<14",
     "pydantic>=2,<3",
     "slowapi>=0.1,<1",
     "structlog>=24,<27",
@@ -86,6 +87,14 @@ where = ["src"]
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+# Phase G (五.3): performance benchmarks are tagged with `perf` so they can
+# be skipped on quick CI runs (`-m "not perf"`) or run in isolation
+# (`-m perf`). They have soft thresholds that depend on host load and may
+# be flaky on shared runners, hence the opt-in marker.
+markers = [
+    "perf: performance benchmarks (S4 <1ms, Hopfield <2ms, think() <+20%)",
+    "slow: long-running stress tests (20000 steps, full-system integration)",
+]
 
 [tool.ruff]
 line-length = 100
@@ -102,3 +111,67 @@ select = ["E", "F", "W", "I", "B", "UP", "SIM", "C4"]
 # Re-exports in package __init__ files are intentional public API surface.
 "__init__.py" = ["F401"]
 "**/__init__.py" = ["F401"]
+
+[tool.mypy]
+# 使用 3.12 而非 3.10：已安装的 numpy 2.x 自带 .pyi 使用 PEP 695 ``type``
+# 语句（仅 3.12+ 可解析）。项目 requires-python>=3.10 且 CI 测试 3.11–3.14，
+# 设为 3.12 不会影响对新模块 stub 的类型检查。
+python_version = "3.12"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false  # 渐进式：先不强制所有函数有类型注解
+check_untyped_defs = true
+ignore_missing_imports = true  # numpy/scipy 等第三方 stubs 可能缺失
+# 只报告显式传入的模块（7 个新模块包）的错误，抑制传递导入的旧模块
+# （model/mcp_server/capabilities/hardware 等，本任务范围外）的既有错误。
+follow_imports = "silent"
+
+# 将 numpy 视为 Any：避免 bare ``np.ndarray`` 在 strict 模式下触发
+# disallow_any_generics（numpy stub 把 ndarray 定义为带型参的泛型）。
+[[tool.mypy.overrides]]
+module = ["numpy", "numpy.*"]
+follow_imports = "skip"
+
+# 旧 hardware 包的 __init__.pyi 有一个既有 [no-redef] 错误（本任务范围外）。
+# skip 比 silent 更强：跳过对该 .pyi 的语义检查，避免阻断新模块的类型检查。
+[[tool.mypy.overrides]]
+module = ["zero_data_model.hardware", "zero_data_model.hardware.*"]
+follow_imports = "skip"
+
+# 新认知升级模块包要求严格类型检查（已补齐 .pyi stubs）。
+[[tool.mypy.overrides]]
+module = "zero_data_model.cogmem.*"
+strict = true
+
+[[tool.mypy.overrides]]
+module = "zero_data_model.cogtime.*"
+strict = true
+
+[[tool.mypy.overrides]]
+module = "zero_data_model.plasticity.*"
+strict = true
+
+[[tool.mypy.overrides]]
+module = "zero_data_model.knowledge.*"
+strict = true
+
+[[tool.mypy.overrides]]
+module = "zero_data_model.metacog.*"
+strict = true
+
+[[tool.mypy.overrides]]
+module = "zero_data_model.experiment.*"
+strict = true
+
+[[tool.mypy.overrides]]
+module = "zero_data_model.multiagent.*"
+strict = true
+
+# Phase 3 新增模块包要求严格类型检查（已补齐 .pyi stubs）。
+[[tool.mypy.overrides]]
+module = "zero_data_model.tools.*"
+strict = true
+
+[[tool.mypy.overrides]]
+module = "zero_data_model.observability.*"
+strict = true

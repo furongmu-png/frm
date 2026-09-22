@@ -1,0 +1,2 @@
+step,stage,dm_free_energy,dm_prediction_error,dm_hopfield_similarity,dm_is_novel,dm_s4_norm,dm_hopfield_size,dm_pcn_l0_error,dm_pcn_l1_error,dm_pcn_l2_error
+0,physics,0.31847231205523713,0.8013738300209057,0.0,1,0.04687582508853433,1,0.7980881054811394,0.0,0.0

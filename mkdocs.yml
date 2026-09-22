@@ -1,0 +1,116 @@
+site_name: ZeroDataModel
+site_description: A self-sufficient cognitive system requiring no external data
+site_url: https://zerodatamodel.dev
+repo_url: https://github.com/owner/zero-data-model
+repo_name: GitHub
+edit_uri: edit/main/docs/
+
+docs_dir: docs
+
+# Exclude pre-existing project docs that are not part of this doc site
+# (architecture.md / theory.md / tutorial.md were the original single-file
+# docs; superpowers/ holds internal specs & reviews). Excluding them keeps
+# `mkdocs build --strict` clean — theory.md in particular has stale anchors.
+exclude_docs: |
+  architecture.md
+  theory.md
+  tutorial.md
+  superpowers/
+
+theme:
+  name: material
+  language: en
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.indexes
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+  palette:
+    - scheme: default
+      primary: deep purple
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: deep purple
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  font:
+    text: Inter
+    code: JetBrains Mono
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [src]
+          options:
+            show_source: false
+            show_signature_annotations: true
+            separate_signature: true
+            show_root_heading: true
+            heading_level: 2
+            members_order: source
+            docstring_style: google
+
+markdown_extensions:
+  - admonition
+  - codehilite:
+      guess_lang: false
+  - toc:
+      permalink: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.details
+  - pymdownx.emoji
+  - attr_list
+  - md_in_html
+  - def_list
+
+nav:
+  - Home: index.md
+  - Getting Started:
+    - Installation: getting-started/installation.md
+    - Quick Start: getting-started/quickstart.md
+    - Configuration: getting-started/configuration.md
+  - Architecture:
+    - Overview: architecture/overview.md
+    - Core Modules: architecture/core.md
+    - Cognitive Upgrades: architecture/cognitive-upgrades.md
+    - Thread Model: architecture/thread-model.md
+  - API Reference:
+    - REST API: api/rest.md
+    - MCP Tools: api/mcp.md
+    - Python SDK: api/python-sdk.md
+    - TypeScript SDK: api/typescript-sdk.md
+  - Modules:
+    - Consciousness Core: modules/consciousness.md
+    - Active Inference: modules/active-inference.md
+    - Architecture Plasticity: modules/plasticity.md
+    - Layered Time: modules/layered-time.md
+    - Structured Memory: modules/memory.md
+    - Neuro-Symbolic: modules/neuro-symbolic.md
+    - Meta-Cognition: modules/meta-cognition.md
+    - Active Experiment: modules/experiment.md
+    - Multi-Agent: modules/multi-agent.md
+  - Deployment:
+    - Docker: deployment/docker.md
+    - Kubernetes: deployment/kubernetes.md
+    - WSL: deployment/wsl.md
+    - Monitoring: deployment/monitoring.md
+  - Development:
+    - Testing: development/testing.md
+    - Benchmarking: development/benchmarking.md
+    - Contributing: development/contributing.md
+  - Changelog: changelog.md

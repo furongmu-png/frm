@@ -11,6 +11,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from .base import CognitiveModule, Prediction, Signal
+from .s4 import S4Layer
 
 # Round-5 audit TEST5-5: named constant instead of a magic 1e6 number.
 # Returned by ``compute_free_energy`` / ``update_belief`` when the
@@ -52,13 +53,31 @@ class GenerativeModel:
     """Internal generative model — predicts sensory inputs from hidden states."""
 
     def __init__(
-        self, state_dim: int = 64, obs_dim: int = 32, rng: np.random.Generator | None = None
+        self,
+        state_dim: int = 64,
+        obs_dim: int = 32,
+        rng: np.random.Generator | None = None,
+        # --- Phase G (S4): optional structured state-space predictor ------- #
+        # 当 use_s4=True 时，启用 S4 层替代固定转移矩阵 ``belief @ transition``。
+        # S4 通过 HiPPO 对角初始化 + Hebbian 局部更新捕获长程时序依赖，
+        # 默认 False 保证零回归（现有 1889+ 测试不受影响）。
+        use_s4: bool = False,
+        s4_dt: float = 0.1,
+        s4_lr: float = 0.01,
+        s4_seed: int | None = None,
     ):
         self.state_dim = state_dim
         self.obs_dim = obs_dim
         # Round-3 audit CRIT-1: per-module Generator
         self._rng = rng if rng is not None else np.random.default_rng()
         self.transition = self._rng.standard_normal((state_dim, state_dim)) * 0.05
+        # Week-1 perf: ``emission`` is a property (see below) whose setter
+        # refreshes ``_cached_emission_fro`` on every assignment, so both the
+        # ``__init__`` assignment here and any external replacement (e.g. a
+        # test that zero-outs the emission to isolate a term) keep the cache
+        # in sync. In-place mutation (``emission[:, :obs] += ...`` inside
+        # ``emission_gradient_step``) bypasses the setter, so that path
+        # refreshes the cache explicitly at the end of the step.
         self.emission = self._rng.standard_normal((state_dim, obs_dim)) * 0.1
         # C-batch fix: initialise ``belief_state`` to a small non-zero vector
         # so the very first ``update()`` (called before any ``process``) has a
@@ -75,16 +94,111 @@ class GenerativeModel:
         self._last_observation: np.ndarray | None = None
         self._last_error: np.ndarray | None = None
 
+        # --- Phase G (S4): structured state-space predictor ---------------- #
+        # S4 替代固定转移矩阵 ``belief @ transition``。S4 的 step() 是有状态的
+        # （维护隐状态 x_k 捕获历史），因此在线学习时每步调用 step() 会推进
+        # 隐状态。为了实现 Hebbian 更新（预测误差驱动），需要延迟一步：
+        #   cycle T:   predict_next_state(belief_T) → s4.step(belief_T) → y_T
+        #              缓存 (belief_T, y_T)
+        #   cycle T+1: update_belief(obs_{T+1}) → new_belief_{T+1}
+        #              s4_error = y_T - new_belief_{T+1}
+        #              s4.update(s4_error, u=belief_T)
+        # 这样 S4 的预测 y_T（基于 belief_T）与实际的 new_belief_{T+1} 比较，
+        # 误差驱动 C/B 的局部 Hebbian 更新（无反向传播）。
+        self.use_s4 = bool(use_s4)
+        if self.use_s4:
+            # S4 层：state_dim = input_dim = output_dim = state_dim
+            # （S4 的输入是 belief，输出是预测的下一 belief，维度一致）
+            self._s4_layer = S4Layer(
+                state_dim=state_dim,
+                input_dim=state_dim,
+                output_dim=state_dim,
+                dt=s4_dt,
+                lr=s4_lr,
+                seed=s4_seed,
+            )
+        else:
+            self._s4_layer = None
+        # 延迟 Hebbian 更新缓存：上一周期 S4 的输入与输出
+        self._s4_prev_input: np.ndarray | None = None
+        self._s4_prev_output: np.ndarray | None = None
+
     def predict_observation(self, state: np.ndarray) -> np.ndarray:
         return state @ self.emission
 
+    @property
+    def emission(self) -> np.ndarray:
+        """Emission matrix ``state -> observation``.
+
+        Week-1 perf: backed by ``self._emission``. The setter refreshes
+        ``_cached_emission_fro`` on every assignment so that external
+        replacement (e.g. ``gm.emission = np.zeros(...)`` in tests) keeps
+        the Frobenius-norm cache in sync. In-place mutation
+        (``emission[:, :obs] += ...`` in ``emission_gradient_step``)
+        bypasses the setter; that path refreshes the cache explicitly.
+        """
+        return self._emission
+
+    @emission.setter
+    def emission(self, value: np.ndarray) -> None:
+        self._emission = np.asarray(value, dtype=float)
+        self._cached_emission_fro = float(np.linalg.norm(self._emission))
+
     def predict_next_state(self, state: np.ndarray, action: np.ndarray | None = None) -> np.ndarray:
-        next_state = state @ self.transition
+        # Phase G (S4): 当 use_s4=True 时，用 S4 层的有状态 step() 替代
+        # ``state @ transition``。S4 的隐状态 x_k 捕获长程时序依赖（HiPPO
+        # 对角初始化保证稳定衰减），输出 y_k = C x_k + D u_k 是对下一状态
+        # 的预测。step() 推进隐状态（在线学习），并缓存 (input, output) 对
+        # 供下一周期的延迟 Hebbian 更新使用。
+        if self.use_s4 and self._s4_layer is not None:
+            next_state = self._s4_layer.step(state)
+            # 缓存本周期 S4 的输入与输出，供下一周期 update_belief 计算
+            # 延迟预测误差 s4_error = y_T - new_belief_{T+1}
+            self._s4_prev_input = np.asarray(state, dtype=float).copy()
+            self._s4_prev_output = np.asarray(next_state, dtype=float).copy()
+        else:
+            next_state = state @ self.transition
         if action is not None:
             padded = np.zeros(self.state_dim)
             padded[: len(action)] = action
-            next_state += padded
+            next_state = next_state + padded
         return next_state
+
+    def predict_next_state_batch(
+        self, states: np.ndarray, actions: np.ndarray
+    ) -> np.ndarray:
+        """Vectorised batch form of ``predict_next_state``.
+
+        ``states`` is ``(B, state_dim)`` and ``actions`` is ``(B, action_dim)``;
+        returns ``(B, state_dim)`` via ``states @ self.transition +
+        padded_actions`` (each action zero-padded to ``state_dim``). Mirrors the
+        single-sample math exactly so callers can substitute the per-sample
+        loop without changing results. ``select_action`` keeps its own hoisted
+        ``base_next_state`` (PERF8-4) and only adds the padded actions in batch,
+        so it does not recompute the invariant ``belief @ transition`` matmul.
+
+        Phase G (S4): 当 use_s4=True 时，batch 模式采用 *peek*（查询）语义——
+        基于 S4 当前隐状态 x_k 计算每个候选状态的预测输出，但不推进隐状态
+        （counterfactual 评估不应污染在线状态）。公式：
+            y_i = C @ (A_bar * x_k + B_bar @ states[i]) + D @ states[i]
+        这与 step() 的数学一致，只是不写入 _state。
+        """
+        states = np.asarray(states, dtype=float)
+        actions = np.asarray(actions, dtype=float)
+        B = states.shape[0]
+        padded = np.zeros((B, self.state_dim), dtype=float)
+        padded[:, : actions.shape[1]] = actions
+        if self.use_s4 and self._s4_layer is not None:
+            # Peek 模式：不推进 S4 隐状态
+            s4 = self._s4_layer
+            with s4._lock:
+                x_k = s4._state
+                # 对每个候选状态计算 y_i = C @ (A_bar*x + B_bar@states[i]) + D@states[i]
+                # 批量化：(B, state_dim) @ B_bar.T → (B, state_dim)
+                new_x = s4._A_bar * x_k + states @ s4._B_bar.T  # (B, state_dim)
+                y = new_x @ s4._C.T + states @ s4._D.T  # (B, output_dim=state_dim)
+            return y + padded
+        return states @ self.transition + padded
 
     def infer_state(self, observation: np.ndarray) -> tuple[np.ndarray, float]:
         """Pure: returns (inferred_state, prediction_error) WITHOUT mutating
@@ -157,6 +271,23 @@ class GenerativeModel:
                 self._last_observation, (0, self.obs_dim - len(self._last_observation))
             )
         self._last_error = error.copy()
+        # Phase G (S4): 延迟一步的 Hebbian 更新。上一周期 predict_next_state
+        # 缓存了 S4 的输入 (belief_T) 与输出 (y_T)。本周期 update_belief 得到
+        # 新的 new_belief_{T+1}，即可计算 S4 的预测误差：
+        #     s4_error = y_T - new_belief_{T+1}
+        # 并用此误差驱动 S4 的 C/B 局部 Hebbian 更新（无反向传播）。
+        # 这与 spec 1.1 "update(error) 使用预测误差驱动 A, B, C 的局部 Hebbian
+        # 更新" 一致——A 不更新（HiPPO 稳定性保证），B/C 用误差驱动。
+        if (
+            self.use_s4
+            and self._s4_layer is not None
+            and self._s4_prev_output is not None
+            and self._s4_prev_input is not None
+        ):
+            s4_error = self._s4_prev_output - new_state
+            # 仅在误差有限时更新（NaN 防护）
+            if np.all(np.isfinite(s4_error)):
+                self._s4_layer.update(s4_error, u=self._s4_prev_input)
         return new_state, prediction_error
 
     def emission_gradient_step(self, lr: float) -> None:
@@ -204,6 +335,10 @@ class GenerativeModel:
         if grad_norm > 1.0:
             grad = grad / grad_norm
         self.emission[:, : self.obs_dim] += 2.0 * lr * grad
+        # Week-1 perf: ``emission`` just mutated -> recompute the cached
+        # Frobenius norm so downstream ``compute_free_energy`` calls see the
+        # new value. This is the sole invalidation point.
+        self._cached_emission_fro = float(np.linalg.norm(self.emission))
 
 
 class HomeostaticController:
@@ -242,6 +377,32 @@ class ActiveInferenceEngine(CognitiveModule):
         obs_dim: int = 32,
         action_dim: int = 16,
         rng: np.random.Generator | None = None,
+        # --- Curiosity / exploration (Phase E) ----------------------- #
+        # All defaults preserve the pre-Phase-E behaviour when
+        # ``exploration_beta_start == 0`` (the -beta*info_gain term
+        # vanishes and select_action reduces to its original form).
+        exploration_beta_start: float = 1.0,
+        exploration_beta_min: float = 0.01,
+        exploration_decay_steps: int = 5000,
+        exploration_decay_type: str = "linear",
+        n_action_bins: int = 8,
+        action_error_window: int = 10,
+        # Phase H: number of candidate actions sampled in ``select_action``.
+        # Pre-Phase-H this was hardcoded to 8 (the value used by the sandbox
+        # loop). Phase H (text-reading) needs 5 discrete navigation actions
+        # (forward / backward / fast-forward / fast-backward / stay) and
+        # uses ``num_candidates=5`` so that ``best_idx`` (the chosen
+        # candidate index) directly maps to a navigation action.
+        # Backward-compat: default 8 keeps the sandbox behaviour unchanged.
+        num_candidates: int = 8,
+        # --- Phase G (S4): structured state-space predictor --------------- #
+        # use_s4=False 时使用固定转移矩阵 ``belief @ transition``（零回归）；
+        # use_s4=True 时启用 S4 层（HiPPO 对角初始化 + Hebbian 局部更新），
+        # 捕获长程时序依赖。详见 ``GenerativeModel`` 的 S4 集成注释。
+        use_s4: bool = False,
+        s4_dt: float = 0.1,
+        s4_lr: float = 0.01,
+        s4_seed: int | None = None,
     ):
         # Round-3 audit CRIT-1: per-module Generator
         self._rng = rng if rng is not None else np.random.default_rng()
@@ -254,7 +415,15 @@ class ActiveInferenceEngine(CognitiveModule):
         # compute_free_energy + select_action internally).
         self._lock = threading.RLock()
         self.blanket = MarkovBlanket.create(obs_dim, action_dim, state_dim, rng=self._rng)
-        self.generative_model = GenerativeModel(state_dim, obs_dim, rng=self._rng)
+        self.generative_model = GenerativeModel(
+            state_dim,
+            obs_dim,
+            rng=self._rng,
+            use_s4=use_s4,
+            s4_dt=s4_dt,
+            s4_lr=s4_lr,
+            s4_seed=s4_seed,
+        )
         self.homeostasis = HomeostaticController(state_dim)
         # Bounded deques so long-running engines do not leak memory (Fix 8).
         self.action_history: deque = deque(maxlen=1000)
@@ -275,6 +444,51 @@ class ActiveInferenceEngine(CognitiveModule):
         # ``process`` after appending to action_history.
         self._cached_sigma_q2: float = 1.0
         self._sigma_q2_dirty: bool = True
+
+        # --- Phase E: intrinsic curiosity (Plan A info-gain proxy) --- #
+        # Theory: EFE ≈ pragmatic (prediction error) - epistemic (info gain).
+        # We add an explicit temporal info-gain term: -beta * IG(a), where
+        # IG(a) is approximated by the std of recent prediction errors for
+        # actions in the same angular bin as ``a`` (Plan A in the spec).
+        # High std => unpredictable outcomes => high learning potential.
+        # The existing ``epistemic_bonus`` (cross-candidate variance of
+        # predicted states) is a ONE-SHOT spatial measure; this new term
+        # is a TEMPORAL measure of outcome unpredictability. They are
+        # complementary and both are kept.
+        #
+        # Action binning: continuous action vectors are bucketed by angle
+        # into ``n_action_bins`` sectors (default 8, 45° each). This keeps
+        # the proxy action-space-agnostic (decoupled from any specific
+        # downstream discretisation like the sandbox's 0-3) while giving
+        # enough granularity to distinguish exploration directions.
+        self.exploration_beta_start = float(exploration_beta_start)
+        self.exploration_beta_min = float(exploration_beta_min)
+        self.exploration_decay_steps = int(exploration_decay_steps)
+        self.exploration_decay_type = str(exploration_decay_type)
+        self._n_action_bins = int(n_action_bins)
+        # Per-bin sliding window of recent prediction errors (pragmatic
+        # term only, NOT the total EFE — recording EFE would create
+        # circular feedback since EFE already includes -beta*IG).
+        self._action_error_history: list[deque] = [
+            deque(maxlen=action_error_window) for _ in range(self._n_action_bins)
+        ]
+        # Step counter for beta scheduling. Incremented once per
+        # ``select_action`` call. NOT incremented by analytics-only
+        # ``compute_free_energy`` calls, so beta reflects the agent's
+        # actual interaction history, not read-only inspection.
+        self._exploration_step = 0
+        # Phase H: configurable candidate count (was hardcoded 8).
+        # Validated to >= 1 so an accidental 0 doesn't crash the loop.
+        if num_candidates < 1:
+            raise ValueError(
+                f"num_candidates must be >= 1, got {num_candidates}"
+            )
+        self._num_candidates = int(num_candidates)
+        # Phase H: last selected candidate index (0..num_candidates-1).
+        # Exposed so callers (e.g. ``run_text_curious.py``) can map the
+        # chosen index to a discrete navigation action without re-running
+        # the selection. Updated by ``select_action`` under the lock.
+        self._last_selected_idx: int = 0
 
     def __getstate__(self) -> dict:
         # Phase D: per-module RLock is not picklable. Strip it here and
@@ -456,6 +670,19 @@ class ActiveInferenceEngine(CognitiveModule):
             # RAISES the expected surprise, so ``select_action`` is rewarded
             # for visiting well-resolved states (low sigma_q2) -- the
             # epistemic-drive behaviour active inference predicts.
+            # Week-1 perf: ``_cached_emission_fro`` is maintained by the
+            # ``emission`` property setter (which fires on replacement) and by
+            # ``emission_gradient_step`` (the sole in-place mutator in the
+            # production think() cycle, which refreshes the cache at the end).
+            # However, CFE recomputes ``||emission||_F^2`` from the LIVE
+            # ``emission`` array rather than trusting the cache, because numpy
+            # in-place slice mutation (``emission[:] = 0.0``, ``emission[...] =
+            # ...``) bypasses the property setter and would leave the cache
+            # stale -- and several regression tests (e.g. test_p11 which zeroes
+            # the emission to isolate the KL term) rely on CFE reflecting such
+            # mutations. The recomputation is O(state_dim * obs_dim) and runs
+            # once per CFE call; at the default (64, 32) dims this is a
+            # sub-microsecond ``np.dot(ravel, ravel)``.
             emission_fro_sq = float(
                 np.dot(gm.emission.ravel(), gm.emission.ravel())
             )
@@ -540,46 +767,94 @@ class ActiveInferenceEngine(CognitiveModule):
             # tuples first, then compute the cross-candidate variance per
             # state-dimension and assign each candidate its share of the
             # epistemic bonus.
-            candidates: list[np.ndarray] = []
-            predicted_states: list[np.ndarray] = []
-            efes: list[float] = []
-            homeostatic_devs: list[float] = []
-            for _ in range(8):
-                # Sample around the blanket-projected mean rather than around 0,
-                # so the action selection uses the sensory-active coupling learned
-                # by the Markov blanket.
-                # Round-3 audit CRIT-1: per-module Generator
-                candidate = mean_action + self._rng.standard_normal(self.blanket.active_dim) * 0.5
-                # Apply only the action's additive contribution (transition part
-                # already in base_next_state). Pads to state_dim.
-                padded = np.zeros(self.generative_model.state_dim)
-                padded[: len(candidate)] = candidate
-                predicted_state = base_next_state + padded
-                # Pragmatic term: expected prediction error under this action.
-                # Round-8 audit THEORY8-1: evaluate the EFE against the CURRENT
-                # observation (not the predicted observation) so the NLL term is
-                # non-degenerate. If no current observation is available, fall
-                # back to the prior prediction target so the EFE is well-defined.
+            # Phase H: ``num_candidates`` was previously hardcoded to 8.
+            # Configurable via ``__init__`` so text-reading loops can use
+            # 5 candidates (matching the 5 navigation actions).
+            n_cand = self._num_candidates
+            # Week-1 perf: vectorise the candidate loop. Sample all candidates
+            # at once -- ``standard_normal((n_cand, active_dim))`` consumes the
+            # same RNG stream (n_cand * active_dim draws, same order) as the
+            # previous ``n_cand`` calls to ``standard_normal(active_dim)``, so
+            # the candidate distribution is bit-for-bit identical.
+            # Sample around the blanket-projected mean rather than around 0,
+            # so the action selection uses the sensory-active coupling learned
+            # by the Markov blanket.
+            # Round-3 audit CRIT-1: per-module Generator
+            candidates = mean_action + self._rng.standard_normal(
+                (n_cand, self.blanket.active_dim)
+            ) * 0.5  # (n_cand, active_dim)
+            # Apply only the action's additive contribution (transition part
+            # already in base_next_state via the PERF8-4 hoist). Pads to
+            # state_dim in batch -- ``predict_next_state_batch`` exposes the
+            # same math; here we keep the hoist so the invariant
+            # ``belief @ transition`` is NOT recomputed per candidate.
+            state_dim = self.generative_model.state_dim
+            padded = np.zeros((n_cand, state_dim))
+            padded[:, : self.blanket.active_dim] = candidates
+            predicted_states = base_next_state[None, :] + padded  # (n_cand, state_dim)
+            # Week-1 perf: the predicted states are computed in batch above
+            # (one matmul for all candidates via the PERF8-4 hoist +
+            # ``predict_next_state_batch``), but the EFE itself is evaluated
+            # per-candidate via ``compute_free_energy``. This preserves the
+            # testable contract that CFE is called once per candidate with
+            # ``state=predicted_state`` and the current observation (Round-7
+            # THEORY7-2, Round-8 THEORY8-1) -- monkeypatching CFE to record
+            # its arguments must observe all ``n_cand`` calls -- while the
+            # batched predicted-state computation eliminates the 8 redundant
+            # ``belief @ transition`` matmuls. The cached emission Frobenius
+            # norm (recomputed only by ``emission_gradient_step``) saves the
+            # ``np.dot(emission.ravel(), emission.ravel())`` scan inside each
+            # CFE call.
+            # Round-8 audit THEORY8-1: evaluate the EFE against the CURRENT
+            # observation (not the predicted observation) so the NLL term is
+            # non-degenerate. If no current observation is available, fall
+            # back to the prior prediction target so the EFE is well-defined.
+            gm = self.generative_model
+            efes = np.empty(n_cand, dtype=float)
+            for i in range(n_cand):
                 if current_observation is not None:
-                    efe_obs = current_observation
+                    # THEORY8-1: evaluate the EFE against the CURRENT
+                    # observation so the NLL term is non-degenerate.
+                    obs_for_efe = current_observation
                 else:
-                    efe_obs = self.generative_model.predict_observation(predicted_state)
-                efe = self.compute_free_energy(efe_obs, state=predicted_state)
-                # Homeostatic term: deviation from the target state.
-                homeostatic_dev = self.homeostasis.deviation(predicted_state)
-                candidates.append(candidate)
-                predicted_states.append(predicted_state)
-                efes.append(efe)
-                homeostatic_devs.append(homeostatic_dev)
+                    # THEORY8-1 fallback: no observation available -- evaluate
+                    # against the predicted observation (degenerate but
+                    # well-defined EFE, kept for backward compat).
+                    obs_for_efe = predicted_states[i] @ gm.emission
+                efes[i] = self.compute_free_energy(
+                    obs_for_efe, state=predicted_states[i]
+                )
+            # Homeostatic term: deviation from the target state (batched).
+            # ``predicted_states`` is (n_cand, state_dim) and
+            # ``homeostasis.dim == state_dim``, so no per-row padding needed.
+            homeostatic_devs = np.linalg.norm(
+                predicted_states - self.homeostasis.target, axis=1
+            )  # (n_cand,)
             # THEORY8-12: cross-candidate variance per state dimension. Each
             # candidate's epistemic bonus is proportional to how much ITS
             # predicted state contributes to the cross-candidate spread --
             # candidates that move the predicted state away from the mean of
             # the other candidates have higher information potential.
-            predicted_stack = np.stack(predicted_states)  # (8, state_dim)
+            predicted_stack = predicted_states  # (n_cand, state_dim)
             cross_candidate_var = np.var(predicted_stack, axis=0)  # (state_dim,)
             candidate_mean = np.mean(predicted_stack, axis=0)  # (state_dim,)
-            for i in range(8):
+            # Phase E: compute the exploration weight beta for this call
+            # (decays over time so the agent shifts from exploration to
+            # exploitation as it accumulates experience). beta=0 disables
+            # the curiosity term entirely, recovering the pre-Phase-E
+            # behaviour (backwards compatibility).
+            beta = self._compute_beta()
+            # Phase E: per-candidate information-gain proxy (Plan A). For each
+            # candidate, look up the std of recent prediction errors in its
+            # angular bin. High std => unpredictable outcomes => high
+            # learning potential => the -beta*IG term lowers the EFE,
+            # encouraging the agent to prefer actions with uncertain
+            # outcomes (exploration).
+            info_gains = [
+                self._compute_information_gain_proxy(c) for c in candidates
+            ]
+            best_idx = 0
+            for i in range(n_cand):
                 # Distance of this candidate's predicted state from the
                 # cross-candidate mean, weighted by the per-dimension variance.
                 # Candidates in high-variance dimensions that are far from the
@@ -589,11 +864,130 @@ class ActiveInferenceEngine(CognitiveModule):
                     np.dot(deviation * deviation, cross_candidate_var)
                     / (np.sum(cross_candidate_var) + 1e-12)
                 )
-                total = efes[i] + 0.1 * homeostatic_devs[i] + epistemic_bonus
+                # Phase E: total EFE = pragmatic + homeostatic + epistemic
+                # (one-shot spatial) - beta * info_gain (temporal). The
+                # minus sign on the info_gain term is the active-inference
+                # decomposition EFE = risk - epistemic_value: lower EFE =
+                # better, so subtracting IG lowers EFE for informative
+                # actions, making them preferred.
+                total = (
+                    efes[i]
+                    + 0.1 * homeostatic_devs[i]
+                    + epistemic_bonus
+                    - beta * info_gains[i]
+                )
                 if total < best_efep:
                     best_efep = total
                     best_action = candidates[i]
+                    best_idx = i
+            # Phase E: record the chosen action's pragmatic prediction error
+            # (NOT the total EFE — recording EFE would create circular
+            # feedback since EFE already includes -beta*IG) into its
+            # angular bin's sliding window. This populates the history that
+            # the NEXT select_action call will read. The chosen action is
+            # the one we actually commit to, so its realized error (proxied
+            # by the candidate's efe against the current observation) is
+            # the most informative sample to record.
+            chosen_bin = self._action_bin(candidates[best_idx])
+            self._action_error_history[chosen_bin].append(float(efes[best_idx]))
+            # Phase E: advance the step counter so beta decays on the next
+            # call. Incrementing AFTER the selection means the first call
+            # uses beta_start (full exploration), as intended.
+            self._exploration_step += 1
+            # Phase H: expose the chosen candidate index for callers that
+            # want a discrete action. With ``num_candidates=5`` (text
+            # navigation), ``best_idx`` directly maps to navigation action
+            # 0-4 (forward/backward/fast_forward/fast_backward/stay).
+            self._last_selected_idx = best_idx
             return best_action if best_action is not None else np.zeros(self.blanket.active_dim)
+
+    # ------------------------------------------------------------------ #
+    # Phase E: intrinsic curiosity helpers
+    # ------------------------------------------------------------------ #
+    def _compute_beta(self) -> float:
+        """Current exploration weight, decaying over ``_exploration_step``.
+
+        Supports three decay schedules (selected by
+        ``self.exploration_decay_type``):
+
+        - ``"linear"`` (default): beta = max(beta_min, beta_start -
+          (step / decay_steps) * (beta_start - beta_min)). Reaches
+          beta_min at step == decay_steps, then stays there.
+        - ``"exponential"``: beta = beta_min + (beta_start - beta_min)
+          * exp(-step / decay_steps). Smooth, never quite reaches
+          beta_min. The ``decay_steps`` is interpreted as the time
+          constant (1/e at step == decay_steps).
+        - ``"stage"``: beta = beta_start if step < decay_steps else
+          beta_min. Step function — full exploration until
+          ``decay_steps``, then full exploitation.
+
+        Returns 0.0 when ``beta_start == 0`` (disables curiosity
+        entirely, recovering pre-Phase-E behaviour for backwards
+        compatibility).
+        """
+        s = self._exploration_step
+        if self.exploration_beta_start <= 0.0:
+            return 0.0
+        b_start = self.exploration_beta_start
+        b_min = self.exploration_beta_min
+        T = max(1, self.exploration_decay_steps)
+        decay_type = self.exploration_decay_type
+        if decay_type == "exponential":
+            return b_min + (b_start - b_min) * float(np.exp(-s / T))
+        if decay_type == "stage":
+            return b_start if s < T else b_min
+        # Default: linear.
+        return max(b_min, b_start - (s / T) * (b_start - b_min))
+
+    def _action_bin(self, action_vec: np.ndarray) -> int:
+        """Bucket a continuous action vector by its dominant direction.
+
+        Uses the angle of the (vx, vy) projection (first two components)
+        to assign one of ``self._n_action_bins`` angular sectors. This
+        is action-space-agnostic: it does not assume any specific
+        downstream discretisation (e.g. the sandbox's 0-3), only that
+        the first two action dimensions carry the dominant directional
+        signal. Actions with near-zero magnitude fall in bin 0
+        (arbitrary but deterministic).
+        """
+        if action_vec.shape[0] < 2:
+            return 0
+        vx = float(action_vec[0])
+        vy = float(action_vec[1])
+        if abs(vx) < 1e-9 and abs(vy) < 1e-9:
+            return 0
+        angle = float(np.arctan2(vy, vx))  # (-pi, pi]
+        # Shift to [0, 2pi) then bin.
+        if angle < 0.0:
+            angle += 2.0 * float(np.pi)
+        bin_width = 2.0 * float(np.pi) / self._n_action_bins
+        return int(angle / bin_width) % self._n_action_bins
+
+    def _compute_information_gain_proxy(self, action_vec: np.ndarray) -> float:
+        """Plan A info-gain proxy: std of recent prediction errors for
+        actions in the same angular bin as ``action_vec``.
+
+        Returns a default of 1.0 when the bin has fewer than 2 samples
+        (early exploration — encourages trying unvisited directions by
+        giving them maximal info gain). Once 2+ samples accumulate,
+        returns the standard deviation of the recorded pragmatic
+        prediction errors: high std => the outcome of this kind of
+        action is unpredictable => high learning potential.
+
+        This is a temporal complement to the existing spatial
+        ``epistemic_bonus`` (cross-candidate variance): the bonus
+        measures how much THIS candidate spreads the prediction across
+        the 8 candidates (one-shot), while this proxy measures how
+        unpredictable THIS direction's outcomes have been HISTORICALLY.
+        """
+        bin_idx = self._action_bin(action_vec)
+        history = self._action_error_history[bin_idx]
+        if len(history) < 2:
+            # Cold-start: maximal info gain to encourage visiting
+            # unexplored directions. This is the "optimism in the face
+            # of uncertainty" heuristic (à la UCB).
+            return 1.0
+        return float(np.std(history))
 
     def epistemic_foraging(self, belief: np.ndarray) -> Signal | None:
         """Actively seek information when uncertain.

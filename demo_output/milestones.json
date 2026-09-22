@@ -1,0 +1,30 @@
+[
+  {
+    "step": 0,
+    "type": "concept_cluster",
+    "title": "New Concept Cluster",
+    "description": "New modality category appeared: 'physics'.",
+    "stage": "physics"
+  },
+  {
+    "step": 50,
+    "type": "concept_cluster",
+    "title": "New Concept Cluster",
+    "description": "New modality category appeared: 'text'.",
+    "stage": "text"
+  },
+  {
+    "step": 100,
+    "type": "concept_cluster",
+    "title": "New Concept Cluster",
+    "description": "New modality category appeared: 'crossmodal'.",
+    "stage": "crossmodal"
+  },
+  {
+    "step": 150,
+    "type": "concept_cluster",
+    "title": "New Concept Cluster",
+    "description": "New modality category appeared: 'qa'.",
+    "stage": "qa"
+  }
+]

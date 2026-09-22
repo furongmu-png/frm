@@ -1,0 +1,44 @@
+# Ingress: routes / to frontend, /api to backend REST (:8000, prefix
+# stripped), /ws to backend WebSocket (:8765). Requires the nginx ingress
+# controller and the rewrite-target annotation to strip /api (the backend
+# serves routes at root, e.g. /health, /think).
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: zdm
+  namespace: zdm
+  labels:
+    app.kubernetes.io/name: zero-data-model
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /$2
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "86400"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "86400"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: zdm.local
+      http:
+        paths:
+          - path: /api(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: zdm-backend
+                port:
+                  number: 8000
+          - path: /ws(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: zdm-backend
+                port:
+                  number: 8765
+          - path: /(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: zdm-frontend
+                port:
+                  number: 80

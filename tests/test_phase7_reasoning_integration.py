@@ -310,26 +310,26 @@ class TestCLIReasoning:
 
 class TestAPIReasoning:
     def test_api_prop_infer(self, client):
-        r = client.post("/reasoning/prop-infer", json=PROP_INFER_CONFIG)
+        r = client.post("/v1/reasoning/prop-infer", json=PROP_INFER_CONFIG)
         assert r.status_code == 200, r.text
         assert r.json()["facts"]["wet_grass"] is True
 
     def test_api_syllogism(self, client):
         r = client.post(
-            "/reasoning/syllogism",
+            "/v1/reasoning/syllogism",
             json={"major": MAJOR, "minor": MINOR},
         )
         assert r.status_code == 200, r.text
         assert r.json()["conclusion"] == "All socrates are mortal"
 
     def test_api_induct(self, client):
-        r = client.post("/reasoning/induct", json=INDUCT_CONFIG)
+        r = client.post("/v1/reasoning/induct", json=INDUCT_CONFIG)
         assert r.status_code == 200, r.text
         assert r.json()["rule"] == "color == 'red'"
 
     def test_api_analogize(self, client):
         r = client.post(
-            "/reasoning/analogize",
+            "/v1/reasoning/analogize",
             json={"source": ANALOGIZE_SOURCE, "target": ANALOGIZE_TARGET},
         )
         assert r.status_code == 200, r.text
@@ -337,24 +337,24 @@ class TestAPIReasoning:
         assert body["mapping"]["a"] == "a"
 
     def test_api_abduce(self, client):
-        r = client.post("/reasoning/abduce", json=ABDUCE_CONFIG)
+        r = client.post("/v1/reasoning/abduce", json=ABDUCE_CONFIG)
         assert r.status_code == 200, r.text
         assert r.json()["best"] == "flu with fever and cough"
 
     def test_api_defaults(self, client):
-        r = client.post("/reasoning/defaults", json=DEFAULTS_CONFIG)
+        r = client.post("/v1/reasoning/defaults", json=DEFAULTS_CONFIG)
         assert r.status_code == 200, r.text
         assert r.json()["conclusions"]["flies"] is True
 
     def test_api_causal(self, client):
-        r = client.post("/reasoning/causal", json=CAUSAL_CONFIG)
+        r = client.post("/v1/reasoning/causal", json=CAUSAL_CONFIG)
         assert r.status_code == 200, r.text
         assert r.json()["chain"] == ["a", "b", "c"]
 
     # --- negative paths ---
     def test_api_syllogism_short_tuple_rejected(self, client):
         r = client.post(
-            "/reasoning/syllogism",
+            "/v1/reasoning/syllogism",
             json={"major": ["A", "X"], "minor": ["A", "Y", "Z"]},
         )
         # Pydantic min_length=3 rejects -> 422.
@@ -362,7 +362,7 @@ class TestAPIReasoning:
 
     def test_api_induct_mismatched_lengths_rejected(self, client):
         r = client.post(
-            "/reasoning/induct",
+            "/v1/reasoning/induct",
             json={"examples": [{"a": 1}], "labels": [True, False]},
         )
         # Pydantic doesn't enforce length match (both have min_length=1),
@@ -371,21 +371,21 @@ class TestAPIReasoning:
 
     def test_api_abduce_mismatched_priors_rejected(self, client):
         r = client.post(
-            "/reasoning/abduce",
+            "/v1/reasoning/abduce",
             json={"observation": "x", "hypotheses": ["a", "b"], "priors": [0.5]},
         )
         assert r.status_code in (400, 422)
 
     def test_api_analogize_empty_source_rejected(self, client):
         r = client.post(
-            "/reasoning/analogize",
+            "/v1/reasoning/analogize",
             json={"source": {}, "target": {"a": 1}},
         )
         assert r.status_code in (400, 422)
 
     def test_api_causal_negative_depth_rejected(self, client):
         r = client.post(
-            "/reasoning/causal",
+            "/v1/reasoning/causal",
             json={"links": [], "start": "a", "max_depth": -1},
         )
         assert r.status_code in (400, 422)

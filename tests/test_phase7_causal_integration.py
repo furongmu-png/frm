@@ -317,7 +317,7 @@ class TestCLICausal:
 
 class TestAPICausal:
     def test_api_decision_tree(self, client):
-        r = client.post("/causal/decision-tree", json=DECISION_TREE_CONFIG)
+        r = client.post("/v1/causal/decision-tree", json=DECISION_TREE_CONFIG)
         assert r.status_code == 200, r.text
         payload = r.json()
         assert payload["depth"] == 1
@@ -325,7 +325,7 @@ class TestAPICausal:
         assert payload["features_used"] == [0]
 
     def test_api_game_zero_sum(self, client):
-        r = client.post("/causal/game", json=GAME_CONFIG_ZERO_SUM)
+        r = client.post("/v1/causal/game", json=GAME_CONFIG_ZERO_SUM)
         assert r.status_code == 200, r.text
         payload = r.json()
         assert payload["is_zero_sum"] is True
@@ -333,14 +333,14 @@ class TestAPICausal:
         assert payload["value_a"] == pytest.approx(3.0)
 
     def test_api_game_general(self, client):
-        r = client.post("/causal/game", json=GAME_CONFIG_GENERAL)
+        r = client.post("/v1/causal/game", json=GAME_CONFIG_GENERAL)
         assert r.status_code == 200, r.text
         payload = r.json()
         assert payload["is_zero_sum"] is False
         assert [0, 0] in payload["nash_equilibria"]
 
     def test_api_counterfactual(self, client):
-        r = client.post("/causal/counterfactual", json=COUNTERFACTUAL_CONFIG)
+        r = client.post("/v1/causal/counterfactual", json=COUNTERFACTUAL_CONFIG)
         assert r.status_code == 200, r.text
         payload = r.json()
         assert payload["factual"] == pytest.approx(2.5)
@@ -348,7 +348,7 @@ class TestAPICausal:
         assert payload["effect"] == pytest.approx(2.0)
 
     def test_api_bandit(self, client):
-        r = client.post("/causal/bandit", json=BANDIT_CONFIG)
+        r = client.post("/v1/causal/bandit", json=BANDIT_CONFIG)
         assert r.status_code == 200, r.text
         payload = r.json()
         assert "expected_values" in payload
@@ -356,7 +356,7 @@ class TestAPICausal:
         assert payload["arm"] in (0, 1, 2)
 
     def test_api_pomdp(self, client):
-        r = client.post("/causal/pomdp", json=POMDP_CONFIG)
+        r = client.post("/v1/causal/pomdp", json=POMDP_CONFIG)
         assert r.status_code == 200, r.text
         payload = r.json()
         assert "policy" in payload
@@ -364,14 +364,14 @@ class TestAPICausal:
         assert payload["iterations"] >= 1
 
     def test_api_discover_graph(self, client):
-        r = client.post("/causal/discover-graph", json=DISCOVER_GRAPH_CONFIG)
+        r = client.post("/v1/causal/discover-graph", json=DISCOVER_GRAPH_CONFIG)
         assert r.status_code == 200, r.text
         payload = r.json()
         assert payload["n_edges"] == 3
         assert payload["var_names"] == ["x", "y", "z"]
 
     def test_api_intervene(self, client):
-        r = client.post("/causal/intervene", json=INTERVENE_CONFIG)
+        r = client.post("/v1/causal/intervene", json=INTERVENE_CONFIG)
         assert r.status_code == 200, r.text
         payload = r.json()
         assert "effect" in payload
@@ -382,25 +382,25 @@ class TestAPICausal:
     # --- negative paths (Pydantic rejection -> 422 / 400) ---
     def test_api_decision_tree_mismatched_lengths_rejected(self, client):
         r = client.post(
-            "/causal/decision-tree",
+            "/v1/causal/decision-tree",
             json={"features": [[1.0], [2.0]], "labels": ["a"]},
         )
         assert r.status_code in (400, 422)
 
     def test_api_game_empty_payoff_rejected(self, client):
-        r = client.post("/causal/game", json={"payoff_a": []})
+        r = client.post("/v1/causal/game", json={"payoff_a": []})
         assert r.status_code in (400, 422)
 
     def test_api_counterfactual_empty_observed_rejected(self, client):
         r = client.post(
-            "/causal/counterfactual",
+            "/v1/causal/counterfactual",
             json={"observed": [], "index": 0, "value": 1.0},
         )
         assert r.status_code in (400, 422)
 
     def test_api_intervene_negative_var_rejected(self, client):
         r = client.post(
-            "/causal/intervene",
+            "/v1/causal/intervene",
             json={
                 "data": [[1.0, 2.0], [3.0, 4.0]],
                 "intervention_var": -1,
@@ -412,7 +412,7 @@ class TestAPICausal:
     def test_api_discover_graph_single_row_rejected(self, client):
         # Pydantic enforces min_length=2 (correlation needs >= 2 rows).
         r = client.post(
-            "/causal/discover-graph",
+            "/v1/causal/discover-graph",
             json={"data": [[1.0, 2.0]]},
         )
         assert r.status_code in (400, 422)

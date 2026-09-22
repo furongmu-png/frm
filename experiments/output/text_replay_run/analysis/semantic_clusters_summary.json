@@ -1,0 +1,20 @@
+{
+  "n_snapshots": 20,
+  "n_topics": 3,
+  "topic_counts": {
+    "cognitive": 11,
+    "language": 5,
+    "physics": 4
+  },
+  "belief_matrix_shape": [
+    20,
+    32
+  ],
+  "pca_explained_variance": [
+    0.5135781463192731,
+    0.23527816307018623
+  ],
+  "silhouette_score": -0.10217471301689356,
+  "silhouette_note": "computed on 20 samples, 3 topics",
+  "has_tsne": true
+}

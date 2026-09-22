@@ -1,0 +1,37 @@
+name: PR Preview
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+
+permissions:
+  contents: read
+  packages: write
+  pull-requests: write
+
+jobs:
+  build-preview:
+    if: github.event.action != 'closed'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build preview images
+        run: |
+          docker build -f Dockerfile.backend -t zdm-backend:pr-${{ github.event.pull_request.number }} .
+          docker build -f Dockerfile.frontend -t zdm-frontend:pr-${{ github.event.pull_request.number }} .
+      - name: Run smoke tests against preview
+        run: |
+          docker run -d -p 8000:8000 zdm-backend:pr-${{ github.event.pull_request.number }}
+          sleep 5
+          curl -f http://localhost:8000/health
+          curl -f -X POST http://localhost:8000/think -H 'Content-Type: application/json' -d '{"cycles": 1}'
+      - name: Comment on PR
+        uses: actions/github-script@v6
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: '✅ Preview build successful. Smoke tests passed.'
+            })

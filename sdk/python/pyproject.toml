@@ -1,0 +1,23 @@
+[project]
+name = "zero-data-model-client"
+version = "1.0.0"
+description = "Official Python SDK client for the ZeroDataModel REST API."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [{ name = "ZeroDataModel" }]
+dependencies = ["httpx>=0.24"]
+
+[project.optional-dependencies]
+models = ["pydantic>=2.0"]
+test = ["pytest>=7", "pydantic>=2.0"]
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["zero_data_model_client*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

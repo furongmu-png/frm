@@ -215,32 +215,32 @@ class TestCLIGraph:
 
 class TestAPIGraph:
     def test_api_encode(self, client, adjacency_list):
-        r = client.post("/graph/encode", json={"adjacency": adjacency_list})
+        r = client.post("/v1/graph/encode", json={"adjacency": adjacency_list})
         assert r.status_code == 200, r.text
         assert "embedding" in r.json()
 
     def test_api_communities(self, client, adjacency_list):
-        r = client.post("/graph/communities", json={"adjacency": adjacency_list})
+        r = client.post("/v1/graph/communities", json={"adjacency": adjacency_list})
         assert r.status_code == 200, r.text
         body = r.json()
         assert "communities" in body and "n_communities" in body
 
     def test_api_path(self, client, adjacency_list):
         r = client.post(
-            "/graph/path",
+            "/v1/graph/path",
             json={"adjacency": adjacency_list, "source": 0, "target": 4},
         )
         assert r.status_code == 200, r.text
         assert "path" in r.json()
 
     def test_api_centrality(self, client, adjacency_list):
-        r = client.post("/graph/centrality", json={"adjacency": adjacency_list})
+        r = client.post("/v1/graph/centrality", json={"adjacency": adjacency_list})
         assert r.status_code == 200, r.text
         assert "degree" in r.json()
 
     def test_api_isomorphism(self, client, adjacency_list):
         r = client.post(
-            "/graph/isomorphism",
+            "/v1/graph/isomorphism",
             json={"adjacency_a": adjacency_list, "adjacency_b": adjacency_list},
         )
         assert r.status_code == 200, r.text
@@ -248,27 +248,27 @@ class TestAPIGraph:
 
     def test_api_track(self, client, adjacency_list, adjacency_b_list):
         r = client.post(
-            "/graph/track",
+            "/v1/graph/track",
             json={"snapshots": [adjacency_list, adjacency_b_list]},
         )
         assert r.status_code == 200, r.text
         assert "stability" in r.json()
 
     def test_api_spanning(self, client, adjacency_list):
-        r = client.post("/graph/spanning", json={"adjacency": adjacency_list})
+        r = client.post("/v1/graph/spanning", json={"adjacency": adjacency_list})
         assert r.status_code == 200, r.text
         assert "mst_edges" in r.json()
 
     def test_api_negative_source_rejected(self, client, adjacency_list):
         r = client.post(
-            "/graph/path",
+            "/v1/graph/path",
             json={"adjacency": adjacency_list, "source": -1, "target": 4},
         )
         assert r.status_code in (400, 422)
 
     def test_api_single_snapshot_rejected(self, client, adjacency_list):
         r = client.post(
-            "/graph/track",
+            "/v1/graph/track",
             json={"snapshots": [adjacency_list]},
         )
         # min_length=2 on snapshots.

@@ -404,8 +404,9 @@ class ZeroDataMCPServer:
         points outside the safety margin after each relaxation sweep.
 
         Args:
-            start_state, end_state: 1D boundary vectors of the same
-                dimension. Mismatched dimensions raise ValueError.
+            start_state: 1D boundary vector (start of the trajectory).
+            end_state: 1D boundary vector (end of the trajectory); must
+                have the same dimension as ``start_state``.
             n_steps: Number of interior steps; ``trajectory`` will have
                 ``n_steps + 1`` rows.
             obstacles: Optional list of obstacle centers, each of length
@@ -653,8 +654,9 @@ class ZeroDataMCPServer:
         actions suitable for downstream RL/control).
 
         Args:
-            start_state, goal_state: 1D boundary vectors of equal length.
-                Mismatched dimensions raise ValueError.
+            start_state: 1D boundary vector (start of the trajectory).
+            goal_state: 1D boundary vector (goal of the trajectory); must
+                have the same length as ``start_state``.
             n_steps: Number of interior steps (must be >= 0).
             obstacles: Optional list of obstacle centers, each of the
                 same dimensionality as ``start_state``.
@@ -743,10 +745,12 @@ class ZeroDataMCPServer:
         """Fit CCA on paired observations across two modalities.
 
         Args:
-            observations_a, observations_b: 2D arrays of shape
-                ``(n_samples, dim_a)`` and ``(n_samples, dim_b)``. Both
-                must have at least 2 rows and 2 columns. The row counts
-                must match (CCA is supervised on the sample pairing).
+            observations_a: 2D array of shape ``(n_samples, dim_a)``.
+                Must have at least 2 rows and 2 columns.
+            observations_b: 2D array of shape ``(n_samples, dim_b)``.
+                Must have at least 2 rows and 2 columns. The row count
+                must match ``observations_a`` (CCA is supervised on the
+                sample pairing).
 
         Returns:
             Dict with keys ``correlations`` (list[float]), ``n_components``
@@ -815,8 +819,10 @@ class ZeroDataMCPServer:
         """InfoNCE contrastive alignment loss between paired batches.
 
         Args:
-            batch_a, batch_b: 2D arrays of shape ``(n_samples, dim)``.
-                Must have at least 2 rows and matching shapes.
+            batch_a: 2D array of shape ``(n_samples, dim)``. Must have at
+                least 2 rows.
+            batch_b: 2D array of shape ``(n_samples, dim)``. Must have at
+                least 2 rows and match ``batch_a``'s shape.
 
         Returns:
             Dict with keys ``loss`` (float), ``accuracy`` (float in
@@ -1255,8 +1261,10 @@ class ZeroDataMCPServer:
         Failure mode: returns ``{"error": "graph_track_dynamic: ..."}``.
         """
         if not isinstance(snapshots, list) or len(snapshots) < 2:
+            snap_len = len(snapshots) if hasattr(snapshots, "__len__") else "N/A"
             raise ValueError(
-                f"snapshots must be a list of >= 2 adjacency matrices, got len={len(snapshots) if hasattr(snapshots, '__len__') else 'N/A'}"
+                f"snapshots must be a list of >= 2 adjacency matrices, "
+                f"got len={snap_len}"
             )
         snap_arrs = []
         for i, s in enumerate(snapshots):
@@ -1704,7 +1712,7 @@ class ZeroDataMCPServer:
 
         Args:
             series: 1D event timestamps (must be non-empty). Timestamps
-            are sorted internally, so unsorted input is OK.
+                are sorted internally, so unsorted input is OK.
 
         Returns:
             Dict with keys ``inter_arrival`` (list[float] of length
@@ -2107,7 +2115,7 @@ class ZeroDataMCPServer:
                 f"examples ({len(examples)}) and labels ({len(labels)}) "
                 "must have the same length"
             )
-        return _to_py(self.model.induct_rule(examples, [bool(l) for l in labels]))
+        return _to_py(self.model.induct_rule(examples, [bool(label) for label in labels]))
 
     @_error_to_dict
     def reasoning_analogize(self, source: dict, target: dict) -> dict:
@@ -2474,15 +2482,15 @@ class ZeroDataMCPServer:
         if not isinstance(rewards, list):
             raise ValueError("rewards must be a list")
         T = np.asarray(transitions, dtype=float)
-        O = np.asarray(observations, dtype=float)
+        obs_arr = np.asarray(observations, dtype=float)
         R = np.asarray(rewards, dtype=float)
         if T.size > 0:
             _ensure_finite(T, "transitions")
-        if O.size > 0:
-            _ensure_finite(O, "observations")
+        if obs_arr.size > 0:
+            _ensure_finite(obs_arr, "observations")
         if R.size > 0:
             _ensure_finite(R, "rewards")
-        return _to_py(self.model.solve_pomdp(T, O, R))
+        return _to_py(self.model.solve_pomdp(T, obs_arr, R))
 
     @_error_to_dict
     def causal_discover_graph(
@@ -2581,6 +2589,611 @@ class ZeroDataMCPServer:
                 arr, intervention_var, float(intervention_value)
             )
         )
+
+    # ------------------------------------------------------------------
+    # Phase 7 cognitive-upgrade tools (plasticity / cogtime / cogmem /
+    # knowledge / metacog / experiment / multiagent). Each tool mirrors a
+    # REST endpoint and is named ``phase7_<module>_<action>``. The model's
+    # cognitive modules are gated behind ``enable_*`` feature flags (and the
+    # multiagent modules are not yet integrated); when the attribute is
+    # ``None`` the tool returns ``{"detail": "module X not enabled",
+    # "enabled": False}``.
+    # ------------------------------------------------------------------
+
+    @_error_to_dict
+    def phase7_architect_stats(self) -> dict:
+        """Return the architecture optimizer's summary statistics.
+
+        Returns ``{"detail": "module architect not enabled", "enabled": False}``
+        when the architect module is not enabled on the model.
+        """
+        arch = self.model.architect
+        if arch is None:
+            return {"detail": "module architect not enabled", "enabled": False}
+        return _to_py(arch.stats)
+
+    @_error_to_dict
+    def phase7_architect_dormant(self) -> dict:
+        """List the names of currently dormant modules.
+
+        Returns the disabled dict when the architect module is not enabled.
+        """
+        arch = self.model.architect
+        if arch is None:
+            return {"detail": "module architect not enabled", "enabled": False}
+        return {"dormant": list(arch.dormant_names())}
+
+    @_error_to_dict
+    def phase7_architect_reactivate(self, name: str) -> dict:
+        """Reactivate a dormant module by name.
+
+        Args:
+            name: The dormant module's name.
+
+        Returns ``{"reactivated": bool, "name": name}``.
+        """
+        if not isinstance(name, str) or not name:
+            raise ValueError("name must be a non-empty string")
+        arch = self.model.architect
+        if arch is None:
+            return {"detail": "module architect not enabled", "enabled": False}
+        ok = arch.reactivate(self.model.modules, name)
+        return {"reactivated": bool(ok), "name": name}
+
+    @_error_to_dict
+    def phase7_temporal_memory_context(self) -> dict:
+        """Return the current temporal-memory hidden-state context vector."""
+        tm = self.model.temporal_memory
+        if tm is None:
+            return {
+                "detail": "module temporal_memory not enabled",
+                "enabled": False,
+            }
+        return {"context": _to_py(tm.get_context())}
+
+    @_error_to_dict
+    def phase7_temporal_memory_spectral_radius(self) -> dict:
+        """Return the spectral radius of the temporal-memory recurrent weight."""
+        tm = self.model.temporal_memory
+        if tm is None:
+            return {
+                "detail": "module temporal_memory not enabled",
+                "enabled": False,
+            }
+        return {"spectral_radius": float(tm.spectral_radius)}
+
+    @_error_to_dict
+    def phase7_layered_predictor_context(self) -> dict:
+        """Return the concatenated [L0, L1, L2] layered-predictor context."""
+        lp = self.model.layered_predictor
+        if lp is None:
+            return {
+                "detail": "module layered_predictor not enabled",
+                "enabled": False,
+            }
+        return {"context": _to_py(lp.get_context())}
+
+    @_error_to_dict
+    def phase7_layered_predictor_rhythm(self) -> dict:
+        """Return the rhythmic-confidence heuristic of the layered predictor."""
+        lp = self.model.layered_predictor
+        if lp is None:
+            return {
+                "detail": "module layered_predictor not enabled",
+                "enabled": False,
+            }
+        return {"rhythm": float(lp.predict_rhythm())}
+
+    @_error_to_dict
+    def phase7_episodic_graph_recent(self, n: int = 10) -> dict:
+        """Return the ``n`` most recent episodes (by step).
+
+        Args:
+            n: Number of recent episodes to return (1..1000).
+        """
+        if not isinstance(n, int) or isinstance(n, bool) or n < 1 or n > 1000:
+            raise ValueError(f"n must be an int in [1, 1000], got {n!r}")
+        eg = self.model.episodic_graph
+        if eg is None:
+            return {
+                "detail": "module episodic_graph not enabled",
+                "enabled": False,
+            }
+        episodes = eg.get_recent(n)
+        return {"episodes": _to_py([vars(e) for e in episodes])}
+
+    @_error_to_dict
+    def phase7_episodic_graph_node_count(self) -> dict:
+        """Return the current episodic-graph node count."""
+        eg = self.model.episodic_graph
+        if eg is None:
+            return {
+                "detail": "module episodic_graph not enabled",
+                "enabled": False,
+            }
+        return {"node_count": int(eg.node_count)}
+
+    @_error_to_dict
+    def phase7_episodic_graph_plan(
+        self,
+        start_state: list[float],
+        goal_state: list[float],
+        horizon: int = 20,
+    ) -> dict:
+        """Plan a minimum-free-energy path between two state vectors.
+
+        Args:
+            start_state: Starting state vector (finite, non-empty).
+            goal_state: Goal state vector (finite, non-empty).
+            horizon: Max path length (1..4096).
+        """
+        start = np.asarray(start_state, dtype=float)
+        goal = np.asarray(goal_state, dtype=float)
+        _ensure_finite(start, "start_state")
+        _ensure_finite(goal, "goal_state")
+        if not isinstance(horizon, int) or isinstance(horizon, bool):
+            raise ValueError(f"horizon must be an int, got {type(horizon).__name__}")
+        if horizon < 1 or horizon > 4096:
+            raise ValueError(f"horizon must be in [1, 4096], got {horizon}")
+        eg = self.model.episodic_graph
+        if eg is None:
+            return {
+                "detail": "module episodic_graph not enabled",
+                "enabled": False,
+            }
+        path = eg.plan(start, goal, horizon=horizon)
+        return {"path": path}
+
+    @_error_to_dict
+    def phase7_semantic_index_size(self) -> dict:
+        """Return the number of entries in the semantic index."""
+        si = self.model.semantic_index
+        if si is None:
+            return {
+                "detail": "module semantic_index not enabled",
+                "enabled": False,
+            }
+        return {"size": int(si.size)}
+
+    @_error_to_dict
+    def phase7_semantic_index_query(
+        self, vec: list[float], k: int = 5
+    ) -> dict:
+        """Query the semantic index for the k nearest entries.
+
+        Args:
+            vec: Query vector (finite, non-empty).
+            k: Number of neighbors (1..1024).
+        """
+        arr = np.asarray(vec, dtype=float)
+        _ensure_finite(arr, "vec")
+        if not isinstance(k, int) or isinstance(k, bool) or k < 1 or k > 1024:
+            raise ValueError(f"k must be an int in [1, 1024], got {k!r}")
+        si = self.model.semantic_index
+        if si is None:
+            return {
+                "detail": "module semantic_index not enabled",
+                "enabled": False,
+            }
+        results = si.query(arr, k=k)
+        return {
+            "results": [
+                {"node_id": nid, "similarity": float(sim), "metadata": meta}
+                for nid, sim, meta in results
+            ]
+        }
+
+    @_error_to_dict
+    def phase7_logic_layer_rules(self) -> dict:
+        """List all registered fuzzy logic rules."""
+        ll = self.model.logic_layer
+        if ll is None:
+            return {"detail": "module logic_layer not enabled", "enabled": False}
+        return {"rules": _to_py([vars(r) for r in ll.rules])}
+
+    @_error_to_dict
+    def phase7_logic_layer_add_rule(
+        self,
+        name: str,
+        antecedents: list[str],
+        consequent: str,
+        weight: float = 1.0,
+        description: str = "",
+    ) -> dict:
+        """Register a new fuzzy logic rule.
+
+        Args:
+            name: Rule name (non-empty).
+            antecedents: Antecedent predicate names.
+            consequent: Consequent predicate name (non-empty).
+            weight: Rule weight (>= 0).
+            description: Human-readable description.
+        """
+        if not isinstance(name, str) or not name:
+            raise ValueError("name must be a non-empty string")
+        if not isinstance(consequent, str) or not consequent:
+            raise ValueError("consequent must be a non-empty string")
+        ll = self.model.logic_layer
+        if ll is None:
+            return {"detail": "module logic_layer not enabled", "enabled": False}
+        ll.add_rule(
+            name, list(antecedents), consequent,
+            weight=float(weight), description=description,
+        )
+        return {"registered": name}
+
+    @_error_to_dict
+    def phase7_logic_layer_set_predicate(self, name: str, value: float) -> dict:
+        """Set a predicate truth value (clamped to [0, 1]).
+
+        Args:
+            name: Predicate name (non-empty).
+            value: Truth value (finite, will be clamped to [0, 1]).
+        """
+        if not isinstance(name, str) or not name:
+            raise ValueError("name must be a non-empty string")
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError(f"value must be a number, got {type(value).__name__}")
+        ll = self.model.logic_layer
+        if ll is None:
+            return {"detail": "module logic_layer not enabled", "enabled": False}
+        ll.set_predicate(name, float(value))
+        return {"name": name, "value": float(value)}
+
+    @_error_to_dict
+    def phase7_logic_layer_check(self) -> dict:
+        """Evaluate all rules and summarize violations."""
+        ll = self.model.logic_layer
+        if ll is None:
+            return {"detail": "module logic_layer not enabled", "enabled": False}
+        return _to_py(ll.check_all())
+
+    @_error_to_dict
+    def phase7_logic_layer_penalty(self) -> dict:
+        """Return the per-rule penalty signal vector."""
+        ll = self.model.logic_layer
+        if ll is None:
+            return {"detail": "module logic_layer not enabled", "enabled": False}
+        return {"penalty": _to_py(ll.get_penalty_signal())}
+
+    @_error_to_dict
+    def phase7_causal_inference_set_transition(self, matrix: list[list[float]]) -> dict:
+        """Set the causal transition matrix (must be a square 2-D matrix).
+
+        Args:
+            matrix: Square 2-D transition matrix (finite).
+        """
+        arr = np.asarray(matrix, dtype=float)
+        if arr.ndim != 2 or arr.shape[0] != arr.shape[1]:
+            raise ValueError(
+                f"matrix must be a square 2-D array, got shape {arr.shape}"
+            )
+        _ensure_finite(arr, "matrix")
+        ci = self.model.causal_inference
+        if ci is None:
+            return {
+                "detail": "module causal_inference not enabled",
+                "enabled": False,
+            }
+        ci.set_transition(arr)
+        return {"shape": list(arr.shape)}
+
+    @_error_to_dict
+    def phase7_causal_inference_do(self, index: int, value: float) -> dict:
+        """Apply a single do-intervention do(X[index] = value).
+
+        Args:
+            index: Variable index to intervene on (>= 0).
+            value: Fixed value to assign.
+        """
+        if not isinstance(index, int) or isinstance(index, bool) or index < 0:
+            raise ValueError(f"index must be a non-negative int, got {index!r}")
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError(f"value must be a number, got {type(value).__name__}")
+        ci = self.model.causal_inference
+        if ci is None:
+            return {
+                "detail": "module causal_inference not enabled",
+                "enabled": False,
+            }
+        return _to_py(ci.do_calculus({int(index): float(value)}))
+
+    @_error_to_dict
+    def phase7_causal_inference_counterfactual(
+        self, observed: list[float], index: int, value: float
+    ) -> dict:
+        """Estimate a counterfactual state under do(X[index] = value).
+
+        Args:
+            observed: Observed state vector (finite, non-empty).
+            index: Variable index to intervene on (>= 0).
+            value: Fixed value to assign.
+        """
+        obs = np.asarray(observed, dtype=float)
+        _ensure_finite(obs, "observed")
+        if not isinstance(index, int) or isinstance(index, bool) or index < 0:
+            raise ValueError(f"index must be a non-negative int, got {index!r}")
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError(f"value must be a number, got {type(value).__name__}")
+        ci = self.model.causal_inference
+        if ci is None:
+            return {
+                "detail": "module causal_inference not enabled",
+                "enabled": False,
+            }
+        result = ci.counterfactual(obs, {int(index): float(value)})
+        return {"counterfactual": _to_py(result)}
+
+    @_error_to_dict
+    def phase7_causal_inference_confounders(
+        self, var_a: int, var_b: int
+    ) -> dict:
+        """Identify potential confounders between two target variables.
+
+        Args:
+            var_a: First target variable index (>= 0).
+            var_b: Second target variable index (>= 0).
+        """
+        if not isinstance(var_a, int) or isinstance(var_a, bool) or var_a < 0:
+            raise ValueError(f"var_a must be a non-negative int, got {var_a!r}")
+        if not isinstance(var_b, int) or isinstance(var_b, bool) or var_b < 0:
+            raise ValueError(f"var_b must be a non-negative int, got {var_b!r}")
+        ci = self.model.causal_inference
+        if ci is None:
+            return {
+                "detail": "module causal_inference not enabled",
+                "enabled": False,
+            }
+        return {"confounders": list(ci.identify_confounders(var_a, var_b))}
+
+    @_error_to_dict
+    def phase7_meta_cognition_confidence(self) -> dict:
+        """Return the current meta-cognitive confidence in [0, 1]."""
+        mc = self.model.meta_cognition
+        if mc is None:
+            return {
+                "detail": "module meta_cognition not enabled",
+                "enabled": False,
+            }
+        return {"confidence": float(mc.get_confidence())}
+
+    @_error_to_dict
+    def phase7_meta_cognition_uncertainty(self) -> dict:
+        """Return the per-dimension uncertainty vector."""
+        mc = self.model.meta_cognition
+        if mc is None:
+            return {
+                "detail": "module meta_cognition not enabled",
+                "enabled": False,
+            }
+        return {"uncertainty": _to_py(mc.get_uncertainty_vector())}
+
+    @_error_to_dict
+    def phase7_meta_cognition_should_seek_info(self) -> dict:
+        """Return whether the model should actively seek information."""
+        mc = self.model.meta_cognition
+        if mc is None:
+            return {
+                "detail": "module meta_cognition not enabled",
+                "enabled": False,
+            }
+        return {"should_seek_info": bool(mc.should_seek_info())}
+
+    @_error_to_dict
+    def phase7_meta_cognition_stats(self) -> dict:
+        """Return the meta-cognition summary statistics."""
+        mc = self.model.meta_cognition
+        if mc is None:
+            return {
+                "detail": "module meta_cognition not enabled",
+                "enabled": False,
+            }
+        return _to_py(mc.stats)
+
+    @_error_to_dict
+    def phase7_experiment_planner_candidates(self) -> dict:
+        """List all candidate experiments."""
+        ep = self.model.experiment_planner
+        if ep is None:
+            return {
+                "detail": "module experiment_planner not enabled",
+                "enabled": False,
+            }
+        cands = list(ep.candidates)
+        return {
+            "candidates": _to_py([vars(c) for c in cands]),
+            "count": len(cands),
+        }
+
+    @_error_to_dict
+    def phase7_experiment_planner_select_best(
+        self, current_uncertainty: float = 0.5
+    ) -> dict:
+        """Select the best unexecuted candidate by predicted info gain.
+
+        Args:
+            current_uncertainty: Current parameter uncertainty in [0, 1].
+        """
+        if isinstance(current_uncertainty, bool) or not isinstance(
+            current_uncertainty, (int, float)
+        ):
+            raise ValueError(
+                f"current_uncertainty must be a number, got "
+                f"{type(current_uncertainty).__name__}"
+            )
+        ep = self.model.experiment_planner
+        if ep is None:
+            return {
+                "detail": "module experiment_planner not enabled",
+                "enabled": False,
+            }
+        best = ep.select_best(float(current_uncertainty))
+        if best is None:
+            return {"best": None}
+        return {"best": _to_py(vars(best))}
+
+    @_error_to_dict
+    def phase7_experiment_planner_record_result(
+        self, candidate_id: int, fe_before: float, fe_after: float
+    ) -> dict:
+        """Record the outcome of an executed candidate experiment.
+
+        Args:
+            candidate_id: Index of the candidate in the candidates list.
+            fe_before: Free energy before the experiment.
+            fe_after: Free energy after the experiment.
+        """
+        if (
+            not isinstance(candidate_id, int)
+            or isinstance(candidate_id, bool)
+            or candidate_id < 0
+        ):
+            raise ValueError(
+                f"candidate_id must be a non-negative int, got {candidate_id!r}"
+            )
+        if isinstance(fe_before, bool) or not isinstance(fe_before, (int, float)):
+            raise ValueError(
+                f"fe_before must be a number, got {type(fe_before).__name__}"
+            )
+        if isinstance(fe_after, bool) or not isinstance(fe_after, (int, float)):
+            raise ValueError(
+                f"fe_after must be a number, got {type(fe_after).__name__}"
+            )
+        ep = self.model.experiment_planner
+        if ep is None:
+            return {
+                "detail": "module experiment_planner not enabled",
+                "enabled": False,
+            }
+        cands = list(ep.candidates)
+        if candidate_id >= len(cands):
+            raise ValueError(
+                f"candidate_id {candidate_id} not found (have {len(cands)})"
+            )
+        candidate = cands[candidate_id]
+        ep.record_result(candidate, float(fe_before), float(fe_after))
+        return {
+            "recorded": True,
+            "candidate_id": int(candidate_id),
+            "actual_gain": float(candidate.actual_gain),
+        }
+
+    @_error_to_dict
+    def phase7_experiment_planner_stats(self) -> dict:
+        """Return the experiment-planner summary statistics."""
+        ep = self.model.experiment_planner
+        if ep is None:
+            return {
+                "detail": "module experiment_planner not enabled",
+                "enabled": False,
+            }
+        return _to_py(ep.stats)
+
+    @_error_to_dict
+    def phase7_hypothesis_tester_hypotheses(self) -> dict:
+        """List all generated hypotheses."""
+        ht = self.model.hypothesis_tester
+        if ht is None:
+            return {
+                "detail": "module hypothesis_tester not enabled",
+                "enabled": False,
+            }
+        hyps = list(ht.hypotheses)
+        return {
+            "hypotheses": _to_py([vars(h) for h in hyps]),
+            "count": len(hyps),
+        }
+
+    @_error_to_dict
+    def phase7_hypothesis_tester_supported(self) -> dict:
+        """List the tested-and-supported hypotheses."""
+        ht = self.model.hypothesis_tester
+        if ht is None:
+            return {
+                "detail": "module hypothesis_tester not enabled",
+                "enabled": False,
+            }
+        supported = ht.get_supported()
+        return {
+            "supported": _to_py([vars(h) for h in supported]),
+            "count": len(supported),
+        }
+
+    @_error_to_dict
+    def phase7_hypothesis_tester_stats(self) -> dict:
+        """Return the hypothesis-tester summary statistics."""
+        ht = self.model.hypothesis_tester
+        if ht is None:
+            return {
+                "detail": "module hypothesis_tester not enabled",
+                "enabled": False,
+            }
+        return _to_py(ht.stats)
+
+    @_error_to_dict
+    def phase7_world_collaboration_stats(self) -> dict:
+        """Return multiagent-world collaboration statistics.
+
+        The world module is not yet integrated into ZeroDataModel, so this
+        always returns the disabled dict.
+        """
+        return {"detail": "module world not enabled", "enabled": False}
+
+    @_error_to_dict
+    def phase7_world_agent_count(self) -> dict:
+        """Return the number of agents in the multiagent world.
+
+        The world module is not yet integrated, so always disabled.
+        """
+        return {"detail": "module world not enabled", "enabled": False}
+
+    @_error_to_dict
+    def phase7_world_step_count(self) -> dict:
+        """Return the multiagent-world step count.
+
+        The world module is not yet integrated, so always disabled.
+        """
+        return {"detail": "module world not enabled", "enabled": False}
+
+    @_error_to_dict
+    def phase7_communication_emergent_meanings(self) -> dict:
+        """Return the emergent symbol->meaning mapping.
+
+        The communication module is not yet integrated, so always disabled.
+        """
+        return {"detail": "module communication not enabled", "enabled": False}
+
+    @_error_to_dict
+    def phase7_communication_stats(self) -> dict:
+        """Return the communication-channel summary statistics.
+
+        The communication module is not yet integrated, so always disabled.
+        """
+        return {"detail": "module communication not enabled", "enabled": False}
+
+    @_error_to_dict
+    def phase7_culture_knowledge_curve(self) -> dict:
+        """Return the [(gen_id, knowledge_graph_size), ...] knowledge curve.
+
+        The culture module is not yet integrated, so always disabled.
+        """
+        return {"detail": "module culture not enabled", "enabled": False}
+
+    @_error_to_dict
+    def phase7_culture_stats(self) -> dict:
+        """Return the culture-propagation summary statistics.
+
+        The culture module is not yet integrated, so always disabled.
+        """
+        return {"detail": "module culture not enabled", "enabled": False}
+
+    @_error_to_dict
+    def phase7_culture_generations(self) -> dict:
+        """List all recorded generations.
+
+        The culture module is not yet integrated, so always disabled.
+        """
+        return {"detail": "module culture not enabled", "enabled": False}
 
     # ------------------------------------------------------------------
     # Registration / public API.
@@ -2689,6 +3302,48 @@ class ZeroDataMCPServer:
             "causal_solve_pomdp": self.causal_solve_pomdp,
             "causal_discover_graph": self.causal_discover_graph,
             "causal_intervene": self.causal_intervene,
+            # Phase 7 cognitive-upgrade tools (plasticity / cogtime / cogmem /
+            # knowledge / metacog / experiment / multiagent).
+            "phase7_architect_stats": self.phase7_architect_stats,
+            "phase7_architect_dormant": self.phase7_architect_dormant,
+            "phase7_architect_reactivate": self.phase7_architect_reactivate,
+            "phase7_temporal_memory_context": self.phase7_temporal_memory_context,
+            "phase7_temporal_memory_spectral_radius": self.phase7_temporal_memory_spectral_radius,
+            "phase7_layered_predictor_context": self.phase7_layered_predictor_context,
+            "phase7_layered_predictor_rhythm": self.phase7_layered_predictor_rhythm,
+            "phase7_episodic_graph_recent": self.phase7_episodic_graph_recent,
+            "phase7_episodic_graph_node_count": self.phase7_episodic_graph_node_count,
+            "phase7_episodic_graph_plan": self.phase7_episodic_graph_plan,
+            "phase7_semantic_index_size": self.phase7_semantic_index_size,
+            "phase7_semantic_index_query": self.phase7_semantic_index_query,
+            "phase7_logic_layer_rules": self.phase7_logic_layer_rules,
+            "phase7_logic_layer_add_rule": self.phase7_logic_layer_add_rule,
+            "phase7_logic_layer_set_predicate": self.phase7_logic_layer_set_predicate,
+            "phase7_logic_layer_check": self.phase7_logic_layer_check,
+            "phase7_logic_layer_penalty": self.phase7_logic_layer_penalty,
+            "phase7_causal_inference_set_transition": self.phase7_causal_inference_set_transition,
+            "phase7_causal_inference_do": self.phase7_causal_inference_do,
+            "phase7_causal_inference_counterfactual": self.phase7_causal_inference_counterfactual,
+            "phase7_causal_inference_confounders": self.phase7_causal_inference_confounders,
+            "phase7_meta_cognition_confidence": self.phase7_meta_cognition_confidence,
+            "phase7_meta_cognition_uncertainty": self.phase7_meta_cognition_uncertainty,
+            "phase7_meta_cognition_should_seek_info": self.phase7_meta_cognition_should_seek_info,
+            "phase7_meta_cognition_stats": self.phase7_meta_cognition_stats,
+            "phase7_experiment_planner_candidates": self.phase7_experiment_planner_candidates,
+            "phase7_experiment_planner_select_best": self.phase7_experiment_planner_select_best,
+            "phase7_experiment_planner_record_result": self.phase7_experiment_planner_record_result,
+            "phase7_experiment_planner_stats": self.phase7_experiment_planner_stats,
+            "phase7_hypothesis_tester_hypotheses": self.phase7_hypothesis_tester_hypotheses,
+            "phase7_hypothesis_tester_supported": self.phase7_hypothesis_tester_supported,
+            "phase7_hypothesis_tester_stats": self.phase7_hypothesis_tester_stats,
+            "phase7_world_collaboration_stats": self.phase7_world_collaboration_stats,
+            "phase7_world_agent_count": self.phase7_world_agent_count,
+            "phase7_world_step_count": self.phase7_world_step_count,
+            "phase7_communication_emergent_meanings": self.phase7_communication_emergent_meanings,
+            "phase7_communication_stats": self.phase7_communication_stats,
+            "phase7_culture_knowledge_curve": self.phase7_culture_knowledge_curve,
+            "phase7_culture_stats": self.phase7_culture_stats,
+            "phase7_culture_generations": self.phase7_culture_generations,
         }
 
     def list_tools(self) -> list[str]:

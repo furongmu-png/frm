@@ -1,0 +1,35 @@
+name: Rollback
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to rollback to (e.g. 1.0.0)'
+        required: true
+      environment:
+        description: 'Environment'
+        type: choice
+        default: production
+        options:
+          - production
+          - staging
+
+jobs:
+  rollback:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Helm
+        uses: azure/setup-helm@v3
+      - name: Configure kubectl
+        run: |
+          echo "${{ secrets.KUBE_CONFIG }}" | base64 -d > kubeconfig.yaml
+          export KUBECONFIG=kubeconfig.yaml
+      - name: Rollback Helm release
+        run: |
+          helm rollback zdm --namespace zdm
+      - name: Verify rollback
+        run: |
+          kubectl rollout status deployment/zdm-backend -n zdm
+          kubectl rollout status deployment/zdm-frontend -n zdm

@@ -38,6 +38,7 @@ from itertools import combinations
 from typing import Any
 
 import numpy as np
+from scipy.sparse import lil_matrix
 
 from .rules import EmergenceRules
 
@@ -245,9 +246,13 @@ class PersistentHomologyPerceiver:
                 f"understanding the cost."
             )
 
-        # Build boundary matrix over GF(2) (as bool ndarray).
+        # Build boundary matrix over GF(2) as a sparse lil_matrix. The dense
+        # ``np.zeros((n_cols, n_cols), dtype=bool)`` allocates n_cols^2 bytes
+        # even though each column carries at most ``d+1`` nonzeros; lil_matrix
+        # supports the same ``boundary[i, j] = True`` assignment syntax while
+        # storing only the nonzeros.
         # boundary[i, j] = 1 if simplex i is a face of simplex j (codim 1).
-        boundary = np.zeros((n_cols, n_cols), dtype=bool)
+        boundary = lil_matrix((n_cols, n_cols), dtype=bool)
         for j, (sxm, _) in enumerate(simplices):
             d = len(sxm) - 1
             if d < 1:
@@ -262,27 +267,38 @@ class PersistentHomologyPerceiver:
         # Column reduction over GF(2) (standard left-to-right).
         # Find the lowest row index with a 1 in each column, then reduce.
         low = [-1] * n_cols  # low[j] = row index of lowest 1, or -1
-        # Work on a copy of boundary columns (as Python lists for speed).
-        cols = [boundary[:, j].copy() for j in range(n_cols)]
-
+        # Represent each column as a ``set`` of row-indices (where the 1s
+        # are), extracted from the sparse boundary matrix. XOR over GF(2)
+        # becomes ``set.symmetric_difference_update`` -- O(min(|a|, |b|))
+        # instead of the O(n_cols) dense-array XOR -- and the lowest 1 is
+        # just ``max(col)``.
+        cols: list[set[int]] = [
+            set(boundary.getcol(j).nonzero()[0]) for j in range(n_cols)
+        ]
+        # low_to_col: maps a low-value (row index) to the column index that
+        # already has that low, for O(1) conflict lookup. Replaces the
+        # linear ``for k in range(j): if low[k] == low_j`` scan. The standard
+        # reduction invariant guarantees each finalized low is unique, so the
+        # dict keys never collide.
+        low_to_col: dict[int, int] = {}
         for j in range(n_cols):
+            col = cols[j]
             while True:
-                low_j = self._low(cols[j])
+                low_j = max(col) if col else -1
                 if low_j == -1:
                     break
-                # Look for another column k < j with the same low
-                conflict = -1
-                for k in range(j):
-                    if low[k] == low_j:
-                        conflict = k
-                        break
+                conflict = low_to_col.get(low_j, -1)
                 if conflict == -1:
-                    low[j] = low_j
                     break
-                # Reduce column j by XOR with column conflict
-                cols[j] = cols[j] ^ cols[conflict]
+                # Reduce column j by XOR with column conflict. Only column j
+                # is mutated; ``cols[conflict]`` (and thus ``low[conflict]``)
+                # stays unchanged, so the ``low_to_col`` entry stays valid.
+                col.symmetric_difference_update(cols[conflict])
             # Recompute low after reduction
-            low[j] = self._low(cols[j])
+            low_j = max(col) if col else -1
+            low[j] = low_j
+            if low_j != -1:
+                low_to_col[low_j] = j
 
         # Extract persistence pairs.
         # birth = filtration value of simplex j (creator).

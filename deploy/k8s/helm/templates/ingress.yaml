@@ -1,0 +1,88 @@
+{{- if .Values.ingress.enabled -}}
+{{- $fullname := include "zdm.fullname" . -}}
+{{- $namespace := include "zdm.namespace" . -}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ $fullname }}
+  namespace: {{ $namespace }}
+  labels:
+    {{- include "zdm.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.ingress.className }}
+  ingressClassName: {{ .Values.ingress.className | quote }}
+  {{- end }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.host | quote }}
+        {{- range .Values.ingress.hosts }}
+        - {{ .host | quote }}
+        {{- end }}
+      {{- if .Values.ingress.tls.secretName }}
+      secretName: {{ .Values.ingress.tls.secretName | quote }}
+      {{- end }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.host | quote }}
+      http:
+        paths:
+          # /api/* -> backend REST (port 8000). rewrite-target /$2 strips
+          # the /api prefix so the backend receives root-level paths
+          # (e.g. /api/health -> /health), matching the compose nginx/Caddy
+          # behaviour.
+          - path: /api(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: {{ $fullname }}-backend
+                port:
+                  number: {{ .Values.backend.restPort }}
+          # /ws -> backend WebSocket (port 8765). The streamer accepts any
+          # path, so the rewrite (/$2) is harmless.
+          - path: /ws(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: {{ $fullname }}-backend
+                port:
+                  number: {{ .Values.backend.wsPort }}
+          # Everything else -> frontend static files.
+          - path: /(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: {{ $fullname }}-frontend
+                port:
+                  number: {{ .Values.frontend.port }}
+    {{- range .Values.ingress.hosts }}
+    - host: {{ .host | quote }}
+      http:
+        paths:
+          - path: /api(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: {{ $fullname }}-backend
+                port:
+                  number: {{ $.Values.backend.restPort }}
+          - path: /ws(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: {{ $fullname }}-backend
+                port:
+                  number: {{ $.Values.backend.wsPort }}
+          - path: /(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: {{ $fullname }}-frontend
+                port:
+                  number: {{ $.Values.frontend.port }}
+    {{- end }}
+{{- end }}

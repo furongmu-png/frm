@@ -5,9 +5,21 @@ on:
     # Weekly, Sunday 03:00 UTC
     - cron: "0 3 * * 0"
   workflow_dispatch:
+  pull_request:
+    paths:
+      - "benchmark.py"
+      - "src/zero_data_model/model.py"
+      - "src/zero_data_model/plasticity/**"
+      - "src/zero_data_model/cogtime/**"
+      - "src/zero_data_model/cogmem/**"
+      - "src/zero_data_model/knowledge/**"
+      - "src/zero_data_model/metacog/**"
+      - "src/zero_data_model/experiment/**"
+      - ".github/workflows/benchmark.yml"
 
 permissions:
   contents: read
+  pull-requests: write
 
 jobs:
   benchmark:
@@ -18,6 +30,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # Fetch the baseline branch too so we can compare against main.
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -37,10 +52,92 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[quantum,jit,parallel]"
 
-      - name: Run benchmark
+      - name: Run cognitive-only benchmark
         run: |
           mkdir -p benchmark_results
+          python benchmark.py --cognitive-only 2>&1 | tee benchmark_results/cognitive_benchmark.txt
+
+      - name: Run full benchmark
+        run: |
           python benchmark.py 2>&1 | tee benchmark_results/benchmark.txt
+
+      - name: Save baseline on main
+        if: github.ref == 'refs/heads/main'
+        run: |
+          python benchmark.py --save-baseline 2>&1 | tee benchmark_results/save_baseline.txt
+
+      - name: Compare with baseline (PR)
+        if: github.event_name == 'pull_request'
+        run: |
+          # Try to fetch the baseline from the main branch.
+          git fetch origin main --depth=1 || true
+          git show origin/main:.benchmarks/baseline.json > .benchmarks/baseline.json 2>/dev/null || true
+          python benchmark.py --compare 2>&1 | tee benchmark_results/regression_report.txt
+
+      - name: Build PR comment
+        if: github.event_name == 'pull_request'
+        run: |
+          {
+            echo "## 📊 Cognitive Upgrade Benchmark — Regression Report"
+            echo ""
+            echo "<details><summary>Cognitive-only benchmark output</summary>"
+            echo ""
+            echo '```'
+            cat benchmark_results/cognitive_benchmark.txt
+            echo '```'
+            echo ""
+            echo "</details>"
+            echo ""
+            if [ -f benchmark_results/regression_report.txt ]; then
+              echo "<details><summary>Regression comparison vs baseline</summary>"
+              echo ""
+              echo '```'
+              cat benchmark_results/regression_report.txt
+              echo '```'
+              echo ""
+              echo "</details>"
+            fi
+          } > benchmark_results/pr_comment.md
+
+      - name: Post PR comment
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const body = fs.readFileSync('benchmark_results/pr_comment.md', 'utf8');
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            const existing = comments.find(c =>
+              c.body.includes('Cognitive Upgrade Benchmark — Regression Report')
+            );
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
+
+      - name: Commit baseline (main only)
+        if: github.ref == 'refs/heads/main'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .benchmarks/baseline.json || true
+          git commit -m "chore: update benchmark baseline [skip ci]" || true
+          git push || true
 
       - name: Upload benchmark results
         uses: actions/upload-artifact@v4

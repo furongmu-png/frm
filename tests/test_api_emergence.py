@@ -1,9 +1,9 @@
 # tests/test_api_emergence.py
-"""Tests for the /emergence/* FastAPI endpoints.
+"""Tests for the /v1/emergence/* FastAPI endpoints.
 
 These tests cover the six causal-emergence endpoints added to ``api.py``:
-``/emergence/perceive``, ``/emergence/causal``, ``/emergence/trajectory``,
-``/emergence/sample``, ``/emergence/recall`` and ``/emergence/cycle``.
+``/v1/emergence/perceive``, ``/v1/emergence/causal``, ``/v1/emergence/trajectory``,
+``/v1/emergence/sample``, ``/v1/emergence/recall`` and ``/v1/emergence/cycle``.
 
 The web stack (fastapi + httpx) is an optional dependency, so the whole
 module is skipped when either is missing.
@@ -68,11 +68,11 @@ SAMPLE_2D = [
 
 
 # --------------------------------------------------------------------------- #
-# /emergence/perceive
+# /v1/emergence/perceive
 # --------------------------------------------------------------------------- #
 def test_emergence_perceive_success(client):
-    """POST /emergence/perceive returns topological invariants."""
-    r = client.post("/emergence/perceive", json={"data": SAMPLE_2D})
+    """POST /v1/emergence/perceive returns topological invariants."""
+    r = client.post("/v1/emergence/perceive", json={"data": SAMPLE_2D})
     assert r.status_code == 200, r.text
     body = r.json()
     assert isinstance(body["betti_numbers"], list)
@@ -86,15 +86,15 @@ def test_emergence_perceive_success(client):
 
 
 def test_emergence_perceive_1d_data_returns_400(client):
-    """POST /emergence/perceive with a 1D-shaped data (n_features<2) -> 400."""
-    r = client.post("/emergence/perceive", json={"data": [[0.1], [0.2], [0.3]]})
+    """POST /v1/emergence/perceive with a 1D-shaped data (n_features<2) -> 400."""
+    r = client.post("/v1/emergence/perceive", json={"data": [[0.1], [0.2], [0.3]]})
     assert r.status_code == 400
 
 
 def test_emergence_perceive_full_diagram_query_param(client):
     """?full_diagram=true includes the persistence_diagram in the response."""
     r = client.post(
-        "/emergence/perceive",
+        "/v1/emergence/perceive",
         json={"data": SAMPLE_2D},
         params={"full_diagram": "true"},
     )
@@ -105,11 +105,11 @@ def test_emergence_perceive_full_diagram_query_param(client):
 
 
 # --------------------------------------------------------------------------- #
-# /emergence/causal
+# /v1/emergence/causal
 # --------------------------------------------------------------------------- #
 def test_emergence_causal_success(client):
-    """POST /emergence/causal returns a DAG with adjacency + edges."""
-    r = client.post("/emergence/causal", json={"data": SAMPLE_2D})
+    """POST /v1/emergence/causal returns a DAG with adjacency + edges."""
+    r = client.post("/v1/emergence/causal", json={"data": SAMPLE_2D})
     assert r.status_code == 200, r.text
     body = r.json()
     assert isinstance(body["adjacency"], list)
@@ -129,21 +129,21 @@ def test_emergence_causal_success(client):
 
 
 def test_emergence_causal_invalid_method_returns_422(client):
-    """POST /emergence/causal with an unknown method is rejected with 422."""
+    """POST /v1/emergence/causal with an unknown method is rejected with 422."""
     r = client.post(
-        "/emergence/causal",
+        "/v1/emergence/causal",
         json={"data": SAMPLE_2D, "method": "bogus"},
     )
     assert r.status_code == 422
 
 
 # --------------------------------------------------------------------------- #
-# /emergence/trajectory
+# /v1/emergence/trajectory
 # --------------------------------------------------------------------------- #
 def test_emergence_trajectory_success(client):
-    """POST /emergence/trajectory returns trajectory + lagrangian + action."""
+    """POST /v1/emergence/trajectory returns trajectory + lagrangian + action."""
     r = client.post(
-        "/emergence/trajectory",
+        "/v1/emergence/trajectory",
         json={
             "start_state": [0.0, 0.0, 0.0],
             "end_state": [1.0, 1.0, 1.0],
@@ -168,18 +168,18 @@ def test_emergence_trajectory_success(client):
 
 
 def test_emergence_trajectory_mismatched_shapes_returns_400(client):
-    """POST /emergence/trajectory with mismatched start/end shapes -> 400."""
+    """POST /v1/emergence/trajectory with mismatched start/end shapes -> 400."""
     r = client.post(
-        "/emergence/trajectory",
+        "/v1/emergence/trajectory",
         json={"start_state": [0.0, 0.0], "end_state": [1.0, 1.0, 1.0]},
     )
     assert r.status_code == 400
 
 
 def test_emergence_trajectory_with_obstacles(client):
-    """POST /emergence/trajectory with obstacles returns obstacle_violations."""
+    """POST /v1/emergence/trajectory with obstacles returns obstacle_violations."""
     r = client.post(
-        "/emergence/trajectory",
+        "/v1/emergence/trajectory",
         json={
             "start_state": [0.0, 0.0, 0.0],
             "end_state": [1.0, 1.0, 1.0],
@@ -197,7 +197,7 @@ def test_emergence_trajectory_with_obstacles(client):
 def test_emergence_trajectory_obstacles_wrong_dim_returns_400(client):
     """V4-NEW-M001: obstacle dim != start_state dim yields 400, not 500."""
     r = client.post(
-        "/emergence/trajectory",
+        "/v1/emergence/trajectory",
         json={
             "start_state": [0.0, 0.0, 0.0],
             "end_state": [1.0, 1.0, 1.0],
@@ -218,7 +218,7 @@ def test_emergence_trajectory_obstacles_1d_returns_400(client):
     is acceptable — the contract is "not 200/500 from the engine".
     """
     r = client.post(
-        "/emergence/trajectory",
+        "/v1/emergence/trajectory",
         json={
             "start_state": [0.0, 0.0],
             "end_state": [1.0, 1.0],
@@ -230,12 +230,12 @@ def test_emergence_trajectory_obstacles_1d_returns_400(client):
 
 
 # --------------------------------------------------------------------------- #
-# /emergence/sample
+# /v1/emergence/sample
 # --------------------------------------------------------------------------- #
 def test_emergence_sample_success(client):
-    """POST /emergence/sample returns posterior mean/std + diagnostics."""
+    """POST /v1/emergence/sample returns posterior mean/std + diagnostics."""
     r = client.post(
-        "/emergence/sample",
+        "/v1/emergence/sample",
         json={"mean": [0.0, 0.0, 0.0], "std": 1.0, "n_samples": 50},
     )
     assert r.status_code == 200, r.text
@@ -259,25 +259,25 @@ def test_emergence_sample_success(client):
 
 
 def test_emergence_sample_zero_n_samples_returns_422(client):
-    """POST /emergence/sample with n_samples=0 is rejected with 422 (ge=1)."""
+    """POST /v1/emergence/sample with n_samples=0 is rejected with 422 (ge=1)."""
     r = client.post(
-        "/emergence/sample",
+        "/v1/emergence/sample",
         json={"mean": [0.0, 0.0], "std": 1.0, "n_samples": 0},
     )
     assert r.status_code == 422
 
 
 # --------------------------------------------------------------------------- #
-# /emergence/recall
+# /v1/emergence/recall
 # --------------------------------------------------------------------------- #
 def test_emergence_recall_success(client):
-    """POST /emergence/recall returns memory recall fields.
+    """POST /v1/emergence/recall returns memory recall fields.
 
     The model starts with an empty memory, so ``label`` is None and
     ``emerged`` is True (the spec defines empty-memory recall as emerged).
     """
     r = client.post(
-        "/emergence/recall",
+        "/v1/emergence/recall",
         json={"query": [0.1, 0.2, 0.3], "n_steps": 20},
     )
     assert r.status_code == 200, r.text
@@ -300,17 +300,17 @@ def test_emergence_recall_success(client):
 
 
 def test_emergence_recall_empty_query_returns_422(client):
-    """POST /emergence/recall with an empty query is rejected with 422."""
-    r = client.post("/emergence/recall", json={"query": []})
+    """POST /v1/emergence/recall with an empty query is rejected with 422."""
+    r = client.post("/v1/emergence/recall", json={"query": []})
     assert r.status_code == 422
 
 
 # --------------------------------------------------------------------------- #
-# /emergence/cycle
+# /v1/emergence/cycle
 # --------------------------------------------------------------------------- #
 def test_emergence_cycle_success(client):
-    """POST /emergence/cycle returns the full emergence loop output."""
-    r = client.post("/emergence/cycle", json={"observation": SAMPLE_2D})
+    """POST /v1/emergence/cycle returns the full emergence loop output."""
+    r = client.post("/v1/emergence/cycle", json={"observation": SAMPLE_2D})
     assert r.status_code == 200, r.text
     body = r.json()
     assert "emergence_score" in body
@@ -329,25 +329,25 @@ def test_emergence_cycle_success(client):
 
 
 def test_emergence_cycle_1d_observation_returns_400(client):
-    """POST /emergence/cycle with a 1D observation (n_features<2) -> 400."""
+    """POST /v1/emergence/cycle with a 1D observation (n_features<2) -> 400."""
     r = client.post(
-        "/emergence/cycle",
+        "/v1/emergence/cycle",
         json={"observation": [[0.1], [0.2], [0.3]]},
     )
     assert r.status_code == 400
 
 
 # --------------------------------------------------------------------------- #
-# Auth (CWE-306) — /emergence/* must honour ZDM_API_KEY
+# Auth (CWE-306) — /v1/emergence/* must honour ZDM_API_KEY
 # --------------------------------------------------------------------------- #
 def test_emergence_api_key_enforced_when_configured(client, monkeypatch):
-    """When ZDM_API_KEY is set, /emergence/* without the header is 401."""
+    """When ZDM_API_KEY is set, /v1/emergence/* without the header is 401."""
     monkeypatch.setenv("ZDM_API_KEY", "secret-key-123")
-    r = client.post("/emergence/perceive", json={"data": SAMPLE_2D})
+    r = client.post("/v1/emergence/perceive", json={"data": SAMPLE_2D})
     assert r.status_code == 401
     # With the correct header, the request succeeds.
     r = client.post(
-        "/emergence/perceive",
+        "/v1/emergence/perceive",
         json={"data": SAMPLE_2D},
         headers={"X-API-Key": "secret-key-123"},
     )

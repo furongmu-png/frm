@@ -1,0 +1,35 @@
+{
+  "n_steps": 5000,
+  "n_crashes": 0,
+  "crash_messages": [],
+  "n_nan_obs": 0,
+  "n_nan_signal": 0,
+  "elapsed_s": 147.88871117400004,
+  "cycles_per_sec": 33.809206668365626,
+  "mean_free_energy": 19.466881817008787,
+  "final_free_energy": 19.76705586423108,
+  "mean_confidence": 0.9170205024264578,
+  "action_distribution": {
+    "0": 1177,
+    "1": 1338,
+    "2": 1160,
+    "3": 1325
+  },
+  "n_consolidations": 50,
+  "total_consolidation_ms": 43647.24070099783,
+  "mean_consolidation_ms": 872.9448140199565,
+  "mean_replay_fe": 19.543861314461957,
+  "csv_path": "output/replay_with/loop_log.csv",
+  "consolidation_csv_path": "output/replay_with/consolidation_log.csv",
+  "buffer_stats": {
+    "n": 5000,
+    "capacity": 10000,
+    "alpha": 0.6,
+    "beta": 0.4,
+    "error_mean": 19.466881817008787,
+    "error_std": 0.6710099415805613,
+    "error_min": 9.895697025497315,
+    "error_max": 26.91022512234348,
+    "priority_mean": 5.937271481870037
+  }
+}

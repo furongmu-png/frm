@@ -1,0 +1,37 @@
+# Backend ConfigMap (non-sensitive runtime configuration) + Secret.
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: zdm-backend
+  namespace: zdm
+  labels:
+    app.kubernetes.io/name: zero-data-model
+    app.kubernetes.io/component: backend
+data:
+  ZDM_DIM: "64"
+  ZDM_ENV: "production"
+  ZDM_LOG_LEVEL: "INFO"
+  ZDM_CORS_ORIGINS: "http://localhost:8000,http://localhost:3000"
+  ZDM_ALLOWED_HOSTS: "localhost,127.0.0.1"
+  ZDM_ENABLE_ARCHITECT: "false"
+  ZDM_ENABLE_LAYERED_PREDICTOR: "false"
+  ZDM_ENABLE_CAUSAL_EMERGENCE: "false"
+  ZDM_ENABLE_METACOG: "false"
+  ZDM_ENABLE_MULTIAGENT: "false"
+  PYTHONUNBUFFERED: "1"
+---
+# Sensitive values. Replace the placeholders before applying, or use an
+# external secret manager (Sealed Secrets / External Secrets) in production.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: zdm-backend
+  namespace: zdm
+  labels:
+    app.kubernetes.io/name: zero-data-model
+    app.kubernetes.io/component: backend
+type: Opaque
+stringData:
+  ZDM_API_KEY: "REPLACE_ME"
+  IBM_QUANTUM_TOKEN: ""

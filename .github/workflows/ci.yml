@@ -73,6 +73,45 @@ jobs:
       - name: Lint with ruff
         run: ruff check src/ tests/
 
+      - name: mypy type-check
+        run: |
+          pip install mypy
+          mypy src/zero_data_model/cogmem/ src/zero_data_model/cogtime/ src/zero_data_model/plasticity/ src/zero_data_model/knowledge/ src/zero_data_model/metacog/ src/zero_data_model/experiment/ src/zero_data_model/multiagent/
+
+  e2e:
+    # Frontend Playwright E2E tests. Builds the production bundle and
+    # serves it via a static server (configured in playwright.config.ts)
+    # so no backend is required — the app must degrade gracefully.
+    # The suite covers app launch, tab navigation, the new panels, the
+    # no-crash robustness checks, automated accessibility scans
+    # (accessibility.spec.ts via @axe-core/playwright), and the mobile
+    # responsive layout (mobile.spec.ts).
+    name: E2E tests (Playwright)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies (includes @axe-core/playwright)
+        working-directory: frontend
+        run: npm install
+
+      - name: Install Playwright browser
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+
+      - name: Run E2E + accessibility + mobile tests
+        working-directory: frontend
+        run: npx playwright test
+
   security:
     # Standalone security scanning job (Fix 15). Runs pip-audit for known
     # CVEs in installed dependencies and bandit for common Python code
@@ -113,3 +152,75 @@ jobs:
           sarif_file: |
             bandit.sarif
             pip-audit.sarif
+
+  chaos:
+    # Chaos engineering + load testing job. Runs the pytest-based fault
+    # injection / API resilience suites and a k6 smoke load against a live
+    # FastAPI server started via uvicorn (``python -m zero_data_model``
+    # runs the mini-demo, not the API -- see __main__.py).
+    name: Chaos & load (fault injection + k6 smoke)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-chaos-${{ hashFiles('pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-chaos-
+            ${{ runner.os }}-pip-
+
+      - name: Install package with web + dev extras
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,web]"
+
+      - name: Lint chaos tests with ruff
+        run: ruff check tests/chaos/
+
+      - name: Run chaos pytest suite (fault injection + API resilience)
+        # PYTHONPATH=src mirrors the repo-root pytest config so the suite
+        # is importable without a full install in case editable install
+        # race-conditions the path.
+        run: PYTHONPATH=src python -m pytest tests/chaos/ -v
+
+      - name: Start FastAPI server for k6 smoke
+        # ``ZDM_ENV=development`` exposes /docs so /health stays reachable
+        # through the TrustedHostMiddleware allow-list (localhost,127.0.0.1).
+        env:
+          ZDM_ENV: development
+        run: |
+          uvicorn zero_data_model.api:app --host 127.0.0.1 --port 8000 &
+          echo $! > /tmp/uvicorn.pid
+          # Wait up to 30s for the server to accept /health.
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8000/health > /dev/null 2>&1; then
+              echo "server is up after ${i}s"
+              break
+            fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:8000/health || (echo "server failed to start" && exit 1)
+
+      - name: Run k6 smoke load test
+        uses: grafana/k6-action@v0.3.1
+        with:
+          filename: tests/load/k6-smoke.js
+        env:
+          BASE_URL: http://127.0.0.1:8000
+
+      - name: Stop API server
+        if: always()
+        run: |
+          if [ -f /tmp/uvicorn.pid ]; then
+            kill "$(cat /tmp/uvicorn.pid)" || true
+          fi

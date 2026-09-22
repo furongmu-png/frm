@@ -1,0 +1,25 @@
+{
+  "n_steps": 2000,
+  "n_crashes": 0,
+  "crash_messages": [],
+  "n_nan_obs": 0,
+  "n_nan_signal": 0,
+  "elapsed_s": 42.46595501400043,
+  "cycles_per_sec": 47.096550621330145,
+  "mean_free_energy": 19.378666379002862,
+  "final_free_energy": 19.279974206152534,
+  "mean_confidence": 0.9170308472615646,
+  "action_distribution": {
+    "0": 431,
+    "1": 535,
+    "2": 505,
+    "3": 529
+  },
+  "snapshot_paths": [
+    "/workspace/experiments/output/closed_loop/frame_000500.png",
+    "/workspace/experiments/output/closed_loop/frame_001000.png",
+    "/workspace/experiments/output/closed_loop/frame_001500.png",
+    "/workspace/experiments/output/closed_loop/frame_002000.png"
+  ],
+  "csv_path": "/workspace/experiments/output/closed_loop/loop_log.csv"
+}

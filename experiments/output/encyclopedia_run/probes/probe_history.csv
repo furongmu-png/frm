@@ -1,0 +1,2 @@
+step,mean_intra_similarity,inter_concept_similarity,silhouette_score,n_probes_with_articles,intra_biology,intra_computer_science,intra_geography,intra_history,intra_mathematics,intra_physics,n_articles_biology,n_articles_computer_science,n_articles_geography,n_articles_history,n_articles_mathematics,n_articles_physics
+0,0.999990,0.999985,,5,0.999982,,0.999994,0.999982,0.999997,0.999998,10,0,2,10,2,2

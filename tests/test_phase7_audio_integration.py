@@ -196,41 +196,41 @@ class TestCLIAudio:
 class TestAPIAudio:
     def test_api_encode(self, client, signal_list):
         r = client.post(
-            "/audio/encode",
+            "/v1/audio/encode",
             json={"signal": signal_list, "sample_rate": 8000},
         )
         assert r.status_code == 200, r.text
         assert "embedding" in r.json()
 
     def test_api_classify(self, client, signal_list):
-        r = client.post("/audio/classify", json={"signal": signal_list})
+        r = client.post("/v1/audio/classify", json={"signal": signal_list})
         assert r.status_code == 200, r.text
         body = r.json()
         assert body["label"] in {"speech", "music", "noise", "silence"}
 
     def test_api_pitch(self, client, signal_list):
-        r = client.post("/audio/pitch", json={"signal": signal_list})
+        r = client.post("/v1/audio/pitch", json={"signal": signal_list})
         assert r.status_code == 200, r.text
         assert "pitch_hz" in r.json()
 
     def test_api_onsets(self, client, signal_list):
-        r = client.post("/audio/onsets", json={"signal": signal_list})
+        r = client.post("/v1/audio/onsets", json={"signal": signal_list})
         assert r.status_code == 200, r.text
         assert "spectral_flux" in r.json()
 
     def test_api_segment(self, client, signal_list):
-        r = client.post("/audio/segment", json={"signal": signal_list})
+        r = client.post("/v1/audio/segment", json={"signal": signal_list})
         assert r.status_code == 200, r.text
         assert "segments" in r.json()
 
     def test_api_music(self, client, signal_list):
-        r = client.post("/audio/music", json={"signal": signal_list})
+        r = client.post("/v1/audio/music", json={"signal": signal_list})
         assert r.status_code == 200, r.text
         assert "tempo_bpm" in r.json()
 
     def test_api_negative_sample_rate_rejected(self, client):
         r = client.post(
-            "/audio/encode",
+            "/v1/audio/encode",
             json={"signal": [1.0, 2.0], "sample_rate": 0},
         )
         # Pydantic Field(ge=1) rejects at validation -> 422.
@@ -238,7 +238,7 @@ class TestAPIAudio:
 
     def test_api_empty_signal_rejected(self, client):
         r = client.post(
-            "/audio/encode",
+            "/v1/audio/encode",
             json={"signal": [], "sample_rate": 8000},
         )
         # Pydantic Field(min_length=1) rejects -> 422.

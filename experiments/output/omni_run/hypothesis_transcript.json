@@ -1,0 +1,102 @@
+[
+  {
+    "step": 9,
+    "hypothesis": "If physics:step_1 increases, the resulting collision energy increases.",
+    "intervention": {
+      "target": "physics:step_1",
+      "delta_mean": 0.5,
+      "delta_std": 0.1
+    },
+    "outcome": {
+      "fe_before": 38.01428348255038,
+      "fe_after": 38.014305957047256,
+      "delta_fe": 2.247449687331482e-05,
+      "shift_norm": 0.024783092769199606
+    },
+    "supported": false,
+    "confidence": 4.494899374662964e-06,
+    "metadata": {
+      "node": "physics:step_1"
+    }
+  },
+  {
+    "step": 18,
+    "hypothesis": "If physics:step_1 is doubled, the outcome changes by a power-law factor.",
+    "intervention": {
+      "target": "physics:step_1",
+      "delta_mean": 0.5,
+      "delta_std": 0.1
+    },
+    "outcome": {
+      "fe_before": 37.31729451614025,
+      "fe_after": 37.31734041663988,
+      "delta_fe": 4.59004996287149e-05,
+      "shift_norm": 0.024783092769199606
+    },
+    "supported": false,
+    "confidence": 9.18009992574298e-06,
+    "metadata": {
+      "node": "physics:step_1"
+    }
+  },
+  {
+    "step": 23,
+    "hypothesis": "If physics:step_1 decreases, the system reaches equilibrium faster.",
+    "intervention": {
+      "target": "physics:step_1",
+      "delta_mean": 0.5,
+      "delta_std": 0.1
+    },
+    "outcome": {
+      "fe_before": 37.26233587899063,
+      "fe_after": 37.262351850881586,
+      "delta_fe": 1.597189095292606e-05,
+      "shift_norm": 0.024783092769199606
+    },
+    "supported": false,
+    "confidence": 3.194378190585212e-06,
+    "metadata": {
+      "node": "physics:step_1"
+    }
+  },
+  {
+    "step": 34,
+    "hypothesis": "If physics:step_1 decreases, the system reaches equilibrium faster.",
+    "intervention": {
+      "target": "physics:step_1",
+      "delta_mean": 0.5,
+      "delta_std": 0.1
+    },
+    "outcome": {
+      "fe_before": 37.246039576177964,
+      "fe_after": 37.24605850638373,
+      "delta_fe": 1.8930205769152053e-05,
+      "shift_norm": 0.024783092769199606
+    },
+    "supported": false,
+    "confidence": 3.7860411538304107e-06,
+    "metadata": {
+      "node": "physics:step_1"
+    }
+  },
+  {
+    "step": 45,
+    "hypothesis": "If physics:step_1 decreases, the system reaches equilibrium faster.",
+    "intervention": {
+      "target": "physics:step_1",
+      "delta_mean": 0.5,
+      "delta_std": 0.1
+    },
+    "outcome": {
+      "fe_before": 36.91212774342074,
+      "fe_after": 36.91213467739849,
+      "delta_fe": 6.93397775108906e-06,
+      "shift_norm": 0.024783092769199606
+    },
+    "supported": false,
+    "confidence": 1.386795550217812e-06,
+    "metadata": {
+      "node": "physics:step_1"
+    }
+  }
+]

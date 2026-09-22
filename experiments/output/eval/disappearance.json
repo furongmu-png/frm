@@ -1,0 +1,18 @@
+{
+  "mode": "inline",
+  "pre_steps": 300,
+  "post_steps": 300,
+  "removal_step": 300,
+  "n_bodies_before": 3,
+  "n_bodies_after": 2,
+  "fe_pre_mean": 18.811004364742708,
+  "fe_pre_std": 1.8049816273049015,
+  "fe_post_mean": 19.464312331253748,
+  "fe_post_std": 0.3821916301437731,
+  "fe_surprise_mean": 19.40667645728992,
+  "fe_surprise_max": 19.689910246535216,
+  "delta_fe": 0.5956720925472112,
+  "t_stat": -8.539199601742448,
+  "p_value": 8.905068134067906e-12,
+  "elapsed_s": 12.840661164000267
+}

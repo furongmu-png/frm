@@ -1,0 +1,107 @@
+{
+  "probes": [
+    {
+      "name": "physics",
+      "trigger_words": [
+        "gravity",
+        "force",
+        "energy",
+        "momentum",
+        "newton",
+        "particle"
+      ],
+      "articles": [
+        "Physics_0",
+        "Physics_6"
+      ]
+    },
+    {
+      "name": "biology",
+      "trigger_words": [
+        "evolution",
+        "cell",
+        "dna",
+        "gene",
+        "species",
+        "organism"
+      ],
+      "articles": [
+        "Physics_0",
+        "Biology_1",
+        "Mathematics_2",
+        "History_3",
+        "Geography_4",
+        "Computer Science_5",
+        "Physics_6",
+        "Biology_7",
+        "Mathematics_8",
+        "History_9"
+      ]
+    },
+    {
+      "name": "mathematics",
+      "trigger_words": [
+        "algebra",
+        "matrix",
+        "vector",
+        "function",
+        "limit",
+        "theorem"
+      ],
+      "articles": [
+        "Mathematics_2",
+        "Mathematics_8"
+      ]
+    },
+    {
+      "name": "history",
+      "trigger_words": [
+        "war",
+        "revolution",
+        "empire",
+        "king",
+        "dynasty",
+        "ancient"
+      ],
+      "articles": [
+        "Physics_0",
+        "Biology_1",
+        "Mathematics_2",
+        "History_3",
+        "Geography_4",
+        "Computer Science_5",
+        "Physics_6",
+        "Biology_7",
+        "Mathematics_8",
+        "History_9"
+      ]
+    },
+    {
+      "name": "geography",
+      "trigger_words": [
+        "river",
+        "mountain",
+        "ocean",
+        "continent",
+        "climate",
+        "desert"
+      ],
+      "articles": [
+        "Geography_4",
+        "Geography_10"
+      ]
+    },
+    {
+      "name": "computer_science",
+      "trigger_words": [
+        "algorithm",
+        "data",
+        "memory",
+        "process",
+        "code",
+        "program"
+      ],
+      "articles": []
+    }
+  ]
+}

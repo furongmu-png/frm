@@ -1,0 +1,201 @@
+{
+  "timestamp": "2026-07-22T16:56:42.035311+00:00",
+  "python_version": "3.14.4 (main, Apr 17 2026, 10:42:51) [GCC 13.3.0]",
+  "numpy_version": "2.5.1",
+  "platform": "Linux-6.18.5-x86_64-with-glibc2.39",
+  "cognitive_upgrade": {
+    "dim": 64,
+    "cycles": 10,
+    "baseline_disabled": {
+      "construct_ms": 21.995504001097288,
+      "think_median_ms": 13.34699300059583,
+      "think_total_ms": 139.5361229988339,
+      "mem_delta_kb": 1027.4072265625,
+      "metadata_bytes": 122
+    },
+    "dimensions": [
+      {
+        "name": "architect",
+        "construct_ms": {
+          "on": 20.35656999942148,
+          "off": 21.995504001097288
+        },
+        "think_median_ms": {
+          "on": 13.412224500825687,
+          "off": 13.34699300059583
+        },
+        "think_total_ms": {
+          "on": 138.28389099944616,
+          "off": 139.5361229988339
+        },
+        "mem_delta_kb": {
+          "on": 1158.1044921875,
+          "off": 1027.4072265625,
+          "increment": 130.697265625
+        },
+        "metadata_bytes": {
+          "on": 527,
+          "off": 122
+        },
+        "overhead_ms": 0.06523150022985647,
+        "overhead_pct": 0.4887355543450456
+      },
+      {
+        "name": "layered_predictor",
+        "construct_ms": {
+          "on": 25.549087000399595,
+          "off": 21.995504001097288
+        },
+        "think_median_ms": {
+          "on": 13.387677000537224,
+          "off": 13.34699300059583
+        },
+        "think_total_ms": {
+          "on": 136.1365900011151,
+          "off": 139.5361229988339
+        },
+        "mem_delta_kb": {
+          "on": 1194.62109375,
+          "off": 1027.4072265625,
+          "increment": 167.2138671875
+        },
+        "metadata_bytes": {
+          "on": 589,
+          "off": 122
+        },
+        "overhead_ms": 0.04068399994139327,
+        "overhead_pct": 0.3048177214116848
+      },
+      {
+        "name": "episodic_memory",
+        "construct_ms": {
+          "on": 23.636559999431483,
+          "off": 21.995504001097288
+        },
+        "think_median_ms": {
+          "on": 13.40568449904822,
+          "off": 13.34699300059583
+        },
+        "think_total_ms": {
+          "on": 135.76492100037285,
+          "off": 139.5361229988339
+        },
+        "mem_delta_kb": {
+          "on": 1201.439453125,
+          "off": 1027.4072265625,
+          "increment": 174.0322265625
+        },
+        "metadata_bytes": {
+          "on": 475,
+          "off": 122
+        },
+        "overhead_ms": 0.05869149845239008,
+        "overhead_pct": 0.4397357401009351
+      },
+      {
+        "name": "logic_layer",
+        "construct_ms": {
+          "on": 22.521144999700482,
+          "off": 21.995504001097288
+        },
+        "think_median_ms": {
+          "on": 13.649087999510812,
+          "off": 13.34699300059583
+        },
+        "think_total_ms": {
+          "on": 183.9390379991528,
+          "off": 139.5361229988339
+        },
+        "mem_delta_kb": {
+          "on": 1209.55859375,
+          "off": 1027.4072265625,
+          "increment": 182.1513671875
+        },
+        "metadata_bytes": {
+          "on": 444,
+          "off": 122
+        },
+        "overhead_ms": 0.30209499891498126,
+        "overhead_pct": 2.2633937014988716
+      },
+      {
+        "name": "meta_cognition",
+        "construct_ms": {
+          "on": 21.62080100060848,
+          "off": 21.995504001097288
+        },
+        "think_median_ms": {
+          "on": 13.521743000637798,
+          "off": 13.34699300059583
+        },
+        "think_total_ms": {
+          "on": 135.50412699987646,
+          "off": 139.5361229988339
+        },
+        "mem_delta_kb": {
+          "on": 1139.8544921875,
+          "off": 1027.4072265625,
+          "increment": 112.447265625
+        },
+        "metadata_bytes": {
+          "on": 522,
+          "off": 122
+        },
+        "overhead_ms": 0.17475000004196772,
+        "overhead_pct": 1.3092836718665142
+      },
+      {
+        "name": "experiment_planner",
+        "construct_ms": {
+          "on": 25.877776999550406,
+          "off": 21.995504001097288
+        },
+        "think_median_ms": {
+          "on": 13.390017000347143,
+          "off": 13.34699300059583
+        },
+        "think_total_ms": {
+          "on": 135.72093699986,
+          "off": 139.5361229988339
+        },
+        "mem_delta_kb": {
+          "on": 1199.3203125,
+          "off": 1027.4072265625,
+          "increment": 171.9130859375
+        },
+        "metadata_bytes": {
+          "on": 454,
+          "off": 122
+        },
+        "overhead_ms": 0.04302399975131266,
+        "overhead_pct": 0.32234975885124084
+      },
+      {
+        "name": "all_upgrades",
+        "construct_ms": {
+          "on": 22.887519000505563,
+          "off": 21.995504001097288
+        },
+        "think_median_ms": {
+          "on": 13.64591199944698,
+          "off": 13.34699300059583
+        },
+        "think_total_ms": {
+          "on": 136.2158650008496,
+          "off": 139.5361229988339
+        },
+        "mem_delta_kb": {
+          "on": 1113.1962890625,
+          "off": 1027.4072265625,
+          "increment": 85.7890625
+        },
+        "metadata_bytes": {
+          "on": 876,
+          "off": 122
+        },
+        "overhead_ms": 0.2989189988511498,
+        "overhead_pct": 2.239598079041516
+      }
+    ]
+  }
+}

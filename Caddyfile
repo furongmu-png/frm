@@ -1,0 +1,22 @@
+# Replace YOUR_DOMAIN with your actual domain
+# ZeroDataModel — HTTPS reverse proxy
+{$DOMAIN:localhost} {
+    # Frontend static files
+    encode gzip
+    root * /srv/frontend
+    file_server
+
+    # SPA fallback
+    try_files {path} /index.html
+
+    # REST API proxy
+    handle /api/* {
+        uri strip_prefix /api
+        reverse_proxy backend:8000
+    }
+
+    # WebSocket proxy
+    handle /ws {
+        reverse_proxy backend:8765
+    }
+}

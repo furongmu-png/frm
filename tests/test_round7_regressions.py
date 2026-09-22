@@ -394,7 +394,10 @@ def test_api7_1_1_save_openapi_schema_matches_actual_response():
     app = create_app()
     schema = app.openapi()
 
-    save_op = schema["paths"]["/save"]["post"]
+    # API 版本化后 /save 迁移至 /v1/save
+    save_path = schema["paths"].get("/v1/save") or schema["paths"].get("/save")
+    assert save_path is not None, "OpenAPI missing both /v1/save and /save"
+    save_op = save_path["post"]
     responses = save_op["responses"]
     # 201 must be declared (Round-6 declared only 200).
     assert "201" in responses, "OpenAPI does not declare 201 for /save"

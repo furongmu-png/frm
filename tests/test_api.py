@@ -83,7 +83,7 @@ def test_request_id_header_echoed(client):
 
 def test_post_classify_returns_topic_and_confidence(client):
     """POST /classify returns a topic string + confidence in [0, 1]."""
-    r = client.post("/classify", json={"text": "the algorithm computes the network"})
+    r = client.post("/v1/classify", json={"text": "the algorithm computes the network"})
     assert r.status_code == 200
     body = r.json()
     assert body["topic"] in {"tech", "nature", "emotion", "science"}
@@ -93,7 +93,7 @@ def test_post_classify_returns_topic_and_confidence(client):
 def test_post_similarity_returns_float(client):
     """POST /similarity returns a similarity float in [0, 1]."""
     r = client.post(
-        "/similarity",
+        "/v1/similarity",
         json={"a": "code data model", "b": "code data model"},
     )
     assert r.status_code == 200
@@ -109,7 +109,7 @@ def test_post_forecast_returns_list_of_floats(client):
     """POST /forecast returns a list of length == horizon."""
     horizon = 5
     r = client.post(
-        "/forecast",
+        "/v1/forecast",
         json={"series": list(range(20)), "horizon": horizon},
     )
     assert r.status_code == 200
@@ -122,7 +122,7 @@ def test_post_forecast_returns_list_of_floats(client):
 
 def test_post_think_with_no_input_runs_self_generation(client):
     """POST /think with no body runs self-generation and returns a cycle."""
-    r = client.post("/think")
+    r = client.post("/v1/think")
     assert r.status_code == 200
     body = r.json()
     assert body["cycle"] >= 1
@@ -134,7 +134,7 @@ def test_post_think_with_no_input_runs_self_generation(client):
 
 def test_post_think_with_input(client):
     """POST /think with explicit input returns output of the same dim."""
-    r = client.post("/think", json={"input": [0.1] * 16})
+    r = client.post("/v1/think", json={"input": [0.1] * 16})
     assert r.status_code == 200
     body = r.json()
     assert body["cycle"] >= 1
@@ -143,7 +143,7 @@ def test_post_think_with_input(client):
 
 def test_post_generate_returns_text_of_requested_length(client):
     """POST /generate returns a string of the requested length."""
-    r = client.post("/generate", json={"seed": "hello", "length": 16})
+    r = client.post("/v1/generate", json={"seed": "hello", "length": 16})
     assert r.status_code == 200
     body = r.json()
     assert isinstance(body["text"], str)
@@ -153,7 +153,7 @@ def test_post_generate_returns_text_of_requested_length(client):
 def test_post_anomalies_returns_bool_mask(client):
     """POST /anomalies returns a boolean mask matching the series length."""
     series = [1, 1, 1, 1, 100, 1, 1, 1, 1]
-    r = client.post("/anomalies", json={"series": series})
+    r = client.post("/v1/anomalies", json={"series": series})
     assert r.status_code == 200
     body = r.json()
     assert isinstance(body["anomalies"], list)
@@ -164,7 +164,7 @@ def test_post_anomalies_returns_bool_mask(client):
 
 def test_post_trend_returns_all_fields(client):
     """POST /trend returns the full trend analyte dict."""
-    r = client.post("/trend", json={"series": list(range(30))})
+    r = client.post("/v1/trend", json={"series": list(range(30))})
     assert r.status_code == 200
     body = r.json()
     assert set(body.keys()) == {
@@ -184,7 +184,7 @@ def test_post_recognize_returns_shape_and_confidence(client):
              [0, 1, 1, 1, 0],
              [0, 1, 1, 1, 0],
              [0, 0, 0, 0, 0]]
-    r = client.post("/recognize", json={"image": image})
+    r = client.post("/v1/recognize", json={"image": image})
     assert r.status_code == 200
     body = r.json()
     assert body["shape"] in {"circle", "square", "triangle", "line", "blob"}
@@ -199,24 +199,24 @@ def test_post_save_and_load_roundtrip(client):
     """
     snap = "snap_via_api"
 
-    r = client.post("/save", json={"name": snap})
+    r = client.post("/v1/save", json={"name": snap})
     assert r.status_code == 201
     assert r.json()["saved"] is True
     assert r.json()["name"] == snap
     # 201 Created must advertise the canonical resource URI (Q-LOW-13).
-    assert r.headers["Location"] == f"/load/{snap}"
+    assert r.headers["Location"] == f"/v1/load/{snap}"
 
     # Run a couple more think() cycles so the in-memory model diverges.
-    client.post("/think")
-    client.post("/think")
+    client.post("/v1/think")
+    client.post("/v1/think")
 
-    r = client.post("/load", json={"name": snap})
+    r = client.post("/v1/load", json={"name": snap})
     assert r.status_code == 200
     assert r.json()["loaded"] is True
 
     # After load, the cycle counter should reflect the saved snapshot's cycle
     # count (the first think() after fresh model construction).
-    r = client.post("/think")
+    r = client.post("/v1/think")
     assert r.status_code == 200
     assert r.json()["cycle"] >= 1
 
@@ -224,7 +224,7 @@ def test_post_save_and_load_roundtrip(client):
 def test_post_save_rejects_traversal_name(client):
     """POST /save with a traversal name returns 422 (regex) or 400 (sandbox)."""
     # The pydantic regex rejects ``..`` outright -> 422.
-    r = client.post("/save", json={"name": "../escape"})
+    r = client.post("/v1/save", json={"name": "../escape"})
     assert r.status_code == 422
 
 
@@ -235,7 +235,7 @@ def test_post_save_rejects_absolute_name(client):
     the persistence-layer sandbox rejects absolute paths with ValueError,
     which the API surfaces as a 400.
     """
-    r = client.post("/save", json={"name": "/etc/passwd"})
+    r = client.post("/v1/save", json={"name": "/etc/passwd"})
     assert r.status_code == 400
 
 
@@ -262,19 +262,19 @@ def test_health_ready_bypass_api_key(client, monkeypatch):
 
 def test_post_forecast_empty_series_returns_400(client):
     """POST /forecast with an empty series is rejected with 400."""
-    r = client.post("/forecast", json={"series": [], "horizon": 3})
+    r = client.post("/v1/forecast", json={"series": [], "horizon": 3})
     assert r.status_code == 400
 
 
 def test_post_anomalies_empty_series_returns_400(client):
     """POST /anomalies with an empty series is rejected with 400."""
-    r = client.post("/anomalies", json={"series": []})
+    r = client.post("/v1/anomalies", json={"series": []})
     assert r.status_code == 400
 
 
 def test_post_trend_empty_series_returns_400(client):
     """POST /trend with an empty series is rejected with 400."""
-    r = client.post("/trend", json={"series": []})
+    r = client.post("/v1/trend", json={"series": []})
     assert r.status_code == 400
 
 
@@ -287,10 +287,10 @@ def test_post_recognize_empty_image_returns_4xx(client):
     ``if not req.image[0]`` check with 400. Both paths must reject the request.
     """
     # Empty list -> pydantic validator raises -> 422.
-    r = client.post("/recognize", json={"image": []})
+    r = client.post("/v1/recognize", json={"image": []})
     assert r.status_code in {400, 422}
     # One empty row -> endpoint check fires -> 400.
-    r = client.post("/recognize", json={"image": [[]]})
+    r = client.post("/v1/recognize", json={"image": [[]]})
     assert r.status_code == 400
 
 
@@ -302,7 +302,7 @@ def test_post_recognize_non_2d_image_returns_4xx(client):
     endpoint's own ``image.ndim != 2`` 400 path is exercised in
     ``test_post_recognize_empty_image_returns_4xx`` above.
     """
-    r = client.post("/recognize", json={"image": [1.0, 2.0, 3.0, 4.0]})
+    r = client.post("/v1/recognize", json={"image": [1.0, 2.0, 3.0, 4.0]})
     assert r.status_code in {400, 422}
 
 
@@ -314,13 +314,13 @@ def test_post_save_with_traversal_name_returns_4xx(client):
     persistence sandbox ever sees it. This is the same defence-in-depth
     pattern exercised by ``test_post_save_rejects_traversal_name`` above.
     """
-    r = client.post("/save", json={"name": "../../etc/passwd"})
+    r = client.post("/v1/save", json={"name": "../../etc/passwd"})
     assert r.status_code in {400, 422}
 
 
 def test_post_load_missing_returns_404(client):
     """POST /load with a name that does not exist on disk returns 404."""
-    r = client.post("/load", json={"name": "nonexistent_snapshot"})
+    r = client.post("/v1/load", json={"name": "nonexistent_snapshot"})
     assert r.status_code == 404
 
 
@@ -328,20 +328,20 @@ def test_post_classify_missing_text_returns_422(client):
     """POST /classify with an empty body fails pydantic validation (422)."""
     # ClassifyRequest.text is Field(min_length=1); an empty body is rejected
     # because the required field is missing.
-    r = client.post("/classify", json={})
+    r = client.post("/v1/classify", json={})
     assert r.status_code == 422
 
 
 def test_post_classify_empty_text_returns_422(client):
     """POST /classify with text='' is rejected by Field(min_length=1)."""
-    r = client.post("/classify", json={"text": ""})
+    r = client.post("/v1/classify", json={"text": ""})
     assert r.status_code == 422
 
 
 def test_post_forecast_oversized_horizon_returns_422(client):
     """POST /forecast with horizon > 1000 is rejected by Field(le=1000)."""
     r = client.post(
-        "/forecast",
+        "/v1/forecast",
         json={"series": [1.0, 2.0, 3.0], "horizon": 1_000_000},
     )
     assert r.status_code == 422
@@ -351,13 +351,13 @@ def test_post_forecast_oversized_series_returns_422(client):
     """POST /forecast with a series > 10000 elements is rejected by
     Field(max_length=10000)."""
     big_series = [0.0] * 100_001
-    r = client.post("/forecast", json={"series": big_series, "horizon": 1})
+    r = client.post("/v1/forecast", json={"series": big_series, "horizon": 1})
     assert r.status_code == 422
 
 
 def test_post_generate_oversized_length_returns_422(client):
     """POST /generate with length > 256 is rejected by Field(le=256)."""
-    r = client.post("/generate", json={"seed": "hello", "length": 1_000_000})
+    r = client.post("/v1/generate", json={"seed": "hello", "length": 1_000_000})
     assert r.status_code == 422
 
 
@@ -404,5 +404,75 @@ def test_api_key_required_when_set(tmp_path, monkeypatch):
         # With the correct header -> 200.
         r = c.get("/", headers={"X-API-Key": "test-secret-xyz"})
         assert r.status_code == 200
+
+    api_module._model = None
+
+
+# --------------------------------------------------------------------------- #
+# /v1 versioning (new in this commit)
+# --------------------------------------------------------------------------- #
+
+
+def test_v1_version_endpoint_reports_supported_versions(client):
+    """GET /v1/version returns the version info dict."""
+    r = client.get("/v1/version")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["version"] == "1.0.0"
+    assert body["supported_versions"] == ["1"]
+    assert body["deprecated_versions"] == []
+    assert body["latest"] == "1"
+
+
+def test_root_version_endpoint_unaffected_by_deprecation(client):
+    """GET /version (legacy mirror) is exempt from the deprecation header."""
+    r = client.get("/version")
+    assert r.status_code == 200
+    assert "X-Deprecated" not in r.headers
+    assert r.json()["version"] == "1.0.0"
+
+
+def test_legacy_root_path_carries_deprecation_header(client):
+    """Root-path /think is the legacy mirror and is flagged deprecated.
+
+    The ``deprecate_root_paths`` middleware adds ``X-Deprecated: true`` and
+    a ``Link`` header pointing at the canonical /v1 successor.
+    """
+    r = client.post("/think")
+    assert r.status_code == 200
+    assert r.headers.get("X-Deprecated") == "true"
+    link = r.headers.get("Link", "")
+    assert '</v1/think>; rel="successor-version"' in link
+
+
+def test_v1_path_not_flagged_deprecated(client):
+    """The canonical /v1/think path does NOT carry the deprecation header."""
+    r = client.post("/v1/think")
+    assert r.status_code == 200
+    assert "X-Deprecated" not in r.headers
+
+
+def test_exempt_root_paths_not_flagged_deprecated(client):
+    """Health/readiness/index/metrics/docs paths are exempt from deprecation."""
+    for path in ("/", "/health", "/ready"):
+        r = client.get(path)
+        assert r.status_code == 200, path
+        assert "X-Deprecated" not in r.headers, path
+
+
+def test_v2_accept_header_returns_501(client):
+    """An ``Accept: application/vnd.zdm.v2+json`` request is rejected 501."""
+    r = client.post(
+        "/v1/think",
+        headers={"Accept": "application/vnd.zdm.v2+json"},
+    )
+    assert r.status_code == 501
+    assert "v2 not yet implemented" in r.json()["detail"]
+
+
+def test_v1_health_and_ready_reachable(client):
+    """Health probes must be reachable at /v1/health and /v1/ready too."""
+    assert client.get("/v1/health").status_code == 200
+    assert client.get("/v1/ready").status_code == 200
 
     api_module._model = None

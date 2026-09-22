@@ -1,0 +1,24 @@
+{
+  "n_probes": 6,
+  "n_probes_with_articles": 5,
+  "intra_concept_similarity": {
+    "physics": 0.999997835635026,
+    "biology": 0.999981821355151,
+    "mathematics": 0.9999972715102234,
+    "history": 0.999981821355151,
+    "geography": 0.999993554613237,
+    "computer_science": null
+  },
+  "mean_intra_similarity": 0.9999904608937576,
+  "inter_concept_similarity": 0.9999845131728847,
+  "silhouette_score": null,
+  "silhouette_note": "sklearn not available",
+  "articles_per_probe": {
+    "physics": 2,
+    "biology": 10,
+    "mathematics": 2,
+    "history": 10,
+    "geography": 2,
+    "computer_science": 0
+  }
+}

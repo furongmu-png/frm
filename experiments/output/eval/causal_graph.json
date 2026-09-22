@@ -1,0 +1,136 @@
+{
+  "n_snapshots": 100,
+  "n_belief_dims": 32,
+  "n_selected_vars": 16,
+  "max_vars": 16,
+  "selected_belief_dims": [
+    0,
+    2,
+    3,
+    6,
+    7,
+    8,
+    13,
+    17,
+    20,
+    22,
+    25,
+    27,
+    28,
+    29,
+    30,
+    31
+  ],
+  "var_names": [
+    "belief_0",
+    "belief_2",
+    "belief_3",
+    "belief_6",
+    "belief_7",
+    "belief_8",
+    "belief_13",
+    "belief_17",
+    "belief_20",
+    "belief_22",
+    "belief_25",
+    "belief_27",
+    "belief_28",
+    "belief_29",
+    "belief_30",
+    "belief_31",
+    "free_energy",
+    "pred_error"
+  ],
+  "engine_method": "pc",
+  "engine_n_edges": 25,
+  "engine_is_acyclic": false,
+  "engine_error": null,
+  "gc_matrix_shape": [
+    18,
+    18
+  ],
+  "gc_matrix_max": 6.481385181880687,
+  "gc_matrix_mean": 1.4152632867727784,
+  "mi_matrix_max": 0.8445292085464168,
+  "mi_matrix_mean": 0.4390936153837233,
+  "engine_edges_total": 25,
+  "engine_interesting_edges": [],
+  "gc_top_edges": [
+    {
+      "source": "belief_30",
+      "target": "belief_6",
+      "f_stat": 6.481385181880687
+    },
+    {
+      "source": "belief_13",
+      "target": "free_energy",
+      "f_stat": 6.196832896587004
+    },
+    {
+      "source": "belief_25",
+      "target": "belief_13",
+      "f_stat": 5.555497635836784
+    },
+    {
+      "source": "belief_29",
+      "target": "belief_25",
+      "f_stat": 5.359444915956016
+    },
+    {
+      "source": "belief_7",
+      "target": "belief_29",
+      "f_stat": 4.945133254889219
+    },
+    {
+      "source": "belief_30",
+      "target": "belief_2",
+      "f_stat": 4.746847825349884
+    },
+    {
+      "source": "belief_25",
+      "target": "belief_3",
+      "f_stat": 4.682942681593922
+    },
+    {
+      "source": "belief_28",
+      "target": "belief_27",
+      "f_stat": 4.24631227248105
+    },
+    {
+      "source": "belief_31",
+      "target": "belief_8",
+      "f_stat": 4.170583249262174
+    },
+    {
+      "source": "belief_6",
+      "target": "belief_25",
+      "f_stat": 4.023751264938939
+    },
+    {
+      "source": "belief_22",
+      "target": "free_energy",
+      "f_stat": 3.9516626038482205
+    },
+    {
+      "source": "belief_2",
+      "target": "belief_25",
+      "f_stat": 3.9127303094912347
+    },
+    {
+      "source": "belief_22",
+      "target": "belief_7",
+      "f_stat": 3.7832689021439707
+    },
+    {
+      "source": "belief_7",
+      "target": "belief_0",
+      "f_stat": 3.7493645044865733
+    },
+    {
+      "source": "belief_7",
+      "target": "belief_6",
+      "f_stat": 3.7429514897912233
+    }
+  ],
+  "gc_n_significant": 181
+}

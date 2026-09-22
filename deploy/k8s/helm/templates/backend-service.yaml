@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "zdm.fullname" . }}-backend
+  namespace: {{ include "zdm.namespace" . }}
+  labels:
+    {{- include "zdm.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "zdm.backendSelectorLabels" . | nindent 4 }}
+  ports:
+    - name: rest
+      port: {{ .Values.backend.restPort }}
+      targetPort: rest
+      protocol: TCP
+    - name: ws
+      port: {{ .Values.backend.wsPort }}
+      targetPort: ws
+      protocol: TCP

@@ -270,25 +270,35 @@ class TopologicalAnalyzer:
         # underlying API directly is equivalent and warning-free.
         betti_0 = self.connected_components_1d(data)
         features = np.zeros(self.dim)
-        features[0] = betti_0
-        features[1] = 0  # 1D point clouds have no 1-loops
+        # Guard each slot against small ``dim`` (e.g. ``dim=1``): the original
+        # code unconditionally wrote ``features[1]`` / ``[2]`` / ``[3]`` /
+        # ``[4]``, which raises ``IndexError`` when ``dim < 5``. With the
+        # guard, sub-threshold slots stay at 0.0 (the array's default) and the
+        # function is safe for any valid ``dim >= 1``.
+        if self.dim > 0:
+            features[0] = betti_0
+        if self.dim > 1:
+            features[1] = 0  # 1D point clouds have no 1-loops
         d = data.flatten()[: self.dim]
-        features[2] = np.mean(d)
-        features[3] = np.std(d)
-        if _HAS_JIT:
-            features[4] = float(_skewness(np.ascontiguousarray(d, dtype=float)))
-        else:
-            # Pure-numpy fallback: biased sample skewness (matches scipy.stats.skew default).
-            n = len(d)
-            if n < 3:
-                features[4] = 0.0
+        if self.dim > 2:
+            features[2] = np.mean(d)
+        if self.dim > 3:
+            features[3] = np.std(d)
+        if self.dim > 4:
+            if _HAS_JIT:
+                features[4] = float(_skewness(np.ascontiguousarray(d, dtype=float)))
             else:
-                diff = d - np.mean(d)
-                m2 = np.mean(diff ** 2)
-                if m2 == 0.0:
+                # Pure-numpy fallback: biased sample skewness (matches scipy.stats.skew default).
+                n = len(d)
+                if n < 3:
                     features[4] = 0.0
                 else:
-                    features[4] = float(np.mean(diff ** 3) / (m2 ** 1.5))
+                    diff = d - np.mean(d)
+                    m2 = np.mean(diff ** 2)
+                    if m2 == 0.0:
+                        features[4] = 0.0
+                    else:
+                        features[4] = float(np.mean(diff ** 3) / (m2 ** 1.5))
         return features
 
 
@@ -308,6 +318,26 @@ class FractalGenerator:
             scale = self._rng.standard_normal((self.dim, self.dim)) * 0.1
             offset = self._rng.standard_normal(self.dim) * 0.1
             self.transforms.append((scale, offset))
+        # Week-1 perf: pre-stack the transforms once so ``generate`` does not
+        # rebuild the (n_transforms, dim, dim) / (n_transforms, dim) stacks on
+        # every call. Re-stacked by ``_rebuild_stacks`` after ``update`` mutates
+        # ``self.transforms``.
+        self._rebuild_stacks()
+
+    def _rebuild_stacks(self) -> None:
+        """Recompute the contiguous stacked scale/offset arrays.
+
+        Called once after ``_init_transforms`` and again whenever
+        ``MathematicalUniverse.update`` mutates ``self.transforms``, so
+        ``generate`` can reuse the cached stacks instead of re-stacking
+        (``np.stack`` over a list comprehension) on every call.
+        """
+        self._stacked_scales = np.ascontiguousarray(
+            np.stack([t[0] for t in self.transforms]), dtype=float
+        )
+        self._stacked_offsets = np.ascontiguousarray(
+            np.stack([t[1] for t in self.transforms]), dtype=float
+        )
 
     def generate(self, initial: np.ndarray, n_iterations: int = 10) -> np.ndarray:
         # Round-6 audit NEW5-5: clamp n_iterations to avoid a hostile caller
@@ -318,12 +348,16 @@ class FractalGenerator:
         if len(x) < self.dim:
             x = np.pad(x, (0, self.dim - len(x)))
         if _HAS_JIT:
-            scales = np.stack([t[0] for t in self.transforms])
-            offsets = np.stack([t[1] for t in self.transforms])
+            # Week-1 perf: reuse the pre-stacked contiguous arrays instead of
+            # ``np.stack``-ing the transform list on every ``generate`` call.
+            # The stacks are rebuilt by ``_rebuild_stacks`` whenever
+            # ``self.transforms`` is mutated (init / ``MathematicalUniverse.update``).
+            scales = self._stacked_scales
+            offsets = self._stacked_offsets
             return _fractal_generate(
                 np.ascontiguousarray(x, dtype=float),
-                np.ascontiguousarray(scales, dtype=float),
-                np.ascontiguousarray(offsets, dtype=float),
+                scales,
+                offsets,
                 int(n_iterations),
                 int(len(self.transforms)),
             )
@@ -431,3 +465,7 @@ class MathematicalUniverse(CognitiveModule):
                 # Round-3 audit CRIT-1: per-module Generator
                 noise = self._rng.standard_normal(scale.shape) * step
                 self.fractal.transforms[i] = (scale + noise, offset)
+            # Week-1 perf: transforms mutated -> rebuild the stacked cache so
+            # the next ``generate`` call uses the updated scales/offsets
+            # instead of the stale pre-stacked arrays.
+            self.fractal._rebuild_stacks()

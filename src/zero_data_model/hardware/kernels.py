@@ -87,12 +87,23 @@ def _cosine_similarity(a, b):
 
 @njit(cache=True, nogil=True)
 def _topos_classify(x, classifier):
-    """Element-wise sigmoid of ``x @ classifier``."""
+    """Element-wise sigmoid of ``x @ classifier``.
+
+    M5+ 修复：数值稳定的 sigmoid。原代码 np.exp(-z[i]) 对极大
+    负 z 溢出为 inf 并触发 RuntimeWarning。改用分段公式：
+      z >= 0: 1 / (1 + exp(-z))   — exp(-z) ∈ (0, 1]，无溢出
+      z <  0: exp(z) / (1 + exp(z)) — exp(z) ∈ (0, 1)，无溢出
+    """
     z = x @ classifier
     out = np.empty_like(z)
     n = len(z)
     for i in range(n):
-        out[i] = 1.0 / (1.0 + np.exp(-z[i]))
+        zi = z[i]
+        if zi >= 0.0:
+            out[i] = 1.0 / (1.0 + np.exp(-zi))
+        else:
+            ez = np.exp(zi)
+            out[i] = ez / (1.0 + ez)
     return out
 
 
@@ -106,8 +117,13 @@ def _cellular_automata_step(state, rule, size):
     """Apply a Wolfram elementary CA rule to every cell, returning the new state.
 
     Boundary is periodic (matches the original ``% size`` indexing).
+
+    F8 修复：位运算 (<<, |, >>) 要求整数操作数。若 state 是
+    float64 数组（如从物理沙盒传入），numba 会抛 TypeError。
+    在函数入口强制转换为 int64 以保证位运算安全。
     """
-    new_state = np.zeros(size, dtype=state.dtype)
+    state = state.astype(np.int64)
+    new_state = np.zeros(size, dtype=np.int64)
     for i in range(size):
         left = state[(i - 1) % size]
         center = state[i]

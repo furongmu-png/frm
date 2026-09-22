@@ -1,63 +1,76 @@
-# docker-compose.yml — production-style service for the zero-data cognitive model.
-# Build and run with:  docker compose up -d --build
-# The API will be available at http://localhost:8000/
-
+version: "3.9"
 services:
-  zero-data-model:
-    # Build the image from the Dockerfile in the current directory.
-    build: .
-    # Map host port 8000 to container port 8000 (EXPOSE in Dockerfile).
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
     ports:
       - "8000:8000"
-    # Run as the non-root user created in the Dockerfile (uid 10001).
-    # Fix 3 (CWE-250): never run the container process as root.
-    user: "10001:10001"
-    environment:
-      # Flush stdout/stderr immediately so logs appear without buffering.
-      PYTHONUNBUFFERED: "1"
-      # Override per-deployment via the .env file or compose override.
-      ZDM_LOG_LEVEL: "INFO"
-      # Set ZDM_ENV=production in production compose to disable /docs,
-      # /redoc and /openapi.json (Fix 12).
-      ZDM_ENV: "production"
-      # Require an API key: compose refuses to start if ZDM_API_KEY is
-      # unset or empty (Q-HIGH-26, CWE-306).
-      ZDM_API_KEY: ${ZDM_API_KEY:?must set API key}
+      - "8765:8765"
     volumes:
-      # Optional persistence mount: model save/load endpoints can write here.
-      # Kept read-write because /save needs to persist snapshots (Fix 19).
-      - ./data:/app/data
-    # tmpfs for any temp files (atomic save staging uses /app/data, but a
-    # tmpfs /tmp keeps OS temp off the persistent volume). Fix 19.
-    tmpfs:
-      - /tmp:size=64m,mode=1777
-    # Survive restarts / host reboots, but stop if explicitly stopped.
+      - model-data:/app/experiments/output
+    environment:
+      - PYTHONUNBUFFERED=1
     restart: unless-stopped
-    # Give uvicorn's --timeout-graceful-shutdown 30s room to drain
-    # in-flight requests before compose sends SIGKILL (Fix 4). Bumped to
-    # 45s so the 30s graceful window always fits (O-MED-33).
-    stop_grace_period: 45s
-    # Log rotation so logs do not fill the disk (O-HIGH-31).
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-    # Resource limits cap memory at 2 GiB and 2 CPUs so a runaway request
-    # can't OOM the host (Fix 5, CWE-770). Requires `docker compose up`
-    # with swarm-style deploy support; compose v2 honors these on Linux.
-    deploy:
-      resources:
-        limits:
-          memory: 2g
-          cpus: "2.0"
-        # Soft reservation so the scheduler keeps headroom (O-LOW-36).
-        reservations:
-          memory: 512m
     healthcheck:
-      # Hit the cheap liveness endpoint via Python stdlib (no curl).
-      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health', timeout=3).status==200 else 1)"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 15s
+
+  # 认知起源完整演示服务（一键跑 demo + 生成视频素材）
+  # 默认不启动；显式 `docker compose up demo` 触发
+  demo:
+    build:
+      context: .
+      dockerfile: Dockerfile.demo
+    profiles: ["demo"]
+    volumes:
+      - demo-output:/app/demo_output
+      - demo-video:/app/video_assets
+    environment:
+      - PYTHONUNBUFFERED=1
+      - MPLBACKEND=Agg
+    # 默认运行中等规模 demo + 生成视频
+    # 可通过 `docker compose run demo python demo_cognitive_origin.py --steps 5000` 覆盖
+    command: >
+      sh -c "
+        python demo_cognitive_origin.py --steps 1000 --no-streamer --output demo_output &&
+        python build_material_index.py --input demo_output --out video_assets &&
+        python render_demo_video.py --input demo_output --out video_assets
+      "
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    volumes:
+      - frontend-dist:/usr/share/nginx/html
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "443:443"
+      - "80:80"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy-data:/data
+      - caddy-config:/config
+      - frontend-dist:/srv/frontend:ro
+    environment:
+      - DOMAIN=${DOMAIN:-localhost}
+    depends_on:
+      - frontend
+      - backend
+    restart: unless-stopped
+
+volumes:
+  model-data:
+  caddy-data:
+  caddy-config:
+  frontend-dist:
+  demo-output:
+  demo-video:

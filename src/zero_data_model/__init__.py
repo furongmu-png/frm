@@ -7,6 +7,7 @@ __version__ = "0.2.1"
 # submodules so `import zero_data_model` stays cheap and side-effect free.
 from . import capabilities, hardware
 from .base import CognitiveModule, Prediction, Signal
+from .deep_memory import DeepMemoryModule, DeepMemoryState, DeepMemoryStats
 from .model import ZeroDataModel
 
 # MCP server wrapper. Imported gracefully so the package keeps working even if
@@ -22,6 +23,9 @@ __all__ = [
     "Signal",
     "Prediction",
     "CognitiveModule",
+    "DeepMemoryModule",
+    "DeepMemoryState",
+    "DeepMemoryStats",
     "capabilities",
     "hardware",
     "__version__",

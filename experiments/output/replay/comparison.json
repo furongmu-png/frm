@@ -1,0 +1,29 @@
+{
+  "with_replay": {
+    "n_steps": 5000,
+    "mean_fe": 19.466881817399997,
+    "std_fe": 0.6710099466858962,
+    "final_fe": 19.767056,
+    "first_fe": 9.895697,
+    "delta_fe": 9.871359,
+    "min_fe": 9.895697,
+    "max_fe": 26.910225,
+    "smoothed_std": 0.2994788261594862
+  },
+  "without_replay": {
+    "n_steps": 5000,
+    "mean_fe": 19.4597631062,
+    "std_fe": 0.6982691608764423,
+    "final_fe": 19.325221,
+    "first_fe": 9.895697,
+    "delta_fe": 9.429523999999999,
+    "min_fe": 9.895697,
+    "max_fe": 26.910225,
+    "smoothed_std": 0.3210381446473378
+  },
+  "comparison": {
+    "delta_mean_fe": 0.007118711199996852,
+    "delta_smoothed_std": -0.021559318487851642,
+    "verdict": "replay MORE stable"
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "summary": {
+    "n_steps": 1000,
+    "n_crashes": 0,
+    "n_nan_obs": 0,
+    "n_nan_signal": 0,
+    "elapsed_s": 22.362243413001124,
+    "cycles_per_sec": 44.71823249265826,
+    "mean_free_energy": 0.03490726680890542,
+    "final_free_energy": 0.007620967778648014,
+    "mean_prediction_error": 0.7078113195778472,
+    "mean_confidence": 0.9142136813236493,
+    "modality_counts": {
+      "text": 603,
+      "physics": 200,
+      "image": 99,
+      "audio": 48,
+      "code": 50
+    },
+    "n_inquiry_runs": 10,
+    "n_questions_asked": 40,
+    "n_questions_answered": 24,
+    "n_hypothesis_runs": 5,
+    "n_hypotheses_tested": 5,
+    "n_hypotheses_supported": 0,
+    "final_kg_nodes": 253,
+    "final_kg_edges": 1152,
+    "final_decoder_pool_size": 709
+  },
+  "qa_count": 40,
+  "qa_answered": 24,
+  "hypothesis_count": 5,
+  "hypothesis_supported": 0,
+  "demo_present": true,
+  "kg_nodes": 253,
+  "kg_edges": 1152
+}

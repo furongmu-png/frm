@@ -1,0 +1,77 @@
+groups:
+  - name: zdm-critical
+    rules:
+      - alert: ZDMThinkLatencyHigh
+        expr: histogram_quantile(0.95, rate(zdm_think_duration_seconds_bucket[5m])) > 0.5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "ZDM think() P95 latency > 500ms"
+          description: "Think cycle P95 latency is {{ $value }}s"
+
+      - alert: ZDMModuleErrorRateHigh
+        expr: |
+          sum(rate(zdm_cognitive_module_errors_total[5m])) by (module)
+          / sum(rate(zdm_cognitive_module_calls_total[5m])) by (module)
+          > 0.05
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Module {{ $labels.module }} error rate > 5%"
+          description: "Error rate: {{ $value | humanizePercentage }}"
+
+      - alert: ZDMFreeEnergyNotConverging
+        expr: stddev_over_time(zdm_free_energy_last[10m]) > 1.0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Free energy not converging (high variance)"
+          description: "Std dev of free energy over 10min: {{ $value }}"
+
+      - alert: ZDMArchitectDormantSpike
+        expr: increase(zdm_architect_dormant_count[10m]) > 5
+        for: 5m
+        labels:
+          severity: info
+        annotations:
+          summary: "Architect pruning many modules"
+          description: "{{ $value }} modules went dormant in 10min"
+
+      - alert: ZDMLogicViolationsIncreasing
+        expr: increase(zdm_logic_violation_count[5m]) > 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Logic violations increasing"
+          description: "{{ $value }} violations in 5min"
+
+      - alert: ZDMMetaCognitionLowConfidence
+        expr: zdm_metacog_confidence < 0.2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Meta-cognition confidence very low"
+          description: "Confidence: {{ $value }}"
+
+      - alert: ZDMExperimentNoProgress
+        expr: increase(zdm_experiment_candidates[30m]) == 0 and zdm_experiment_candidates > 0
+        for: 30m
+        labels:
+          severity: info
+        annotations:
+          summary: "No new experiment candidates in 30min"
+          description: "Experiment planner may be stuck"
+
+      - alert: ZDMBackendDown
+        expr: up{job="zdm-backend"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "ZDM backend is down"
+          description: "Backend has been down for 1min"

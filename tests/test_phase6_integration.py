@@ -305,14 +305,14 @@ class TestCLIPhase6:
 @pytest.mark.skipif(not _HAS_WEB, reason="fastapi/httpx not installed")
 class TestAPIPhase6:
     def test_memory_encode_endpoint(self, client):
-        r = client.post("/memory/encode", json={"observation": [1.0, 2.0, 3.0, 4.0]})
+        r = client.post("/v1/memory/encode", json={"observation": [1.0, 2.0, 3.0, 4.0]})
         assert r.status_code == 200, r.text
         body = r.json()
         assert "id" in body
 
     def test_memory_encode_with_label(self, client):
         r = client.post(
-            "/memory/encode",
+            "/v1/memory/encode",
             json={"observation": [1.0, 2.0], "label": "tagged"},
         )
         assert r.status_code == 200
@@ -320,16 +320,16 @@ class TestAPIPhase6:
 
     def test_memory_encode_nan_returns_400(self, client):
         r = client.post(
-            "/memory/encode",
+            "/v1/memory/encode",
             json={"observation": [1.0, "NaN"]},
         )
         assert r.status_code in (400, 422)
 
     def test_memory_retrieve_endpoint(self, client):
         # First encode.
-        client.post("/memory/encode", json={"observation": [1.0, 0.0, 0.0, 0.0]})
+        client.post("/v1/memory/encode", json={"observation": [1.0, 0.0, 0.0, 0.0]})
         r = client.post(
-            "/memory/retrieve",
+            "/v1/memory/retrieve",
             json={"query": [1.0, 0.0, 0.0, 0.0], "top_k": 1},
         )
         assert r.status_code == 200
@@ -337,13 +337,13 @@ class TestAPIPhase6:
         assert "items" in body
 
     def test_memory_consolidate_endpoint(self, client):
-        r = client.post("/memory/consolidate")
+        r = client.post("/v1/memory/consolidate")
         assert r.status_code == 200
         assert "promoted" in r.json()
 
     def test_planning_trajectory_endpoint(self, client):
         r = client.post(
-            "/planning/trajectory",
+            "/v1/planning/trajectory",
             json={
                 "start_state": [0.0, 0.0, 0.0, 0.0],
                 "goal_state": [1.0, 1.0, 1.0, 1.0],
@@ -355,7 +355,7 @@ class TestAPIPhase6:
 
     def test_planning_trajectory_shape_mismatch(self, client):
         r = client.post(
-            "/planning/trajectory",
+            "/v1/planning/trajectory",
             json={
                 "start_state": [0.0, 0.0, 0.0],
                 "goal_state": [1.0, 1.0, 1.0, 1.0],
@@ -365,7 +365,7 @@ class TestAPIPhase6:
 
     def test_planning_decompose_endpoint(self, client):
         r = client.post(
-            "/planning/decompose",
+            "/v1/planning/decompose",
             json={"goal": "build a tower"},
         )
         assert r.status_code == 200
@@ -373,7 +373,7 @@ class TestAPIPhase6:
 
     def test_planning_sequence_endpoint(self, client):
         r = client.post(
-            "/planning/sequence",
+            "/v1/planning/sequence",
             json={"adjacency": [[0, 1, 0], [0, 0, 1], [0, 0, 0]]},
         )
         assert r.status_code == 200
@@ -384,7 +384,7 @@ class TestAPIPhase6:
         a = rng.standard_normal((5, 4)).tolist()
         b = rng.standard_normal((5, 6)).tolist()
         r = client.post(
-            "/multimodal/align",
+            "/v1/multimodal/align",
             json={"observations_a": a, "observations_b": b},
         )
         assert r.status_code == 200, r.text
@@ -398,7 +398,7 @@ class TestAPIPhase6:
 
     def test_multimodal_fuse_endpoint(self, client):
         r = client.post(
-            "/multimodal/fuse",
+            "/v1/multimodal/fuse",
             json={
                 "embeddings": [[1.0, 2.0, 3.0], [3.0, 4.0, 5.0]],
                 "strategy": "mean",
@@ -412,19 +412,19 @@ class TestAPIPhase6:
         a = rng.standard_normal((4, 8)).tolist()
         b = rng.standard_normal((4, 8)).tolist()
         r = client.post(
-            "/multimodal/contrastive",
+            "/v1/multimodal/contrastive",
             json={"batch_a": a, "batch_b": b},
         )
         assert r.status_code == 200
         assert "loss" in r.json()
 
     def test_rl_step_endpoint(self, client):
-        r = client.post("/rl/step", json={"state": 0, "action": 0})
+        r = client.post("/v1/rl/step", json={"state": 0, "action": 0})
         assert r.status_code == 200
         assert "next_state" in r.json()
 
     def test_rl_step_negative_state_returns_400(self, client):
-        r = client.post("/rl/step", json={"state": -1, "action": 0})
+        r = client.post("/v1/rl/step", json={"state": -1, "action": 0})
         # Pydantic Field(ge=0) rejects at validation time -> 422.
         # The endpoint's own _ensure_finite would yield 400, but validation
         # runs first. Accept either for robustness.
@@ -432,7 +432,7 @@ class TestAPIPhase6:
 
     def test_rl_train_q_endpoint(self, client):
         r = client.post(
-            "/rl/train-q",
+            "/v1/rl/train-q",
             json={"n_episodes": 2, "max_steps_per_episode": 5},
         )
         assert r.status_code == 200
@@ -440,7 +440,7 @@ class TestAPIPhase6:
 
     def test_rl_search_mcts_endpoint(self, client):
         r = client.post(
-            "/rl/search-mcts",
+            "/v1/rl/search-mcts",
             json={"root_state": 0, "n_simulations": 5, "max_depth": 3},
         )
         assert r.status_code == 200
@@ -656,7 +656,7 @@ class TestCrossLayerConsistency:
     def test_rl_step_api_vs_mcp_consistent(self, client, mcp_server):
         # API and MCP both invoke step_mdp on independent server-side
         # models; both should return well-formed results.
-        r_api = client.post("/rl/step", json={"state": 0, "action": 0})
+        r_api = client.post("/v1/rl/step", json={"state": 0, "action": 0})
         r_mcp = mcp_server.call_tool("rl_step", state=0, action=0)
         assert r_api.status_code == 200
         assert "next_state" in r_api.json()

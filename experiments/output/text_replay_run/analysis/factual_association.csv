@@ -1,0 +1,11 @@
+entity_a,entity_b,related,n_a,n_b,cos_sim_between,cos_sim_within_a,cos_sim_within_b
+Paris,France,1,0,0,0.000000,0.000000,0.000000
+Tokyo,Japan,1,0,0,0.000000,0.000000,0.000000
+London,England,1,0,0,0.000000,0.000000,0.000000
+energy,free,1,8,7,0.991857,0.991037,0.990237
+active,inference,1,2,2,0.999433,0.998865,0.998865
+cognitive,emergence,1,4,4,0.998059,0.997413,0.997413
+Paris,Tokyo,0,0,0,0.000000,0.000000,0.000000
+France,Japan,0,0,0,0.000000,0.000000,0.000000
+energy,history,0,8,0,0.000000,0.991037,0.000000
+inference,particle,0,2,0,0.000000,0.998865,0.000000

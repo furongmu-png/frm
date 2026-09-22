@@ -3,51 +3,163 @@ name: Release
 on:
   push:
     tags:
-      - "v*.*.*"
+      - 'v*.*.*'  # v1.0.0, v2.1.3, etc.
 
 permissions:
   contents: write
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ${{ github.repository }}
 
 jobs:
-  release:
-    name: Build and publish
+  # Job 1: 验证版本号一致性
+  validate-version:
     runs-on: ubuntu-latest
-    # OIDC trusted publishing (Fix 14): the publish step does NOT use a
-    # long-lived TWINE_API_TOKEN. Instead, GitHub mints a short-lived OIDC
-    # token that PyPI verifies against this repo's trusted publisher config.
-    # Requires the project to be configured as a trusted publisher on PyPI
-    # (https://pypi.org/manage/project/zero-data-model/settings/publishing/).
-    permissions:
-      contents: write
-      id-token: write  # required for OIDC trusted publishing to PyPI
-
+    outputs:
+      version: ${{ steps.extract.outputs.version }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.13"
-
-      - name: Install build tools
-        # `twine` is no longer needed -- the pypa action uploads via OIDC.
+      - uses: actions/checkout@v4
+      - name: Extract version from tag
+        id: extract
         run: |
-          python -m pip install --upgrade pip
-          pip install build
+          TAG=${GITHUB_REF#refs/tags/}
+          VERSION=${TAG#v}
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+      - name: Verify pyproject.toml version matches
+        run: |
+          PYVERSION=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          if [ "$PYVERSION" != "${{ steps.extract.outputs.version }}" ]; then
+            echo "Version mismatch: tag=${{ steps.extract.outputs.version }} pyproject=$PYVERSION"
+            exit 1
+          fi
+      - name: Verify Helm Chart version matches
+        run: |
+          CHARTVERSION=$(yq '.appVersion' deploy/k8s/helm/Chart.yaml)
+          if [ "$CHARTVERSION" != "${{ steps.extract.outputs.version }}" ]; then
+            echo "Version mismatch: tag=${{ steps.extract.outputs.version }} chart=$CHARTVERSION"
+            exit 1
+          fi
 
-      - name: Build distributions
-        run: python -m build
-
-      - name: Publish to PyPI (OIDC trusted publishing)
-        # No API token: the action exchanges the repo's OIDC identity for a
-        # short-lived upload token. Configure the trusted publisher on PyPI
-        # once; after that no secrets are required for releases.
-        uses: pypa/gh-action-pypi-publish@release/v1
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+  # Job 2: 运行完整测试套件（gate release on test pass）
+  test:
+    runs-on: ubuntu-latest
+    needs: validate-version
+    strategy:
+      matrix:
+        python-version: ['3.11', '3.12']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
+          python-version: ${{ matrix.python-version }}
+      - run: pip install -e src/ pytest hypothesis
+      - run: PYTHONPATH=src python -m pytest tests/ -q --tb=short
+
+  # Job 3: 构建并推送 Docker 镜像
+  build-images:
+    runs-on: ubuntu-latest
+    needs: [validate-version, test]
+    strategy:
+      matrix:
+        target: [backend, frontend]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Extract metadata
+        id: meta
+        run: |
+          REPO_LOWER=$(echo "${{ env.IMAGE_PREFIX }}" | tr '[:upper:]' '[:lower:]')
+          echo "image=${REGISTRY}/${REPO_LOWER}-${{ matrix.target }}" >> $GITHUB_OUTPUT
+          echo "version=${{ needs.validate-version.outputs.version }}" >> $GITHUB_OUTPUT
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile.${{ matrix.target }}
+          push: true
+          tags: |
+            ${{ steps.meta.outputs.image }}:latest
+            ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.version }}
+            ${{ steps.meta.outputs.image }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            VERSION=${{ steps.meta.outputs.version }}
+
+  # Job 4: 构建 Helm chart 并发布
+  build-helm:
+    runs-on: ubuntu-latest
+    needs: [validate-version, build-images]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Helm
+        uses: azure/setup-helm@v3
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Package Helm chart
+        run: |
+          # Update image tags in values.yaml
+          REPO_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          yq -i ".backend.image.repository = \"${REGISTRY}/${REPO_LOWER}-backend\"" deploy/k8s/helm/values.yaml
+          yq -i ".backend.image.tag = \"${{ needs.validate-version.outputs.version }}\"" deploy/k8s/helm/values.yaml
+          yq -i ".frontend.image.repository = \"${REGISTRY}/${REPO_LOWER}-frontend\"" deploy/k8s/helm/values.yaml
+          yq -i ".frontend.image.tag = \"${{ needs.validate-version.outputs.version }}\"" deploy/k8s/helm/values.yaml
+          
+          # Package
+          helm package deploy/k8s/helm/ --version ${{ needs.validate-version.outputs.version }} --app-version ${{ needs.validate-version.outputs.version }} -d .chart/
+      - name: Push Helm chart to GHCR
+        run: |
+          helm push .chart/*.tgz oci://${REGISTRY}/${REPO_LOWER}
+        env:
+          REPO_LOWER: ${{ github.repository }}
+      - name: Upload chart artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: helm-chart-${{ needs.validate-version.outputs.version }}
+          path: .chart/*.tgz
+
+  # Job 5: 创建 GitHub Release
+  github-release:
+    runs-on: ubuntu-latest
+    needs: [validate-version, build-images, build-helm]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate release notes
+        id: notes
+        run: |
+          # Extract changelog or generate from commits
+          echo "## What Changed" > release_notes.md
+          echo "" >> release_notes.md
+          git log --pretty=format:"- %s" $(git describe --tags --abbrev=0 HEAD^)..HEAD >> release_notes.md
+          echo "" >> release_notes.md
+          echo "## Docker Images" >> release_notes.md
+          echo "- \`ghcr.io/${REPO}-backend:${{ needs.validate-version.outputs.version }}\`" >> release_notes.md
+          echo "- \`ghcr.io/${REPO}-frontend:${{ needs.validate-version.outputs.version }}\`" >> release_notes.md
+          echo "" >> release_notes.md
+          echo "## Install" >> release_notes.md
+          echo '```bash' >> release_notes.md
+          echo "helm install zdm oci://ghcr.io/${REPO}/zero-data-model --version ${{ needs.validate-version.outputs.version }}" >> release_notes.md
+          echo '```' >> release_notes.md
+        env:
+          REPO: ${{ github.repository }}
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          body_path: release_notes.md
           generate_release_notes: true
+          files: |
+            .chart/*.tgz

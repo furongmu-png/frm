@@ -227,53 +227,53 @@ class TestCLITime:
 
 class TestAPITime:
     def test_api_encode(self, client, series_list):
-        r = client.post("/time/encode", json={"series": series_list})
+        r = client.post("/v1/time/encode", json={"series": series_list})
         assert r.status_code == 200, r.text
         assert "embedding" in r.json()
 
     def test_api_seasonality(self, client, series_list):
-        r = client.post("/time/seasonality", json={"series": series_list})
+        r = client.post("/v1/time/seasonality", json={"series": series_list})
         assert r.status_code == 200, r.text
         assert "dominant_period" in r.json()
 
     def test_api_frequency(self, client, series_list):
-        r = client.post("/time/frequency", json={"series": series_list})
+        r = client.post("/v1/time/frequency", json={"series": series_list})
         assert r.status_code == 200, r.text
         assert "spectral_entropy" in r.json()
 
     def test_api_events(self, client, timestamps_list):
-        r = client.post("/time/events", json={"series": timestamps_list})
+        r = client.post("/v1/time/events", json={"series": timestamps_list})
         assert r.status_code == 200, r.text
         assert "burstiness" in r.json()
 
     def test_api_anomaly(self, client, timestamps_list):
-        r = client.post("/time/anomaly", json={"series": timestamps_list})
+        r = client.post("/v1/time/anomaly", json={"series": timestamps_list})
         assert r.status_code == 200, r.text
         assert "threshold" in r.json()
 
     def test_api_cycle_with_period(self, client, series_list):
-        r = client.post("/time/cycle", json={"series": series_list, "period": 20})
+        r = client.post("/v1/time/cycle", json={"series": series_list, "period": 20})
         assert r.status_code == 200, r.text
         assert r.json()["period"] == 20
 
     def test_api_cycle_auto(self, client, series_list):
-        r = client.post("/time/cycle", json={"series": series_list})
+        r = client.post("/v1/time/cycle", json={"series": series_list})
         assert r.status_code == 200, r.text
         assert "phase_coherence" in r.json()
 
     def test_api_forecast(self, client, series_list):
-        r = client.post("/time/forecast", json={"series": series_list})
+        r = client.post("/v1/time/forecast", json={"series": series_list})
         assert r.status_code == 200, r.text
         assert "forecastability" in r.json()
 
     # --- negative paths (Pydantic rejection -> 422) ---
     def test_api_empty_series_rejected(self, client):
-        r = client.post("/time/encode", json={"series": []})
+        r = client.post("/v1/time/encode", json={"series": []})
         assert r.status_code in (400, 422)
 
     def test_api_negative_period_rejected(self, client, series_list):
         r = client.post(
-            "/time/cycle",
+            "/v1/time/cycle",
             json={"series": series_list, "period": -1},
         )
         assert r.status_code in (400, 422)

@@ -1,0 +1,2808 @@
+{
+  "schema_version": "1.0-kg",
+  "nodes": {
+    "Mathematics_8": {
+      "visit_count": 3,
+      "last_visit_step": 20,
+      "belief_state": null,
+      "mean_free_energy": 14.101337333333333,
+      "n_free_energy_samples": 3
+    },
+    "Geography_20": {
+      "visit_count": 4,
+      "last_visit_step": 284,
+      "belief_state": null,
+      "mean_free_energy": 21.458036749999998,
+      "n_free_energy_samples": 4
+    },
+    "Geography_16": {
+      "visit_count": 7,
+      "last_visit_step": 285,
+      "belief_state": null,
+      "mean_free_energy": 21.789184571428567,
+      "n_free_energy_samples": 7
+    },
+    "Computer Science_2": {
+      "visit_count": 7,
+      "last_visit_step": 242,
+      "belief_state": null,
+      "mean_free_energy": 18.353466714285712,
+      "n_free_energy_samples": 7
+    },
+    "Computer Science_15": {
+      "visit_count": 1,
+      "last_visit_step": 7,
+      "belief_state": null,
+      "mean_free_energy": 18.690741,
+      "n_free_energy_samples": 1
+    },
+    "Geography_22": {
+      "visit_count": 6,
+      "last_visit_step": 296,
+      "belief_state": null,
+      "mean_free_energy": 18.338364,
+      "n_free_energy_samples": 6
+    },
+    "Computer Science_22": {
+      "visit_count": 2,
+      "last_visit_step": 251,
+      "belief_state": null,
+      "mean_free_energy": 18.2054215,
+      "n_free_energy_samples": 2
+    },
+    "Biology_18": {
+      "visit_count": 10,
+      "last_visit_step": 297,
+      "belief_state": null,
+      "mean_free_energy": 18.332036000000002,
+      "n_free_energy_samples": 10
+    },
+    "Mathematics_1": {
+      "visit_count": 3,
+      "last_visit_step": 15,
+      "belief_state": null,
+      "mean_free_energy": 15.888932000000002,
+      "n_free_energy_samples": 3
+    },
+    "Biology_10": {
+      "visit_count": 6,
+      "last_visit_step": 299,
+      "belief_state": null,
+      "mean_free_energy": 17.105824000000002,
+      "n_free_energy_samples": 6
+    },
+    "History_19": {
+      "visit_count": 1,
+      "last_visit_step": 21,
+      "belief_state": null,
+      "mean_free_energy": 16.085284,
+      "n_free_energy_samples": 1
+    },
+    "Mathematics_20": {
+      "visit_count": 1,
+      "last_visit_step": 22,
+      "belief_state": null,
+      "mean_free_energy": 16.117938,
+      "n_free_energy_samples": 1
+    },
+    "Mathematics_18": {
+      "visit_count": 4,
+      "last_visit_step": 248,
+      "belief_state": null,
+      "mean_free_energy": 17.77962,
+      "n_free_energy_samples": 4
+    },
+    "Biology_19": {
+      "visit_count": 5,
+      "last_visit_step": 190,
+      "belief_state": null,
+      "mean_free_energy": 17.2913442,
+      "n_free_energy_samples": 5
+    },
+    "Physics_9": {
+      "visit_count": 1,
+      "last_visit_step": 25,
+      "belief_state": null,
+      "mean_free_energy": 16.0103,
+      "n_free_energy_samples": 1
+    },
+    "History_9": {
+      "visit_count": 7,
+      "last_visit_step": 287,
+      "belief_state": null,
+      "mean_free_energy": 17.396260285714284,
+      "n_free_energy_samples": 7
+    },
+    "Physics_21": {
+      "visit_count": 2,
+      "last_visit_step": 199,
+      "belief_state": null,
+      "mean_free_energy": 17.103541,
+      "n_free_energy_samples": 2
+    },
+    "Geography_2": {
+      "visit_count": 1,
+      "last_visit_step": 30,
+      "belief_state": null,
+      "mean_free_energy": 16.156359,
+      "n_free_energy_samples": 1
+    },
+    "Biology_22": {
+      "visit_count": 3,
+      "last_visit_step": 147,
+      "belief_state": null,
+      "mean_free_energy": 16.875401999999998,
+      "n_free_energy_samples": 3
+    },
+    "Biology_23": {
+      "visit_count": 2,
+      "last_visit_step": 34,
+      "belief_state": null,
+      "mean_free_energy": 15.8072225,
+      "n_free_energy_samples": 2
+    },
+    "Geography_1": {
+      "visit_count": 3,
+      "last_visit_step": 290,
+      "belief_state": null,
+      "mean_free_energy": 17.485680666666667,
+      "n_free_energy_samples": 3
+    },
+    "Physics_22": {
+      "visit_count": 7,
+      "last_visit_step": 294,
+      "belief_state": null,
+      "mean_free_energy": 17.084843714285714,
+      "n_free_energy_samples": 7
+    },
+    "Computer Science_21": {
+      "visit_count": 9,
+      "last_visit_step": 142,
+      "belief_state": null,
+      "mean_free_energy": 16.789902444444444,
+      "n_free_energy_samples": 9
+    },
+    "Physics_3": {
+      "visit_count": 5,
+      "last_visit_step": 69,
+      "belief_state": null,
+      "mean_free_energy": 17.268416000000002,
+      "n_free_energy_samples": 5
+    },
+    "History_1": {
+      "visit_count": 3,
+      "last_visit_step": 49,
+      "belief_state": null,
+      "mean_free_energy": 16.765764333333333,
+      "n_free_energy_samples": 3
+    },
+    "Physics_12": {
+      "visit_count": 3,
+      "last_visit_step": 246,
+      "belief_state": null,
+      "mean_free_energy": 18.070706333333334,
+      "n_free_energy_samples": 3
+    },
+    "Computer Science_8": {
+      "visit_count": 7,
+      "last_visit_step": 295,
+      "belief_state": null,
+      "mean_free_energy": 17.782312714285716,
+      "n_free_energy_samples": 7
+    },
+    "History_20": {
+      "visit_count": 2,
+      "last_visit_step": 89,
+      "belief_state": null,
+      "mean_free_energy": 17.7711415,
+      "n_free_energy_samples": 2
+    },
+    "Physics_17": {
+      "visit_count": 2,
+      "last_visit_step": 58,
+      "belief_state": null,
+      "mean_free_energy": 17.623180499999997,
+      "n_free_energy_samples": 2
+    },
+    "Mathematics_0": {
+      "visit_count": 5,
+      "last_visit_step": 186,
+      "belief_state": null,
+      "mean_free_energy": 18.0510046,
+      "n_free_energy_samples": 5
+    },
+    "Physics_6": {
+      "visit_count": 4,
+      "last_visit_step": 143,
+      "belief_state": null,
+      "mean_free_energy": 18.196171,
+      "n_free_energy_samples": 4
+    },
+    "Biology_12": {
+      "visit_count": 3,
+      "last_visit_step": 210,
+      "belief_state": null,
+      "mean_free_energy": 18.024787,
+      "n_free_energy_samples": 3
+    },
+    "Physics_18": {
+      "visit_count": 25,
+      "last_visit_step": 241,
+      "belief_state": null,
+      "mean_free_energy": 18.610800200000003,
+      "n_free_energy_samples": 25
+    },
+    "Mathematics_17": {
+      "visit_count": 2,
+      "last_visit_step": 191,
+      "belief_state": null,
+      "mean_free_energy": 17.743768000000003,
+      "n_free_energy_samples": 2
+    },
+    "Physics_23": {
+      "visit_count": 1,
+      "last_visit_step": 68,
+      "belief_state": null,
+      "mean_free_energy": 18.001368,
+      "n_free_energy_samples": 1
+    },
+    "Computer Science_23": {
+      "visit_count": 2,
+      "last_visit_step": 72,
+      "belief_state": null,
+      "mean_free_energy": 17.944324,
+      "n_free_energy_samples": 2
+    },
+    "Geography_14": {
+      "visit_count": 2,
+      "last_visit_step": 74,
+      "belief_state": null,
+      "mean_free_energy": 18.362935,
+      "n_free_energy_samples": 2
+    },
+    "Geography_15": {
+      "visit_count": 5,
+      "last_visit_step": 136,
+      "belief_state": null,
+      "mean_free_energy": 18.2821078,
+      "n_free_energy_samples": 5
+    },
+    "Geography_4": {
+      "visit_count": 2,
+      "last_visit_step": 169,
+      "belief_state": null,
+      "mean_free_energy": 18.373521,
+      "n_free_energy_samples": 2
+    },
+    "Geography_7": {
+      "visit_count": 4,
+      "last_visit_step": 126,
+      "belief_state": null,
+      "mean_free_energy": 18.764401499999998,
+      "n_free_energy_samples": 4
+    },
+    "History_18": {
+      "visit_count": 1,
+      "last_visit_step": 81,
+      "belief_state": null,
+      "mean_free_energy": 18.904359,
+      "n_free_energy_samples": 1
+    },
+    "Physics_4": {
+      "visit_count": 3,
+      "last_visit_step": 282,
+      "belief_state": null,
+      "mean_free_energy": 18.39026433333333,
+      "n_free_energy_samples": 3
+    },
+    "Biology_11": {
+      "visit_count": 1,
+      "last_visit_step": 84,
+      "belief_state": null,
+      "mean_free_energy": 18.21338,
+      "n_free_energy_samples": 1
+    },
+    "Physics_0": {
+      "visit_count": 2,
+      "last_visit_step": 86,
+      "belief_state": null,
+      "mean_free_energy": 18.270324,
+      "n_free_energy_samples": 2
+    },
+    "Mathematics_19": {
+      "visit_count": 4,
+      "last_visit_step": 150,
+      "belief_state": null,
+      "mean_free_energy": 17.969485,
+      "n_free_energy_samples": 4
+    },
+    "Physics_5": {
+      "visit_count": 4,
+      "last_visit_step": 184,
+      "belief_state": null,
+      "mean_free_energy": 18.1189925,
+      "n_free_energy_samples": 4
+    },
+    "Biology_5": {
+      "visit_count": 1,
+      "last_visit_step": 97,
+      "belief_state": null,
+      "mean_free_energy": 18.740667,
+      "n_free_energy_samples": 1
+    },
+    "Mathematics_14": {
+      "visit_count": 1,
+      "last_visit_step": 98,
+      "belief_state": null,
+      "mean_free_energy": 18.761579,
+      "n_free_energy_samples": 1
+    },
+    "Biology_4": {
+      "visit_count": 2,
+      "last_visit_step": 218,
+      "belief_state": null,
+      "mean_free_energy": 18.6562675,
+      "n_free_energy_samples": 2
+    },
+    "History_14": {
+      "visit_count": 23,
+      "last_visit_step": 201,
+      "belief_state": null,
+      "mean_free_energy": 18.700285000000004,
+      "n_free_energy_samples": 23
+    },
+    "Geography_13": {
+      "visit_count": 2,
+      "last_visit_step": 122,
+      "belief_state": null,
+      "mean_free_energy": 18.52337,
+      "n_free_energy_samples": 2
+    },
+    "History_2": {
+      "visit_count": 1,
+      "last_visit_step": 127,
+      "belief_state": null,
+      "mean_free_energy": 18.492367,
+      "n_free_energy_samples": 1
+    },
+    "Physics_10": {
+      "visit_count": 1,
+      "last_visit_step": 128,
+      "belief_state": null,
+      "mean_free_energy": 18.27176,
+      "n_free_energy_samples": 1
+    },
+    "History_13": {
+      "visit_count": 1,
+      "last_visit_step": 129,
+      "belief_state": null,
+      "mean_free_energy": 18.161774,
+      "n_free_energy_samples": 1
+    },
+    "History_0": {
+      "visit_count": 4,
+      "last_visit_step": 162,
+      "belief_state": null,
+      "mean_free_energy": 18.07938675,
+      "n_free_energy_samples": 4
+    },
+    "Computer Science_10": {
+      "visit_count": 2,
+      "last_visit_step": 140,
+      "belief_state": null,
+      "mean_free_energy": 18.27021,
+      "n_free_energy_samples": 2
+    },
+    "Geography_10": {
+      "visit_count": 3,
+      "last_visit_step": 146,
+      "belief_state": null,
+      "mean_free_energy": 18.210503666666668,
+      "n_free_energy_samples": 3
+    },
+    "Computer Science_14": {
+      "visit_count": 2,
+      "last_visit_step": 152,
+      "belief_state": null,
+      "mean_free_energy": 17.99868,
+      "n_free_energy_samples": 2
+    },
+    "Biology_17": {
+      "visit_count": 2,
+      "last_visit_step": 154,
+      "belief_state": null,
+      "mean_free_energy": 17.990261,
+      "n_free_energy_samples": 2
+    },
+    "Geography_19": {
+      "visit_count": 4,
+      "last_visit_step": 265,
+      "belief_state": null,
+      "mean_free_energy": 18.775794249999997,
+      "n_free_energy_samples": 4
+    },
+    "Physics_11": {
+      "visit_count": 4,
+      "last_visit_step": 198,
+      "belief_state": null,
+      "mean_free_energy": 17.89651025,
+      "n_free_energy_samples": 4
+    },
+    "Geography_21": {
+      "visit_count": 8,
+      "last_visit_step": 259,
+      "belief_state": null,
+      "mean_free_energy": 18.657455000000002,
+      "n_free_energy_samples": 8
+    },
+    "Biology_24": {
+      "visit_count": 2,
+      "last_visit_step": 168,
+      "belief_state": null,
+      "mean_free_energy": 18.050221,
+      "n_free_energy_samples": 2
+    },
+    "History_15": {
+      "visit_count": 3,
+      "last_visit_step": 173,
+      "belief_state": null,
+      "mean_free_energy": 18.224525333333332,
+      "n_free_energy_samples": 3
+    },
+    "Mathematics_24": {
+      "visit_count": 11,
+      "last_visit_step": 195,
+      "belief_state": null,
+      "mean_free_energy": 18.017736545454547,
+      "n_free_energy_samples": 11
+    },
+    "Physics_15": {
+      "visit_count": 2,
+      "last_visit_step": 208,
+      "belief_state": null,
+      "mean_free_energy": 17.9508755,
+      "n_free_energy_samples": 2
+    },
+    "Mathematics_2": {
+      "visit_count": 1,
+      "last_visit_step": 192,
+      "belief_state": null,
+      "mean_free_energy": 17.538642,
+      "n_free_energy_samples": 1
+    },
+    "History_8": {
+      "visit_count": 5,
+      "last_visit_step": 254,
+      "belief_state": null,
+      "mean_free_energy": 18.285688,
+      "n_free_energy_samples": 5
+    },
+    "Computer Science_16": {
+      "visit_count": 6,
+      "last_visit_step": 269,
+      "belief_state": null,
+      "mean_free_energy": 18.391943000000005,
+      "n_free_energy_samples": 6
+    },
+    "Mathematics_7": {
+      "visit_count": 1,
+      "last_visit_step": 207,
+      "belief_state": null,
+      "mean_free_energy": 17.726455,
+      "n_free_energy_samples": 1
+    },
+    "Mathematics_13": {
+      "visit_count": 1,
+      "last_visit_step": 211,
+      "belief_state": null,
+      "mean_free_energy": 18.337816,
+      "n_free_energy_samples": 1
+    },
+    "Mathematics_12": {
+      "visit_count": 6,
+      "last_visit_step": 281,
+      "belief_state": null,
+      "mean_free_energy": 18.723043666666666,
+      "n_free_energy_samples": 6
+    },
+    "Computer Science_4": {
+      "visit_count": 1,
+      "last_visit_step": 214,
+      "belief_state": null,
+      "mean_free_energy": 18.705458,
+      "n_free_energy_samples": 1
+    },
+    "Biology_7": {
+      "visit_count": 1,
+      "last_visit_step": 215,
+      "belief_state": null,
+      "mean_free_energy": 18.630734,
+      "n_free_energy_samples": 1
+    },
+    "Computer Science_20": {
+      "visit_count": 2,
+      "last_visit_step": 250,
+      "belief_state": null,
+      "mean_free_energy": 18.7214375,
+      "n_free_energy_samples": 2
+    },
+    "Physics_16": {
+      "visit_count": 2,
+      "last_visit_step": 260,
+      "belief_state": null,
+      "mean_free_energy": 19.054609,
+      "n_free_energy_samples": 2
+    },
+    "Geography_9": {
+      "visit_count": 2,
+      "last_visit_step": 256,
+      "belief_state": null,
+      "mean_free_energy": 19.185558999999998,
+      "n_free_energy_samples": 2
+    },
+    "Mathematics_6": {
+      "visit_count": 2,
+      "last_visit_step": 286,
+      "belief_state": null,
+      "mean_free_energy": 19.0016955,
+      "n_free_energy_samples": 2
+    },
+    "History_24": {
+      "visit_count": 2,
+      "last_visit_step": 262,
+      "belief_state": null,
+      "mean_free_energy": 19.4074745,
+      "n_free_energy_samples": 2
+    },
+    "Biology_6": {
+      "visit_count": 1,
+      "last_visit_step": 288,
+      "belief_state": null,
+      "mean_free_energy": 18.40765,
+      "n_free_energy_samples": 1
+    },
+    "Mathematics_5": {
+      "visit_count": 1,
+      "last_visit_step": 298,
+      "belief_state": null,
+      "mean_free_energy": 18.372565,
+      "n_free_energy_samples": 1
+    }
+  },
+  "edges": [
+    {
+      "src": "Geography_20",
+      "dst": "Mathematics_8",
+      "weight": 2.0,
+      "edge_type": "structural",
+      "last_updated_step": 20,
+      "n_updates": 4
+    },
+    {
+      "src": "History_0",
+      "dst": "Mathematics_8",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 20,
+      "n_updates": 3
+    },
+    {
+      "src": "Geography_2",
+      "dst": "Geography_20",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 284,
+      "n_updates": 4
+    },
+    {
+      "src": "Geography_16",
+      "dst": "Geography_20",
+      "weight": 3.0,
+      "edge_type": "structural",
+      "last_updated_step": 285,
+      "n_updates": 6
+    },
+    {
+      "src": "Computer Science_23",
+      "dst": "Geography_16",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 285,
+      "n_updates": 7
+    },
+    {
+      "src": "Geography_16",
+      "dst": "Mathematics_6",
+      "weight": 2.0,
+      "edge_type": "structural",
+      "last_updated_step": 286,
+      "n_updates": 8
+    },
+    {
+      "src": "Computer Science_2",
+      "dst": "Geography_19",
+      "weight": 2.0,
+      "edge_type": "structural",
+      "last_updated_step": 242,
+      "n_updates": 8
+    },
+    {
+      "src": "Computer Science_2",
+      "dst": "Mathematics_17",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 242,
+      "n_updates": 7
+    },
+    {
+      "src": "Computer Science_2",
+      "dst": "Geography_16",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 6,
+      "n_updates": 1
+    },
+    {
+      "src": "Computer Science_15",
+      "dst": "Physics_21",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 7,
+      "n_updates": 1
+    },
+    {
+      "src": "Computer Science_15",
+      "dst": "Geography_22",
+      "weight": 2.0,
+      "edge_type": "structural",
+      "last_updated_step": 296,
+      "n_updates": 8
+    },
+    {
+      "src": "Computer Science_14",
+      "dst": "Computer Science_15",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 7,
+      "n_updates": 1
+    },
+    {
+      "src": "Computer Science_15",
+      "dst": "Computer Science_2",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 7,
+      "n_updates": 1
+    },
+    {
+      "src": "Geography_20",
+      "dst": "Geography_22",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 296,
+      "n_updates": 6
+    },
+    {
+      "src": "Computer Science_22",
+      "dst": "Geography_22",
+      "weight": 2.0,
+      "edge_type": "structural",
+      "last_updated_step": 296,
+      "n_updates": 7
+    },
+    {
+      "src": "Computer Science_22",
+      "dst": "Physics_16",
+      "weight": 2.0,
+      "edge_type": "structural",
+      "last_updated_step": 252,
+      "n_updates": 3
+    },
+    {
+      "src": "Computer Science_21",
+      "dst": "Computer Science_22",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 251,
+      "n_updates": 2
+    },
+    {
+      "src": "Biology_18",
+      "dst": "Biology_23",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 297,
+      "n_updates": 10
+    },
+    {
+      "src": "Biology_18",
+      "dst": "Mathematics_1",
+      "weight": 2.0,
+      "edge_type": "structural",
+      "last_updated_step": 297,
+      "n_updates": 11
+    },
+    {
+      "src": "Biology_18",
+      "dst": "Mathematics_19",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 297,
+      "n_updates": 10
+    },
+    {
+      "src": "Biology_18",
+      "dst": "Computer Science_22",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 10,
+      "n_updates": 1
+    },
+    {
+      "src": "Biology_5",
+      "dst": "Mathematics_1",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 15,
+      "n_updates": 3
+    },
+    {
+      "src": "Mathematics_1",
+      "dst": "Mathematics_6",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 15,
+      "n_updates": 3
+    },
+    {
+      "src": "Mathematics_1",
+      "dst": "Mathematics_12",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 15,
+      "n_updates": 3
+    },
+    {
+      "src": "Biology_10",
+      "dst": "Biology_24",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 299,
+      "n_updates": 6
+    },
+    {
+      "src": "Biology_10",
+      "dst": "Mathematics_17",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 299,
+      "n_updates": 6
+    },
+    {
+      "src": "Biology_10",
+      "dst": "Mathematics_1",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 16,
+      "n_updates": 1
+    },
+    {
+      "src": "Biology_10",
+      "dst": "Mathematics_8",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 19,
+      "n_updates": 1
+    },
+    {
+      "src": "Biology_24",
+      "dst": "History_19",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 21,
+      "n_updates": 1
+    },
+    {
+      "src": "Computer Science_14",
+      "dst": "History_19",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 21,
+      "n_updates": 1
+    },
+    {
+      "src": "Biology_0",
+      "dst": "History_19",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 21,
+      "n_updates": 1
+    },
+    {
+      "src": "History_19",
+      "dst": "Mathematics_8",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 21,
+      "n_updates": 1
+    },
+    {
+      "src": "Mathematics_18",
+      "dst": "Mathematics_20",
+      "weight": 2.0,
+      "edge_type": "structural",
+      "last_updated_step": 23,
+      "n_updates": 2
+    },
+    {
+      "src": "Geography_3",
+      "dst": "Mathematics_20",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 22,
+      "n_updates": 1
+    },
+    {
+      "src": "Mathematics_20",
+      "dst": "Physics_24",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 22,
+      "n_updates": 1
+    },
+    {
+      "src": "History_19",
+      "dst": "Mathematics_20",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 22,
+      "n_updates": 1
+    },
+    {
+      "src": "Computer Science_20",
+      "dst": "Mathematics_18",
+      "weight": 2.0,
+      "edge_type": "structural",
+      "last_updated_step": 249,
+      "n_updates": 5
+    },
+    {
+      "src": "Mathematics_18",
+      "dst": "Physics_5",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 248,
+      "n_updates": 4
+    },
+    {
+      "src": "Biology_19",
+      "dst": "Mathematics_18",
+      "weight": 3.0,
+      "edge_type": "structural",
+      "last_updated_step": 248,
+      "n_updates": 6
+    },
+    {
+      "src": "Biology_19",
+      "dst": "Physics_9",
+      "weight": 2.0,
+      "edge_type": "structural",
+      "last_updated_step": 190,
+      "n_updates": 6
+    },
+    {
+      "src": "Biology_19",
+      "dst": "Biology_4",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 190,
+      "n_updates": 5
+    },
+    {
+      "src": "Physics_21",
+      "dst": "Physics_9",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 25,
+      "n_updates": 1
+    },
+    {
+      "src": "Physics_16",
+      "dst": "Physics_9",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 25,
+      "n_updates": 1
+    },
+    {
+      "src": "History_9",
+      "dst": "Physics_21",
+      "weight": 2.0,
+      "edge_type": "structural",
+      "last_updated_step": 287,
+      "n_updates": 8
+    },
+    {
+      "src": "History_20",
+      "dst": "History_9",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 287,
+      "n_updates": 7
+    },
+    {
+      "src": "History_9",
+      "dst": "Physics_9",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 26,
+      "n_updates": 1
+    },
+    {
+      "src": "Physics_21",
+      "dst": "Physics_3",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 199,
+      "n_updates": 2
+    },
+    {
+      "src": "Geography_21",
+      "dst": "Physics_21",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 199,
+      "n_updates": 2
+    },
+    {
+      "src": "Physics_17",
+      "dst": "Physics_21",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 199,
+      "n_updates": 2
+    },
+    {
+      "src": "Computer Science_17",
+      "dst": "Geography_2",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 30,
+      "n_updates": 1
+    },
+    {
+      "src": "Geography_10",
+      "dst": "Geography_2",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 30,
+      "n_updates": 1
+    },
+    {
+      "src": "Computer Science_9",
+      "dst": "Geography_2",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 30,
+      "n_updates": 1
+    },
+    {
+      "src": "Geography_2",
+      "dst": "Physics_21",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 30,
+      "n_updates": 1
+    },
+    {
+      "src": "Biology_22",
+      "dst": "Geography_10",
+      "weight": 2.0,
+      "edge_type": "structural",
+      "last_updated_step": 147,
+      "n_updates": 4
+    },
+    {
+      "src": "Biology_22",
+      "dst": "Computer Science_15",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 147,
+      "n_updates": 3
+    },
+    {
+      "src": "Biology_1",
+      "dst": "Biology_22",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 147,
+      "n_updates": 3
+    },
+    {
+      "src": "Biology_22",
+      "dst": "Geography_2",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 31,
+      "n_updates": 1
+    },
+    {
+      "src": "Biology_23",
+      "dst": "Computer Science_14",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 34,
+      "n_updates": 2
+    },
+    {
+      "src": "Biology_23",
+      "dst": "History_21",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 34,
+      "n_updates": 2
+    },
+    {
+      "src": "Biology_23",
+      "dst": "History_12",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 34,
+      "n_updates": 2
+    },
+    {
+      "src": "Biology_22",
+      "dst": "Biology_23",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 33,
+      "n_updates": 1
+    },
+    {
+      "src": "Biology_23",
+      "dst": "Geography_1",
+      "weight": 2.0,
+      "edge_type": "structural",
+      "last_updated_step": 290,
+      "n_updates": 4
+    },
+    {
+      "src": "Geography_1",
+      "dst": "History_9",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 290,
+      "n_updates": 3
+    },
+    {
+      "src": "Geography_1",
+      "dst": "Physics_22",
+      "weight": 3.0,
+      "edge_type": "structural",
+      "last_updated_step": 291,
+      "n_updates": 5
+    },
+    {
+      "src": "Geography_13",
+      "dst": "Physics_22",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 294,
+      "n_updates": 7
+    },
+    {
+      "src": "History_9",
+      "dst": "Physics_22",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 294,
+      "n_updates": 7
+    },
+    {
+      "src": "Computer Science_21",
+      "dst": "Physics_17",
+      "weight": 2.0,
+      "edge_type": "structural",
+      "last_updated_step": 142,
+      "n_updates": 10
+    },
+    {
+      "src": "Computer Science_21",
+      "dst": "Physics_21",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 142,
+      "n_updates": 9
+    },
+    {
+      "src": "Computer Science_21",
+      "dst": "Physics_22",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 39,
+      "n_updates": 1
+    },
+    {
+      "src": "Physics_12",
+      "dst": "Physics_3",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 69,
+      "n_updates": 5
+    },
+    {
+      "src": "Physics_3",
+      "dst": "Physics_6",
+      "weight": 3.0,
+      "edge_type": "structural",
+      "last_updated_step": 70,
+      "n_updates": 7
+    },
+    {
+      "src": "Computer Science_21",
+      "dst": "Physics_3",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 45,
+      "n_updates": 1
+    },
+    {
+      "src": "History_1",
+      "dst": "Physics_16",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 49,
+      "n_updates": 3
+    },
+    {
+      "src": "History_1",
+      "dst": "Mathematics_7",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 49,
+      "n_updates": 3
+    },
+    {
+      "src": "History_1",
+      "dst": "Physics_3",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 47,
+      "n_updates": 1
+    },
+    {
+      "src": "Biology_17",
+      "dst": "Physics_12",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 246,
+      "n_updates": 3
+    },
+    {
+      "src": "Mathematics_24",
+      "dst": "Physics_12",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 246,
+      "n_updates": 3
+    },
+    {
+      "src": "Biology_16",
+      "dst": "Physics_12",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 246,
+      "n_updates": 3
+    },
+    {
+      "src": "History_1",
+      "dst": "Physics_12",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 50,
+      "n_updates": 1
+    },
+    {
+      "src": "Computer Science_8",
+      "dst": "History_2",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 295,
+      "n_updates": 7
+    },
+    {
+      "src": "Computer Science_8",
+      "dst": "Geography_22",
+      "weight": 2.0,
+      "edge_type": "structural",
+      "last_updated_step": 296,
+      "n_updates": 8
+    },
+    {
+      "src": "Computer Science_8",
+      "dst": "Physics_12",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 51,
+      "n_updates": 1
+    },
+    {
+      "src": "Biology_19",
+      "dst": "History_20",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 89,
+      "n_updates": 2
+    },
+    {
+      "src": "Computer Science_21",
+      "dst": "History_20",
+      "weight": 2.0,
+      "edge_type": "structural",
+      "last_updated_step": 89,
+      "n_updates": 3
+    },
+    {
+      "src": "History_20",
+      "dst": "Physics_5",
+      "weight": 2.0,
+      "edge_type": "structural",
+      "last_updated_step": 90,
+      "n_updates": 3
+    },
+    {
+      "src": "Computer Science_8",
+      "dst": "History_20",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 55,
+      "n_updates": 1
+    },
+    {
+      "src": "Computer Science_2",
+      "dst": "Physics_17",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 58,
+      "n_updates": 2
+    },
+    {
+      "src": "Biology_0",
+      "dst": "Physics_17",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 58,
+      "n_updates": 2
+    },
+    {
+      "src": "Mathematics_0",
+      "dst": "Physics_3",
+      "weight": 2.0,
+      "edge_type": "structural",
+      "last_updated_step": 186,
+      "n_updates": 6
+    },
+    {
+      "src": "Geography_4",
+      "dst": "Mathematics_0",
+      "weight": 2.0,
+      "edge_type": "structural",
+      "last_updated_step": 186,
+      "n_updates": 8
+    },
+    {
+      "src": "Geography_15",
+      "dst": "Mathematics_0",
+      "weight": 3.0,
+      "edge_type": "structural",
+      "last_updated_step": 186,
+      "n_updates": 12
+    },
+    {
+      "src": "Mathematics_0",
+      "dst": "Physics_17",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 59,
+      "n_updates": 1
+    },
+    {
+      "src": "Computer Science_23",
+      "dst": "Physics_6",
+      "weight": 2.0,
+      "edge_type": "structural",
+      "last_updated_step": 143,
+      "n_updates": 5
+    },
+    {
+      "src": "Geography_10",
+      "dst": "Physics_6",
+      "weight": 2.0,
+      "edge_type": "structural",
+      "last_updated_step": 144,
+      "n_updates": 5
+    },
+    {
+      "src": "Biology_12",
+      "dst": "Computer Science_23",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 210,
+      "n_updates": 3
+    },
+    {
+      "src": "Biology_12",
+      "dst": "Mathematics_13",
+      "weight": 2.0,
+      "edge_type": "structural",
+      "last_updated_step": 211,
+      "n_updates": 4
+    },
+    {
+      "src": "Biology_12",
+      "dst": "Physics_6",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 64,
+      "n_updates": 1
+    },
+    {
+      "src": "Biology_6",
+      "dst": "Physics_18",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 241,
+      "n_updates": 25
+    },
+    {
+      "src": "Computer Science_2",
+      "dst": "Physics_18",
+      "weight": 2.0,
+      "edge_type": "structural",
+      "last_updated_step": 242,
+      "n_updates": 26
+    },
+    {
+      "src": "Biology_12",
+      "dst": "Physics_18",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 65,
+      "n_updates": 1
+    },
+    {
+      "src": "Computer Science_14",
+      "dst": "Mathematics_17",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 191,
+      "n_updates": 2
+    },
+    {
+      "src": "Mathematics_17",
+      "dst": "Mathematics_2",
+      "weight": 2.0,
+      "edge_type": "structural",
+      "last_updated_step": 192,
+      "n_updates": 3
+    },
+    {
+      "src": "Mathematics_17",
+      "dst": "Physics_23",
+      "weight": 2.0,
+      "edge_type": "structural",
+      "last_updated_step": 191,
+      "n_updates": 3
+    },
+    {
+      "src": "Mathematics_17",
+      "dst": "Physics_18",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 67,
+      "n_updates": 1
+    },
+    {
+      "src": "Mathematics_12",
+      "dst": "Physics_23",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 68,
+      "n_updates": 1
+    },
+    {
+      "src": "Biology_13",
+      "dst": "Physics_23",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 68,
+      "n_updates": 1
+    },
+    {
+      "src": "Physics_23",
+      "dst": "Physics_3",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 69,
+      "n_updates": 1
+    },
+    {
+      "src": "Computer Science_23",
+      "dst": "Mathematics_0",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 72,
+      "n_updates": 2
+    },
+    {
+      "src": "Computer Science_23",
+      "dst": "History_7",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 72,
+      "n_updates": 2
+    },
+    {
+      "src": "Computer Science_23",
+      "dst": "History_20",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 72,
+      "n_updates": 2
+    },
+    {
+      "src": "Geography_14",
+      "dst": "Mathematics_17",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 74,
+      "n_updates": 2
+    },
+    {
+      "src": "Computer Science_2",
+      "dst": "Geography_14",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 74,
+      "n_updates": 2
+    },
+    {
+      "src": "Computer Science_21",
+      "dst": "Geography_14",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 74,
+      "n_updates": 2
+    },
+    {
+      "src": "Computer Science_23",
+      "dst": "Geography_14",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 73,
+      "n_updates": 1
+    },
+    {
+      "src": "Geography_15",
+      "dst": "Physics_15",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 136,
+      "n_updates": 5
+    },
+    {
+      "src": "Geography_14",
+      "dst": "Geography_15",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 75,
+      "n_updates": 1
+    },
+    {
+      "src": "Biology_12",
+      "dst": "Geography_4",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 169,
+      "n_updates": 2
+    },
+    {
+      "src": "Geography_4",
+      "dst": "Mathematics_19",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 169,
+      "n_updates": 2
+    },
+    {
+      "src": "Geography_7",
+      "dst": "History_18",
+      "weight": 2.0,
+      "edge_type": "structural",
+      "last_updated_step": 126,
+      "n_updates": 5
+    },
+    {
+      "src": "Geography_7",
+      "dst": "Mathematics_14",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 126,
+      "n_updates": 4
+    },
+    {
+      "src": "Geography_4",
+      "dst": "Geography_7",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 78,
+      "n_updates": 1
+    },
+    {
+      "src": "Computer Science_8",
+      "dst": "History_18",
+      "weight": 2.0,
+      "edge_type": "structural",
+      "last_updated_step": 82,
+      "n_updates": 2
+    },
+    {
+      "src": "History_18",
+      "dst": "Mathematics_12",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 81,
+      "n_updates": 1
+    },
+    {
+      "src": "History_8",
+      "dst": "Physics_4",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 282,
+      "n_updates": 3
+    },
+    {
+      "src": "Biology_11",
+      "dst": "Physics_4",
+      "weight": 2.0,
+      "edge_type": "structural",
+      "last_updated_step": 282,
+      "n_updates": 4
+    },
+    {
+      "src": "Computer Science_8",
+      "dst": "Physics_4",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 83,
+      "n_updates": 1
+    },
+    {
+      "src": "Biology_11",
+      "dst": "History_6",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 84,
+      "n_updates": 1
+    },
+    {
+      "src": "Biology_11",
+      "dst": "Physics_0",
+      "weight": 2.0,
+      "edge_type": "structural",
+      "last_updated_step": 85,
+      "n_updates": 2
+    },
+    {
+      "src": "Computer Science_15",
+      "dst": "Physics_0",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 86,
+      "n_updates": 2
+    },
+    {
+      "src": "Geography_1",
+      "dst": "Physics_0",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 86,
+      "n_updates": 2
+    },
+    {
+      "src": "Mathematics_19",
+      "dst": "Physics_12",
+      "weight": 2.0,
+      "edge_type": "structural",
+      "last_updated_step": 150,
+      "n_updates": 5
+    },
+    {
+      "src": "Computer Science_14",
+      "dst": "Mathematics_19",
+      "weight": 2.0,
+      "edge_type": "structural",
+      "last_updated_step": 151,
+      "n_updates": 5
+    },
+    {
+      "src": "Mathematics_19",
+      "dst": "Physics_0",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 87,
+      "n_updates": 1
+    },
+    {
+      "src": "History_20",
+      "dst": "Physics_12",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 89,
+      "n_updates": 1
+    },
+    {
+      "src": "History_2",
+      "dst": "Physics_5",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 184,
+      "n_updates": 5
+    },
+    {
+      "src": "Computer Science_4",
+      "dst": "Physics_5",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 184,
+      "n_updates": 4
+    },
+    {
+      "src": "Physics_15",
+      "dst": "Physics_5",
+      "weight": 2.0,
+      "edge_type": "structural",
+      "last_updated_step": 185,
+      "n_updates": 5
+    },
+    {
+      "src": "Geography_22",
+      "dst": "Physics_5",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 91,
+      "n_updates": 1
+    },
+    {
+      "src": "Geography_22",
+      "dst": "History_9",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 94,
+      "n_updates": 1
+    },
+    {
+      "src": "Biology_5",
+      "dst": "Mathematics_2",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 97,
+      "n_updates": 1
+    },
+    {
+      "src": "Biology_5",
+      "dst": "Mathematics_14",
+      "weight": 2.0,
+      "edge_type": "structural",
+      "last_updated_step": 98,
+      "n_updates": 2
+    },
+    {
+      "src": "Biology_5",
+      "dst": "History_9",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 97,
+      "n_updates": 1
+    },
+    {
+      "src": "Biology_4",
+      "dst": "Mathematics_14",
+      "weight": 2.0,
+      "edge_type": "structural",
+      "last_updated_step": 218,
+      "n_updates": 4
+    },
+    {
+      "src": "Computer Science_22",
+      "dst": "Mathematics_14",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 98,
+      "n_updates": 1
+    },
+    {
+      "src": "Biology_4",
+      "dst": "Computer Science_17",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 218,
+      "n_updates": 2
+    },
+    {
+      "src": "Biology_23",
+      "dst": "Biology_4",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 218,
+      "n_updates": 2
+    },
+    {
+      "src": "Computer Science_11",
+      "dst": "History_14",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 201,
+      "n_updates": 23
+    },
+    {
+      "src": "History_14",
+      "dst": "History_8",
+      "weight": 2.0,
+      "edge_type": "structural",
+      "last_updated_step": 202,
+      "n_updates": 24
+    },
+    {
+      "src": "Biology_4",
+      "dst": "History_14",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 100,
+      "n_updates": 1
+    },
+    {
+      "src": "Geography_13",
+      "dst": "Physics_12",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 122,
+      "n_updates": 2
+    },
+    {
+      "src": "Geography_13",
+      "dst": "History_24",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 122,
+      "n_updates": 2
+    },
+    {
+      "src": "Geography_13",
+      "dst": "Physics_17",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 122,
+      "n_updates": 2
+    },
+    {
+      "src": "Geography_13",
+      "dst": "History_14",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 121,
+      "n_updates": 1
+    },
+    {
+      "src": "Geography_13",
+      "dst": "Physics_6",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 123,
+      "n_updates": 1
+    },
+    {
+      "src": "Biology_10",
+      "dst": "Physics_6",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 124,
+      "n_updates": 1
+    },
+    {
+      "src": "Biology_10",
+      "dst": "Geography_7",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 126,
+      "n_updates": 1
+    },
+    {
+      "src": "History_2",
+      "dst": "History_3",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 127,
+      "n_updates": 1
+    },
+    {
+      "src": "History_2",
+      "dst": "Physics_10",
+      "weight": 2.0,
+      "edge_type": "structural",
+      "last_updated_step": 128,
+      "n_updates": 2
+    },
+    {
+      "src": "Geography_7",
+      "dst": "History_2",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 127,
+      "n_updates": 1
+    },
+    {
+      "src": "Physics_10",
+      "dst": "Physics_9",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 128,
+      "n_updates": 1
+    },
+    {
+      "src": "Biology_18",
+      "dst": "Physics_10",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 128,
+      "n_updates": 1
+    },
+    {
+      "src": "Mathematics_0",
+      "dst": "Physics_10",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 128,
+      "n_updates": 1
+    },
+    {
+      "src": "History_13",
+      "dst": "History_2",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 129,
+      "n_updates": 1
+    },
+    {
+      "src": "Computer Science_11",
+      "dst": "History_13",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 129,
+      "n_updates": 1
+    },
+    {
+      "src": "History_13",
+      "dst": "Physics_16",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 129,
+      "n_updates": 1
+    },
+    {
+      "src": "History_13",
+      "dst": "Physics_10",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 129,
+      "n_updates": 1
+    },
+    {
+      "src": "Geography_16",
+      "dst": "History_13",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 130,
+      "n_updates": 1
+    },
+    {
+      "src": "Geography_15",
+      "dst": "History_0",
+      "weight": 2.0,
+      "edge_type": "structural",
+      "last_updated_step": 162,
+      "n_updates": 5
+    },
+    {
+      "src": "Geography_14",
+      "dst": "History_0",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 162,
+      "n_updates": 4
+    },
+    {
+      "src": "Geography_16",
+      "dst": "History_0",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 131,
+      "n_updates": 1
+    },
+    {
+      "src": "Geography_20",
+      "dst": "Mathematics_0",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 138,
+      "n_updates": 1
+    },
+    {
+      "src": "Computer Science_10",
+      "dst": "History_20",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 140,
+      "n_updates": 2
+    },
+    {
+      "src": "Computer Science_10",
+      "dst": "Computer Science_21",
+      "weight": 2.0,
+      "edge_type": "structural",
+      "last_updated_step": 141,
+      "n_updates": 3
+    },
+    {
+      "src": "Computer Science_10",
+      "dst": "History_15",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 140,
+      "n_updates": 2
+    },
+    {
+      "src": "Computer Science_10",
+      "dst": "Geography_20",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 139,
+      "n_updates": 1
+    },
+    {
+      "src": "Computer Science_21",
+      "dst": "Physics_6",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 143,
+      "n_updates": 1
+    },
+    {
+      "src": "Geography_10",
+      "dst": "Mathematics_20",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 146,
+      "n_updates": 3
+    },
+    {
+      "src": "Geography_1",
+      "dst": "Geography_10",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 146,
+      "n_updates": 3
+    },
+    {
+      "src": "Geography_10",
+      "dst": "History_0",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 146,
+      "n_updates": 3
+    },
+    {
+      "src": "Biology_22",
+      "dst": "Mathematics_19",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 148,
+      "n_updates": 1
+    },
+    {
+      "src": "Biology_22",
+      "dst": "Computer Science_14",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 152,
+      "n_updates": 2
+    },
+    {
+      "src": "Computer Science_14",
+      "dst": "Mathematics_13",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 152,
+      "n_updates": 2
+    },
+    {
+      "src": "Biology_17",
+      "dst": "Geography_7",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 154,
+      "n_updates": 2
+    },
+    {
+      "src": "Biology_17",
+      "dst": "History_20",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 154,
+      "n_updates": 2
+    },
+    {
+      "src": "Biology_17",
+      "dst": "Computer Science_14",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 153,
+      "n_updates": 1
+    },
+    {
+      "src": "Biology_17",
+      "dst": "Computer Science_2",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 155,
+      "n_updates": 1
+    },
+    {
+      "src": "Computer Science_16",
+      "dst": "Geography_19",
+      "weight": 2.0,
+      "edge_type": "structural",
+      "last_updated_step": 266,
+      "n_updates": 5
+    },
+    {
+      "src": "Biology_23",
+      "dst": "Geography_19",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 265,
+      "n_updates": 4
+    },
+    {
+      "src": "Biology_13",
+      "dst": "Geography_19",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 265,
+      "n_updates": 4
+    },
+    {
+      "src": "Geography_19",
+      "dst": "History_0",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 161,
+      "n_updates": 1
+    },
+    {
+      "src": "Biology_19",
+      "dst": "History_0",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 163,
+      "n_updates": 1
+    },
+    {
+      "src": "History_19",
+      "dst": "Physics_11",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 198,
+      "n_updates": 4
+    },
+    {
+      "src": "Mathematics_14",
+      "dst": "Physics_11",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 198,
+      "n_updates": 4
+    },
+    {
+      "src": "Biology_24",
+      "dst": "Physics_11",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 198,
+      "n_updates": 4
+    },
+    {
+      "src": "Biology_19",
+      "dst": "Physics_11",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 164,
+      "n_updates": 1
+    },
+    {
+      "src": "Biology_10",
+      "dst": "Geography_21",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 259,
+      "n_updates": 8
+    },
+    {
+      "src": "Geography_21",
+      "dst": "History_20",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 259,
+      "n_updates": 8
+    },
+    {
+      "src": "Computer Science_17",
+      "dst": "Geography_21",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 259,
+      "n_updates": 8
+    },
+    {
+      "src": "Geography_21",
+      "dst": "Physics_11",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 165,
+      "n_updates": 1
+    },
+    {
+      "src": "Biology_24",
+      "dst": "History_13",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 168,
+      "n_updates": 2
+    },
+    {
+      "src": "Biology_24",
+      "dst": "Geography_14",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 168,
+      "n_updates": 2
+    },
+    {
+      "src": "Biology_24",
+      "dst": "Geography_21",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 167,
+      "n_updates": 1
+    },
+    {
+      "src": "Biology_24",
+      "dst": "Geography_4",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 169,
+      "n_updates": 1
+    },
+    {
+      "src": "Geography_4",
+      "dst": "Physics_4",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 170,
+      "n_updates": 1
+    },
+    {
+      "src": "History_15",
+      "dst": "Mathematics_18",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 173,
+      "n_updates": 3
+    },
+    {
+      "src": "History_15",
+      "dst": "Physics_12",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 173,
+      "n_updates": 3
+    },
+    {
+      "src": "History_15",
+      "dst": "Physics_4",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 171,
+      "n_updates": 1
+    },
+    {
+      "src": "Mathematics_24",
+      "dst": "Physics_5",
+      "weight": 2.0,
+      "edge_type": "structural",
+      "last_updated_step": 195,
+      "n_updates": 12
+    },
+    {
+      "src": "Mathematics_2",
+      "dst": "Mathematics_24",
+      "weight": 2.0,
+      "edge_type": "structural",
+      "last_updated_step": 195,
+      "n_updates": 12
+    },
+    {
+      "src": "History_15",
+      "dst": "Mathematics_24",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 174,
+      "n_updates": 1
+    },
+    {
+      "src": "Computer Science_22",
+      "dst": "Physics_15",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 208,
+      "n_updates": 2
+    },
+    {
+      "src": "Mathematics_0",
+      "dst": "Physics_15",
+      "weight": 2.0,
+      "edge_type": "structural",
+      "last_updated_step": 208,
+      "n_updates": 3
+    },
+    {
+      "src": "Mathematics_0",
+      "dst": "Mathematics_18",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 187,
+      "n_updates": 1
+    },
+    {
+      "src": "Biology_19",
+      "dst": "Mathematics_17",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 191,
+      "n_updates": 1
+    },
+    {
+      "src": "Geography_10",
+      "dst": "Mathematics_2",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 192,
+      "n_updates": 1
+    },
+    {
+      "src": "Computer Science_3",
+      "dst": "Mathematics_2",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 192,
+      "n_updates": 1
+    },
+    {
+      "src": "Mathematics_24",
+      "dst": "Physics_11",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 196,
+      "n_updates": 1
+    },
+    {
+      "src": "Physics_11",
+      "dst": "Physics_21",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 199,
+      "n_updates": 1
+    },
+    {
+      "src": "History_14",
+      "dst": "Physics_21",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 200,
+      "n_updates": 1
+    },
+    {
+      "src": "Geography_9",
+      "dst": "History_8",
+      "weight": 2.0,
+      "edge_type": "structural",
+      "last_updated_step": 255,
+      "n_updates": 6
+    },
+    {
+      "src": "Geography_16",
+      "dst": "History_8",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 254,
+      "n_updates": 5
+    },
+    {
+      "src": "Computer Science_16",
+      "dst": "Mathematics_1",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 269,
+      "n_updates": 6
+    },
+    {
+      "src": "Computer Science_16",
+      "dst": "Geography_1",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 269,
+      "n_updates": 6
+    },
+    {
+      "src": "Computer Science_16",
+      "dst": "History_8",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 205,
+      "n_updates": 1
+    },
+    {
+      "src": "Computer Science_15",
+      "dst": "Mathematics_7",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 207,
+      "n_updates": 1
+    },
+    {
+      "src": "History_24",
+      "dst": "Mathematics_7",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 207,
+      "n_updates": 1
+    },
+    {
+      "src": "Computer Science_16",
+      "dst": "Mathematics_7",
+      "weight": 2.0,
+      "edge_type": "structural",
+      "last_updated_step": 207,
+      "n_updates": 2
+    },
+    {
+      "src": "Mathematics_7",
+      "dst": "Physics_15",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 208,
+      "n_updates": 1
+    },
+    {
+      "src": "Biology_12",
+      "dst": "Physics_15",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 209,
+      "n_updates": 1
+    },
+    {
+      "src": "Mathematics_13",
+      "dst": "Physics_10",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 211,
+      "n_updates": 1
+    },
+    {
+      "src": "Mathematics_12",
+      "dst": "Mathematics_13",
+      "weight": 2.0,
+      "edge_type": "structural",
+      "last_updated_step": 212,
+      "n_updates": 2
+    },
+    {
+      "src": "Computer Science_10",
+      "dst": "Mathematics_13",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 211,
+      "n_updates": 1
+    },
+    {
+      "src": "Computer Science_4",
+      "dst": "Mathematics_12",
+      "weight": 2.0,
+      "edge_type": "structural",
+      "last_updated_step": 281,
+      "n_updates": 7
+    },
+    {
+      "src": "Mathematics_12",
+      "dst": "Physics_4",
+      "weight": 2.0,
+      "edge_type": "structural",
+      "last_updated_step": 282,
+      "n_updates": 7
+    },
+    {
+      "src": "Biology_13",
+      "dst": "Mathematics_12",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 281,
+      "n_updates": 6
+    },
+    {
+      "src": "Computer Science_4",
+      "dst": "Geography_7",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 214,
+      "n_updates": 1
+    },
+    {
+      "src": "Computer Science_4",
+      "dst": "Geography_22",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 214,
+      "n_updates": 1
+    },
+    {
+      "src": "Biology_7",
+      "dst": "Geography_7",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 215,
+      "n_updates": 1
+    },
+    {
+      "src": "Biology_10",
+      "dst": "Biology_7",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 215,
+      "n_updates": 1
+    },
+    {
+      "src": "Biology_7",
+      "dst": "Physics_6",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 215,
+      "n_updates": 1
+    },
+    {
+      "src": "Biology_7",
+      "dst": "Computer Science_4",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 215,
+      "n_updates": 1
+    },
+    {
+      "src": "Biology_7",
+      "dst": "Geography_21",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 216,
+      "n_updates": 1
+    },
+    {
+      "src": "Biology_4",
+      "dst": "Geography_21",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 218,
+      "n_updates": 1
+    },
+    {
+      "src": "Biology_4",
+      "dst": "Physics_18",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 219,
+      "n_updates": 1
+    },
+    {
+      "src": "Computer Science_2",
+      "dst": "Geography_21",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 243,
+      "n_updates": 1
+    },
+    {
+      "src": "Geography_21",
+      "dst": "Physics_12",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 246,
+      "n_updates": 1
+    },
+    {
+      "src": "Mathematics_18",
+      "dst": "Physics_12",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 247,
+      "n_updates": 1
+    },
+    {
+      "src": "Computer Science_20",
+      "dst": "Geography_8",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 250,
+      "n_updates": 2
+    },
+    {
+      "src": "Computer Science_17",
+      "dst": "Computer Science_20",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 250,
+      "n_updates": 2
+    },
+    {
+      "src": "Computer Science_20",
+      "dst": "Computer Science_22",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 251,
+      "n_updates": 1
+    },
+    {
+      "src": "History_24",
+      "dst": "Physics_16",
+      "weight": 2.0,
+      "edge_type": "structural",
+      "last_updated_step": 261,
+      "n_updates": 3
+    },
+    {
+      "src": "Physics_16",
+      "dst": "Physics_4",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 260,
+      "n_updates": 2
+    },
+    {
+      "src": "History_8",
+      "dst": "Physics_16",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 253,
+      "n_updates": 1
+    },
+    {
+      "src": "Geography_9",
+      "dst": "Mathematics_8",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 256,
+      "n_updates": 2
+    },
+    {
+      "src": "Computer Science_2",
+      "dst": "Geography_9",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 256,
+      "n_updates": 2
+    },
+    {
+      "src": "Geography_22",
+      "dst": "Geography_9",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 257,
+      "n_updates": 1
+    },
+    {
+      "src": "Computer Science_22",
+      "dst": "Mathematics_6",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 286,
+      "n_updates": 2
+    },
+    {
+      "src": "Geography_21",
+      "dst": "Mathematics_6",
+      "weight": 2.0,
+      "edge_type": "structural",
+      "last_updated_step": 286,
+      "n_updates": 3
+    },
+    {
+      "src": "Geography_22",
+      "dst": "Mathematics_6",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 258,
+      "n_updates": 1
+    },
+    {
+      "src": "Geography_21",
+      "dst": "Physics_16",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 260,
+      "n_updates": 1
+    },
+    {
+      "src": "Geography_2",
+      "dst": "History_24",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 262,
+      "n_updates": 2
+    },
+    {
+      "src": "History_0",
+      "dst": "History_24",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 262,
+      "n_updates": 2
+    },
+    {
+      "src": "Geography_19",
+      "dst": "History_24",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 263,
+      "n_updates": 1
+    },
+    {
+      "src": "Biology_18",
+      "dst": "Computer Science_16",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 270,
+      "n_updates": 1
+    },
+    {
+      "src": "Biology_18",
+      "dst": "Geography_16",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 276,
+      "n_updates": 1
+    },
+    {
+      "src": "Computer Science_8",
+      "dst": "Geography_16",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 277,
+      "n_updates": 1
+    },
+    {
+      "src": "Computer Science_8",
+      "dst": "Mathematics_12",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 278,
+      "n_updates": 1
+    },
+    {
+      "src": "Geography_20",
+      "dst": "Physics_4",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 283,
+      "n_updates": 1
+    },
+    {
+      "src": "History_9",
+      "dst": "Mathematics_6",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 287,
+      "n_updates": 1
+    },
+    {
+      "src": "Biology_5",
+      "dst": "Biology_6",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 288,
+      "n_updates": 1
+    },
+    {
+      "src": "Biology_6",
+      "dst": "Mathematics_0",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 288,
+      "n_updates": 1
+    },
+    {
+      "src": "Biology_6",
+      "dst": "History_9",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 288,
+      "n_updates": 1
+    },
+    {
+      "src": "Biology_6",
+      "dst": "Geography_1",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 289,
+      "n_updates": 1
+    },
+    {
+      "src": "Computer Science_8",
+      "dst": "Physics_22",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 295,
+      "n_updates": 1
+    },
+    {
+      "src": "Biology_18",
+      "dst": "Geography_22",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 297,
+      "n_updates": 1
+    },
+    {
+      "src": "Geography_4",
+      "dst": "Mathematics_5",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 298,
+      "n_updates": 1
+    },
+    {
+      "src": "Biology_19",
+      "dst": "Mathematics_5",
+      "weight": 1.0,
+      "edge_type": "structural",
+      "last_updated_step": 298,
+      "n_updates": 1
+    },
+    {
+      "src": "Biology_10",
+      "dst": "Mathematics_5",
+      "weight": 2.0,
+      "edge_type": "structural",
+      "last_updated_step": 299,
+      "n_updates": 2
+    },
+    {
+      "src": "Biology_18",
+      "dst": "Mathematics_5",
+      "weight": 1.0,
+      "edge_type": "co_read",
+      "last_updated_step": 298,
+      "n_updates": 1
+    }
+  ],
+  "n_nodes": 81,
+  "n_edges": 279
+}

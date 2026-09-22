@@ -1,0 +1,80 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "zdm.fullname" . }}-backend
+  namespace: {{ include "zdm.namespace" . }}
+  labels:
+    {{- include "zdm.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.backend.replicas }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "zdm.backendSelectorLabels" . | nindent 6 }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        {{- include "zdm.backendSelectorLabels" . | nindent 8 }}
+      annotations:
+        # Roll the pod when the ConfigMap changes.
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+    spec:
+      serviceAccountName: {{ include "zdm.serviceAccountName" . }}
+      {{- with .Values.backend.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+      containers:
+        - name: backend
+          image: {{ include "zdm.backendImage" . }}
+          imagePullPolicy: {{ .Values.backend.image.pullPolicy }}
+          ports:
+            - name: rest
+              containerPort: {{ .Values.backend.restPort }}
+              protocol: TCP
+            - name: ws
+              containerPort: {{ .Values.backend.wsPort }}
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: {{ include "zdm.fullname" . }}-backend
+            {{- /* Secret is mounted only when at least one value is set. */ -}}
+            {{- $hasSecrets := false -}}
+            {{- range $key, $val := .Values.backend.secret -}}
+            {{- if $val -}}{{- $hasSecrets = true -}}{{- end -}}
+            {{- end -}}
+            {{- if $hasSecrets }}
+            - secretRef:
+                name: {{ include "zdm.fullname" . }}-backend
+            {{- end }}
+          livenessProbe:
+            {{- toYaml .Values.backend.livenessProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.backend.readinessProbe | nindent 12 }}
+          resources:
+            {{- toYaml .Values.backend.resources | nindent 12 }}
+          # The container image runs as a non-root user (uid 10001); ensure
+          # the filesystem is not writable beyond the data directory.
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL
+          # Give in-flight requests up to 30s to finish on SIGTERM (matches
+          # uvicorn --timeout-graceful-shutdown).
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
+      terminationGracePeriodSeconds: 45

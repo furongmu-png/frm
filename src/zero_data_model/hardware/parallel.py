@@ -171,7 +171,31 @@ class ParallelExecutor:
         with contextlib.suppress(Exception):
             self.shutdown()
 
-    def map(self, func: Callable[[T], R], items: Iterable[T]) -> list[R]:
+    # P2.15: 上下文管理器协议，便于 ``with ParallelExecutor() as px:``
+    # 用法，确保异常退出时线程池被正确关闭。``__enter__`` 返回 self，
+    # ``__exit__`` 调用 ``shutdown(wait=True)`` 等待所有 in-flight
+    # future 完成后再关闭，避免在 with 块内提交的任务被截断。
+    def __enter__(self) -> "ParallelExecutor":
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        # ``wait=True`` 确保退出 with 块时所有已提交任务完成。
+        # 异常情况下（exc_type is not None）仍然 wait，避免半完成的
+        # future 泄漏到下一个 with 块；若调用方希望快速失败可显式
+        # 调用 ``shutdown(wait=False)`` 后再 raise。
+        with self._recreate_lock:
+            pool = self._pool
+            self._pool = None
+        if pool is not None:
+            with contextlib.suppress(Exception):
+                pool.shutdown(wait=True)
+
+    def map(
+        self,
+        func: Callable[[T], R],
+        items: Iterable[T],
+        timeout: float | None = None,
+    ) -> list[R]:
         """Apply ``func`` to each item, preserving input order.
 
         Round-8 audit CONCUR8-5: when one future raises, ``fut.result()``
@@ -189,6 +213,10 @@ class ParallelExecutor:
         and the first ``pool.submit`` -- the previous code raised
         ``RuntimeError: cannot schedule new futures after interpreter
         shutdown`` in that window.
+
+        P2.15: ``timeout`` (秒) 为单个 future 提供硬性上限。超时后未
+        完成的 future 被取消，并抛出 ``TimeoutError``，防止单个模块
+        挂起拖垮整个 think() 周期。``None``（默认）保持向后兼容。
         """
         items_list = list(items)
         if not items_list:
@@ -214,8 +242,17 @@ class ParallelExecutor:
                 }
             results: list[R | None] = [None] * len(items_list)
             try:
-                for fut in as_completed(futures):
+                # P2.15: 将 timeout 传给 as_completed。超时后未完成的
+                # future 被取消，防止单模块挂起拖垮整个周期。
+                for fut in as_completed(futures, timeout=timeout):
                     results[futures[fut]] = fut.result()
+            except TimeoutError:
+                # P2.15: 至少一个 future 超时。取消所有未启动的 future
+                # 并把已完成的保留下来（若调用方希望容忍部分失败），
+                # 但默认行为是向上抛出 TimeoutError 以中止本次周期。
+                for fut in futures:
+                    fut.cancel()
+                raise
             except BaseException:
                 # CONCUR8-5: a future raised (or the caller was cancelled
                 # / interrupted). Cancel every not-yet-started future so the

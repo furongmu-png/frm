@@ -128,15 +128,37 @@ class ToposEngine:
         self._rng = rng if rng is not None else np.random.default_rng()
         self.truth_values = np.linspace(0, 1, dim)
         self.classifier = self._rng.standard_normal((dim, dim)) * 0.1
+        # Week-1 perf: cache a contiguous float view of ``classifier`` so the
+        # JIT path does not call ``np.ascontiguousarray`` (a fresh array copy
+        # when the source is non-contiguous or non-float) on every ``classify``
+        # call -- ``process`` and ``predict`` both call ``classify`` once per
+        # think() cycle. Invalidated only by ``CategoryTheoryEngine.update``
+        # (the sole mutator of ``classifier``), which flips ``_classifier_dirty``
+        # after the in-place add. The JIT branch recomputes the contiguous
+        # copy lazily on the next ``classify`` call.
+        self._classifier_contig: np.ndarray = np.ascontiguousarray(
+            self.classifier, dtype=float
+        )
+        self._classifier_dirty: bool = False
 
     def classify(self, signal: np.ndarray) -> np.ndarray:
         s = signal[: self.dim]
         if len(s) < self.dim:
             s = np.pad(s, (0, self.dim - len(s)))
         if _HAS_JIT:
+            # Week-1 perf: reuse the cached contiguous classifier view, only
+            # rebuilding it when ``update`` has mutated ``classifier`` since
+            # the last call. ``np.ascontiguousarray`` on an already-contiguous
+            # float array is a no-op (returns the input), so the rebuild is
+            # cheap when nothing changed.
+            if self._classifier_dirty:
+                self._classifier_contig = np.ascontiguousarray(
+                    self.classifier, dtype=float
+                )
+                self._classifier_dirty = False
             return _topos_classify(
                 np.ascontiguousarray(s, dtype=float),
-                np.ascontiguousarray(self.classifier, dtype=float),
+                self._classifier_contig,
             )
         return 1.0 / (1.0 + np.exp(-s @ self.classifier))
 
@@ -212,11 +234,16 @@ class CategoryTheoryEngine(CognitiveModule):
             a = np.pad(a, (0, self.dim - len(a)))
         if len(b) < self.dim:
             b = np.pad(b, (0, self.dim - len(b)))
+        # Week-1 perf: make both inputs contiguous once at the entry point so
+        # both the JIT and the pure-numpy paths see C-contiguous float arrays.
+        # The previous code only contig-copied in the JIT branch, so the numpy
+        # path paid repeated non-contiguous-access penalties when ``problem_a``
+        # / ``problem_b`` were slices of larger buffers (common in ``process``,
+        # which passes ``signal.data`` directly).
+        a = np.ascontiguousarray(a, dtype=float)
+        b = np.ascontiguousarray(b, dtype=float)
         if _HAS_JIT:
-            return float(_cosine_similarity(
-                np.ascontiguousarray(a, dtype=float),
-                np.ascontiguousarray(b, dtype=float),
-            ))
+            return float(_cosine_similarity(a, b))
         cos_sim = np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b) + 1e-8)
         return float(cos_sim)
 
@@ -318,7 +345,14 @@ class CategoryTheoryEngine(CognitiveModule):
 
     def process(self, signal: Signal) -> Signal:
         with self._lock:
-            truth = self.topos.classify(signal.data)
+            # Week-1 perf: make ``signal.data`` contiguous at entry so every
+            # downstream call (``topos.classify``, ``structural_similarity``
+            # loop over category objects) sees a C-contiguous buffer. The
+            # previous code re-contig-copied inside ``classify`` and (only in
+            # the JIT branch) inside ``structural_similarity``; doing it once
+            # here means a single copy covers all uses in this cycle.
+            data = np.ascontiguousarray(signal.data, dtype=float)
+            truth = self.topos.classify(data)
             for cat_name, cat in self.categories.items():
                 for _obj_name, obj_repr in cat.objects.items():
                     # Round-6 audit NEW5-10: call ``structural_similarity`` directly
@@ -327,7 +361,7 @@ class CategoryTheoryEngine(CognitiveModule):
                     # ``think()`` cycle that reached this loop emitted a
                     # DeprecationWarning (with stack-frame inspection) up to 15
                     # times per cycle (3 categories x 5 objects).
-                    similarity = self.structural_similarity(signal.data, obj_repr)
+                    similarity = self.structural_similarity(data, obj_repr)
                     if similarity > 0.8:
                         for functor in self.functors:
                             if functor.source == cat_name:
@@ -375,3 +409,6 @@ class CategoryTheoryEngine(CognitiveModule):
             # Round-3 audit CRIT-1: per-module Generator
             noise = self._rng.standard_normal((self.dim, self.dim)) * prediction_error * 0.001
             self.topos.classifier += noise
+            # Week-1 perf: ``classifier`` just mutated in-place -> invalidate
+            # the cached contiguous view so the next ``classify`` rebuilds it.
+            self.topos._classifier_dirty = True

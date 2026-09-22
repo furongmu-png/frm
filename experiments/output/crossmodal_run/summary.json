@@ -1,0 +1,260 @@
+{
+  "n_steps": 3000,
+  "n_consolidations": 30,
+  "n_replayed_experiences": 960,
+  "mean_pred_error": 0.0377807710991014,
+  "final_pred_error": 0.031664077177172664,
+  "mean_belief_norm": 0.16242814708774772,
+  "mean_free_energy": 0.004949210652046553,
+  "initial_W_pt_norm": 8.034484134028196,
+  "final_W_pt_norm": 14.989135491261784,
+  "initial_W_tp_norm": 8.048606154779039,
+  "final_W_tp_norm": 15.000000000000002,
+  "dim": 64,
+  "seed": 42,
+  "lr": 0.05,
+  "lambda": 0.01,
+  "dataset_size": 2000,
+  "consolidation_records": [
+    {
+      "step": 100,
+      "n_replayed": 32,
+      "mean_pred_error_before": 0.010513829165088924,
+      "mean_pred_error_after": 0.010490286612867442,
+      "delta_pred_error": -2.3542552221481744e-05,
+      "duration_ms": 2.490555001713801
+    },
+    {
+      "step": 200,
+      "n_replayed": 32,
+      "mean_pred_error_before": 0.010184871641924425,
+      "mean_pred_error_after": 0.01016769812064995,
+      "delta_pred_error": -1.717352127447551e-05,
+      "duration_ms": 2.3971379996510223
+    },
+    {
+      "step": 300,
+      "n_replayed": 32,
+      "mean_pred_error_before": 0.011933000777526119,
+      "mean_pred_error_after": 0.011917812590171762,
+      "delta_pred_error": -1.5188187354357036e-05,
+      "duration_ms": 2.456056001392426
+    },
+    {
+      "step": 400,
+      "n_replayed": 32,
+      "mean_pred_error_before": 0.011938455504534744,
+      "mean_pred_error_after": 0.01192361162612755,
+      "delta_pred_error": -1.48438784071947e-05,
+      "duration_ms": 2.3365390006802045
+    },
+    {
+      "step": 500,
+      "n_replayed": 32,
+      "mean_pred_error_before": 0.014081712905207577,
+      "mean_pred_error_after": 0.014065521059710106,
+      "delta_pred_error": -1.6191845497471116e-05,
+      "duration_ms": 2.3990640002011787
+    },
+    {
+      "step": 600,
+      "n_replayed": 32,
+      "mean_pred_error_before": 0.014762377105342962,
+      "mean_pred_error_after": 0.014744373611248468,
+      "delta_pred_error": -1.800349409449356e-05,
+      "duration_ms": 2.4059659990598448
+    },
+    {
+      "step": 700,
+      "n_replayed": 32,
+      "mean_pred_error_before": 0.01950646297637938,
+      "mean_pred_error_after": 0.019484185642918598,
+      "delta_pred_error": -2.2277333460780924e-05,
+      "duration_ms": 2.4259169986180495
+    },
+    {
+      "step": 800,
+      "n_replayed": 32,
+      "mean_pred_error_before": 0.022259110691410768,
+      "mean_pred_error_after": 0.022234989310685578,
+      "delta_pred_error": -2.4121380725189434e-05,
+      "duration_ms": 2.4403999996138737
+    },
+    {
+      "step": 900,
+      "n_replayed": 32,
+      "mean_pred_error_before": 0.025567909649683765,
+      "mean_pred_error_after": 0.02554143466762007,
+      "delta_pred_error": -2.647498206369628e-05,
+      "duration_ms": 2.4296970004797913
+    },
+    {
+      "step": 1000,
+      "n_replayed": 32,
+      "mean_pred_error_before": 0.03203113446484582,
+      "mean_pred_error_after": 0.0319949784811065,
+      "delta_pred_error": -3.615598373931522e-05,
+      "duration_ms": 2.455260997521691
+    },
+    {
+      "step": 1100,
+      "n_replayed": 32,
+      "mean_pred_error_before": 0.034877256952417265,
+      "mean_pred_error_after": 0.03484312359990917,
+      "delta_pred_error": -3.413335250809779e-05,
+      "duration_ms": 2.4115699998219498
+    },
+    {
+      "step": 1200,
+      "n_replayed": 32,
+      "mean_pred_error_before": 0.038090651682296785,
+      "mean_pred_error_after": 0.03805033024607737,
+      "delta_pred_error": -4.032143621941764e-05,
+      "duration_ms": 2.379727000516141
+    },
+    {
+      "step": 1300,
+      "n_replayed": 32,
+      "mean_pred_error_before": 0.04314430745957811,
+      "mean_pred_error_after": 0.043058539507759876,
+      "delta_pred_error": -8.576795181823582e-05,
+      "duration_ms": 2.4765119997027796
+    },
+    {
+      "step": 1400,
+      "n_replayed": 32,
+      "mean_pred_error_before": 0.04704443669201653,
+      "mean_pred_error_after": 0.04691673715669489,
+      "delta_pred_error": -0.0001276995353216362,
+      "duration_ms": 2.565409999078838
+    },
+    {
+      "step": 1500,
+      "n_replayed": 32,
+      "mean_pred_error_before": 0.05432731366045958,
+      "mean_pred_error_after": 0.054174714588281034,
+      "delta_pred_error": -0.00015259907217854418,
+      "duration_ms": 2.525877000152832
+    },
+    {
+      "step": 1600,
+      "n_replayed": 32,
+      "mean_pred_error_before": 0.0497122838300179,
+      "mean_pred_error_after": 0.04957682360193277,
+      "delta_pred_error": -0.00013546022808513108,
+      "duration_ms": 2.4899700001697056
+    },
+    {
+      "step": 1700,
+      "n_replayed": 32,
+      "mean_pred_error_before": 0.052871117278062076,
+      "mean_pred_error_after": 0.05271967682407973,
+      "delta_pred_error": -0.00015144045398234746,
+      "duration_ms": 2.471189000061713
+    },
+    {
+      "step": 1800,
+      "n_replayed": 32,
+      "mean_pred_error_before": 0.04845591285775003,
+      "mean_pred_error_after": 0.04831957973104897,
+      "delta_pred_error": -0.0001363331267010548,
+      "duration_ms": 2.821116999257356
+    },
+    {
+      "step": 1900,
+      "n_replayed": 32,
+      "mean_pred_error_before": 0.06068503279468481,
+      "mean_pred_error_after": 0.0604889197469231,
+      "delta_pred_error": -0.00019611304776170901,
+      "duration_ms": 2.5368749993504025
+    },
+    {
+      "step": 2000,
+      "n_replayed": 32,
+      "mean_pred_error_before": 0.06426520970444502,
+      "mean_pred_error_after": 0.06403964666702092,
+      "delta_pred_error": -0.00022556303742410355,
+      "duration_ms": 2.5610390002839267
+    },
+    {
+      "step": 2100,
+      "n_replayed": 32,
+      "mean_pred_error_before": 0.05978724614850236,
+      "mean_pred_error_after": 0.05957839956756654,
+      "delta_pred_error": -0.00020884658093581893,
+      "duration_ms": 2.6469889999134466
+    },
+    {
+      "step": 2200,
+      "n_replayed": 32,
+      "mean_pred_error_before": 0.05663058066886598,
+      "mean_pred_error_after": 0.05642339039142222,
+      "delta_pred_error": -0.00020719027744376534,
+      "duration_ms": 2.5722309983393643
+    },
+    {
+      "step": 2300,
+      "n_replayed": 32,
+      "mean_pred_error_before": 0.06459886147480262,
+      "mean_pred_error_after": 0.0643477336971769,
+      "delta_pred_error": -0.0002511277776257176,
+      "duration_ms": 2.5987490007537417
+    },
+    {
+      "step": 2400,
+      "n_replayed": 32,
+      "mean_pred_error_before": 0.06887718311632815,
+      "mean_pred_error_after": 0.06857266007657323,
+      "delta_pred_error": -0.00030452303975492256,
+      "duration_ms": 36.27883599983761
+    },
+    {
+      "step": 2500,
+      "n_replayed": 32,
+      "mean_pred_error_before": 0.06708234870816376,
+      "mean_pred_error_after": 0.0667995599019907,
+      "delta_pred_error": -0.0002827888061730649,
+      "duration_ms": 2.546083000197541
+    },
+    {
+      "step": 2600,
+      "n_replayed": 32,
+      "mean_pred_error_before": 0.059252049971754504,
+      "mean_pred_error_after": 0.05900956192455813,
+      "delta_pred_error": -0.0002424880471963778,
+      "duration_ms": 2.655780997883994
+    },
+    {
+      "step": 2700,
+      "n_replayed": 32,
+      "mean_pred_error_before": 0.06199431169249525,
+      "mean_pred_error_after": 0.061743813434047265,
+      "delta_pred_error": -0.000250498258447987,
+      "duration_ms": 2.6001750011346303
+    },
+    {
+      "step": 2800,
+      "n_replayed": 32,
+      "mean_pred_error_before": 0.06989942604612853,
+      "mean_pred_error_after": 0.06961699396191412,
+      "delta_pred_error": -0.00028243208421441235,
+      "duration_ms": 2.678707998711616
+    },
+    {
+      "step": 2900,
+      "n_replayed": 32,
+      "mean_pred_error_before": 0.08937270412697494,
+      "mean_pred_error_after": 0.08892215842386324,
+      "delta_pred_error": -0.0004505457031117044,
+      "duration_ms": 2.6847129993257113
+    },
+    {
+      "step": 3000,
+      "n_replayed": 32,
+      "mean_pred_error_before": 0.05452186991007687,
+      "mean_pred_error_after": 0.05431618010782658,
+      "delta_pred_error": -0.000205689802250289,
+      "duration_ms": 2.516990000003716
+    }
+  ]
+}

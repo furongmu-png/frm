@@ -27,7 +27,9 @@ Security & operational hardening:
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
+import functools
 import hmac
 import json
 import logging
@@ -41,6 +43,7 @@ from typing import Any
 
 import numpy as np
 from fastapi import (
+    APIRouter,
     Body,
     Depends,
     FastAPI,
@@ -54,8 +57,15 @@ from pydantic import BaseModel, Field, field_validator
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from . import __version__
+from .cache import timed_lru_cache
+from .metrics import ZDM_METRICS
 from .model import ZeroDataModel
 from .persistence import ModelSerializer
+from .security import (
+    RateLimiter,
+    RequestSizeLimitMiddleware,
+    SecurityHeadersMiddleware,
+)
 
 # --------------------------------------------------------------------------- #
 # Optional dependencies -- imported defensively so the app keeps working
@@ -76,15 +86,13 @@ except Exception:  # pragma: no cover - optional dep missing
     get_remote_address = None  # type: ignore[assignment]
 
 try:  # pragma: no cover - environment-dependent import
-    from prometheus_client import CONTENT_TYPE_LATEST, Gauge, Histogram, generate_latest
+    from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
     from prometheus_fastapi_instrumentator import Instrumentator
 
     _HAS_PROMETHEUS = True
 except Exception:  # pragma: no cover - optional dep missing
     _HAS_PROMETHEUS = False
     Instrumentator = None  # type: ignore[assignment, misc]
-    Histogram = None  # type: ignore[assignment, misc]
-    Gauge = None  # type: ignore[assignment, misc]
     CONTENT_TYPE_LATEST = ""  # type: ignore[assignment]
     generate_latest = None  # type: ignore[assignment]
 
@@ -101,6 +109,19 @@ except Exception:  # pragma: no cover - optional dep missing
 # Logging setup -- JSON formatter via structlog if available, else stdlib
 # JSON lines via a JsonFormatter. Level is read from ZDM_LOG_LEVEL.
 # --------------------------------------------------------------------------- #
+
+
+# LogRecord built-in attribute names that ``makeRecord`` refuses to
+# overwrite via ``extra=`` (it raises ``KeyError``). Structured log fields
+# sharing one of these names (e.g. ``module`` -- which the phase-7
+# structured-logging decorator uses) must be stashed separately by
+# ``_LoggerAdapter._emit`` so the stdlib fallback path does not crash.
+_RESERVED_LOGRECORD_KEYS = frozenset({
+    "name", "msg", "args", "levelname", "levelno", "pathname", "filename",
+    "module", "exc_info", "exc_text", "stack_info", "lineno", "funcName",
+    "created", "msecs", "relativeCreated", "thread", "threadName",
+    "processName", "process", "message", "asctime", "taskName",
+})
 
 
 class _JsonFormatter(logging.Formatter):
@@ -126,6 +147,13 @@ class _JsonFormatter(logging.Formatter):
         ):
             if key in record.__dict__:
                 payload[key] = record.__dict__[key]
+        # Merge structured fields whose names collide with reserved
+        # LogRecord attributes (e.g. ``module``); ``_emit`` stashes them
+        # here so they survive to the formatter without triggering
+        # ``makeRecord``'s reserved-key overwrite guard.
+        _overrides = record.__dict__.get("_structured_overrides")
+        if isinstance(_overrides, dict):
+            payload.update(_overrides)
         if record.exc_info:
             payload["exc"] = self.formatException(record.exc_info)
         return json.dumps(payload, default=str)
@@ -178,8 +206,22 @@ class _LoggerAdapter:
             getattr(self._logger, level)(msg, **kwargs)
         else:
             # stdlib: stash kwargs as LogRecord extras so _JsonFormatter
-            # can promote them to top-level JSON keys.
-            extra = {k: v for k, v in kwargs.items() if k != "exc_info"}
+            # can promote them to top-level JSON keys. Keys that collide
+            # with reserved LogRecord attributes (e.g. ``module``) would
+            # raise ``KeyError`` in ``makeRecord``; collect those under a
+            # single non-reserved attribute so the formatter can still
+            # emit them without overwriting the real record field.
+            extra: dict[str, Any] = {}
+            reserved_overrides: dict[str, Any] = {}
+            for _k, _v in kwargs.items():
+                if _k == "exc_info":
+                    continue
+                if _k in _RESERVED_LOGRECORD_KEYS:
+                    reserved_overrides[_k] = _v
+                else:
+                    extra[_k] = _v
+            if reserved_overrides:
+                extra["_structured_overrides"] = reserved_overrides
             exc_info = kwargs.get("exc_info")
             getattr(self._logger, level)(msg, extra=extra, exc_info=exc_info)
 
@@ -254,6 +296,98 @@ def set_model(model: ZeroDataModel | None) -> None:
     if old is not None:
         with contextlib.suppress(Exception):
             old.parallel_executor.shutdown()
+    # P2.11 性能优化: 模型实例被替换后，所有读缓存的端点都必须失效，
+    # 否则新模型的前若干次读会被旧模型的快照污染。统一清空缓存注册表。
+    _clear_endpoint_caches()
+
+
+# --------------------------------------------------------------------------- #
+# P2.11 性能优化: 读端点缓存层
+#
+# 下列 ``_cached_*`` 辅助函数为"不频繁变化"的只读端点提供 TTL 缓存：
+#   - ``/architect/stats`` 与 ``/architect/dormant``: 架构可塑性统计仅在
+#     每 ``eval_interval`` 个 think() 周期更新一次，30s TTL 足够新鲜。
+#   - ``/episodic_graph/node_count`` 与 ``/episodic_graph/recent``: 情节图
+#     节点数随周期增长但变化缓慢，60s TTL 平衡新鲜度与开销。
+#
+# 设计要点：
+#   * 缓存的是 ``_to_jsonable`` 后的纯 Python dict（与 numpy 解耦），
+#     不会持有模型内部数组的引用。
+#   * 用哨兵 ``_CACHE_DISABLED`` 表示"模块未启用"，避免缓存 JSONResponse
+#     对象（FastAPI 不应复用响应实例）。端点根据哨兵重建 503 响应。
+#   * ``set_model`` 替换模型实例时通过 ``_clear_endpoint_caches`` 清空所有
+#     缓存，防止旧模型快照污染新模型的前几次读。
+#   * 不缓存 ``/think``（每次结果不同）、``/health``、``/ready``（探针必须
+#     反映实时状态）。
+# --------------------------------------------------------------------------- #
+_CACHE_DISABLED = object()
+_ENDPOINT_CACHE_REGISTRY: list = []
+
+
+def _register_cache(fn):
+    """Register a timed_lru_cache-wrapped function for bulk invalidation."""
+    _ENDPOINT_CACHE_REGISTRY.append(fn)
+    return fn
+
+
+@_register_cache
+@timed_lru_cache(maxsize=1, ttl=30)
+def _cached_architect_stats() -> Any:
+    """Cached ``architect.stats`` (30s TTL). Returns ``_CACHE_DISABLED`` if
+    the architect module is not enabled."""
+    model = get_model()
+    with model._lock:
+        arch = model.architect
+        if arch is None:
+            return _CACHE_DISABLED
+        return _to_jsonable(arch.stats)
+
+
+@_register_cache
+@timed_lru_cache(maxsize=1, ttl=30)
+def _cached_architect_dormant() -> Any:
+    """Cached dormant module names (30s TTL). Returns ``_CACHE_DISABLED`` if
+    the architect module is not enabled."""
+    model = get_model()
+    with model._lock:
+        arch = model.architect
+        if arch is None:
+            return _CACHE_DISABLED
+        return {"dormant": list(arch.dormant_names())}
+
+
+@_register_cache
+@timed_lru_cache(maxsize=1, ttl=60)
+def _cached_episodic_node_count() -> Any:
+    """Cached episodic-graph node count (60s TTL). Returns
+    ``_CACHE_DISABLED`` if the episodic_graph module is not enabled."""
+    model = get_model()
+    with model._lock:
+        eg = model.episodic_graph
+        if eg is None:
+            return _CACHE_DISABLED
+        return {"node_count": int(eg.node_count)}
+
+
+@_register_cache
+@timed_lru_cache(maxsize=32, ttl=60)
+def _cached_episodic_recent(n: int) -> Any:
+    """Cached recent episodes (60s TTL, keyed by ``n``). Returns
+    ``_CACHE_DISABLED`` if the episodic_graph module is not enabled."""
+    model = get_model()
+    with model._lock:
+        eg = model.episodic_graph
+        if eg is None:
+            return _CACHE_DISABLED
+        episodes = eg.get_recent(n)
+        return {"episodes": _to_jsonable([vars(e) for e in episodes])}
+
+
+def _clear_endpoint_caches() -> None:
+    """Clear all registered endpoint caches (called on ``set_model``)."""
+    for fn in _ENDPOINT_CACHE_REGISTRY:
+        with contextlib.suppress(Exception):
+            fn.cache_clear()
 
 
 # Round-6 audit NEW5-2 / NEW5-3: validate that an input array is finite
@@ -294,6 +428,24 @@ def _to_jsonable(obj: Any) -> Any:
     if isinstance(obj, float):
         return obj if np.isfinite(obj) else None
     return obj
+
+
+def _module_disabled_response(name: str) -> JSONResponse:
+    """Return a 503 response body for an un-enabled cognitive-upgrade module.
+
+    Phase 7 cognitive modules (architect / layered_predictor / temporal_memory
+    / episodic_graph / semantic_index / logic_layer / causal_inference /
+    meta_cognition / experiment_planner / hypothesis_tester) are gated behind
+    ``enable_*`` feature flags on :class:`ZeroDataModel`, and the multiagent
+    modules (world / communication / culture) are not yet integrated into the
+    model at all. When the corresponding attribute is ``None`` the endpoint
+    returns this 503 so callers can distinguish "not enabled" from a real
+    error.
+    """
+    return JSONResponse(
+        status_code=503,
+        content={"detail": f"module {name} not enabled", "enabled": False},
+    )
 
 
 def _parse_obstacles(rows: list[list[float]]) -> list[tuple[np.ndarray, float]]:
@@ -380,27 +532,77 @@ def _limit(rate: str):  # type: ignore[no-untyped-def]
 
 
 # --------------------------------------------------------------------------- #
-# Prometheus custom metrics (only constructed if prometheus is available)
+# Prometheus custom metrics.
+#
+# All ``zdm_*`` metric objects are centrally owned by
+# :mod:`zero_data_model.metrics` (``ZDM_METRICS``) and re-exported here as
+# backwards-compatible module-level aliases so existing call sites
+# (``_think_duration`` / ``_cycle_count`` / ``_free_energy``) keep working
+# unchanged. When ``prometheus_client`` is absent every object is a no-op
+# (see ``metrics._NoopMetric``), so these aliases are always non-``None``.
 # --------------------------------------------------------------------------- #
 
-if _HAS_PROMETHEUS:
-    _think_duration = Histogram(
-        "zdm_think_duration_seconds",
-        "Wall-clock duration of /think cycles in seconds.",
-        buckets=(0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10),
-    )
-    _cycle_count = Gauge(
-        "zdm_cycle_count",
-        "Current model cycle count.",
-    )
-    _free_energy = Gauge(
-        "zdm_free_energy_last",
-        "Last think() cycle free energy",
-    )
-else:
-    _think_duration = None  # type: ignore[assignment]
-    _cycle_count = None  # type: ignore[assignment]
-    _free_energy = None  # type: ignore[assignment]
+_think_duration = ZDM_METRICS.think_duration
+_cycle_count = ZDM_METRICS.cycle_count
+_free_energy = ZDM_METRICS.free_energy
+
+
+# --------------------------------------------------------------------------- #
+# Phase-7 endpoint structured-logging decorator.
+#
+# Wraps a phase-7 cognitive-upgrade endpoint so every call emits a
+# structured ``phase7.endpoint.call`` log on entry, ``phase7.endpoint.ok``
+# (with ``duration_ms``) on success, and ``phase7.endpoint.error`` on
+# exception -- and increments the generic cognitive-module call / duration
+# / error Prometheus counters (``zdm_cognitive_module_*``).
+#
+# ``functools.wraps`` preserves the wrapped function's signature so FastAPI
+# dependency injection (``Request`` / ``Depends``) keeps working through the
+# wrapper.
+# --------------------------------------------------------------------------- #
+
+
+def _log_phase7(module: str, method: str):  # type: ignore[no-untyped-def]
+    """Decorate a phase-7 endpoint to log entry/exit/exception + latency."""
+
+    def _decorator(func):  # type: ignore[no-untyped-def]
+        @functools.wraps(func)
+        async def _wrapper(*args: Any, **kwargs: Any) -> Any:
+            log.info("phase7.endpoint.call", module=module, method=method)
+            ZDM_METRICS.cognitive_module_calls_total.labels(
+                module=module, method=method
+            ).inc()
+            _hist = ZDM_METRICS.cognitive_module_duration_seconds.labels(
+                module=module, method=method
+            )
+            _start = time.perf_counter()
+            try:
+                _result = await func(*args, **kwargs)
+            except Exception as exc:
+                _hist.observe(time.perf_counter() - _start)
+                ZDM_METRICS.cognitive_module_errors_total.labels(
+                    module=module, method=method
+                ).inc()
+                log.warning(
+                    "phase7.endpoint.error",
+                    module=module,
+                    method=method,
+                    error=str(exc),
+                )
+                raise
+            _elapsed = time.perf_counter() - _start
+            _hist.observe(_elapsed)
+            log.info(
+                "phase7.endpoint.ok",
+                module=module,
+                method=method,
+                duration_ms=round(_elapsed * 1000, 3),
+            )
+            return _result
+
+        return _wrapper
+
+    return _decorator
 
 
 # --------------------------------------------------------------------------- #
@@ -961,6 +1163,81 @@ class CausalInterveneRequest(BaseModel):
 
 
 # --------------------------------------------------------------------------- #
+# Phase 7 cognitive-upgrade request schemas (plasticity / cogtime / cogmem /
+# knowledge / metacog / experiment / multiagent).
+# --------------------------------------------------------------------------- #
+
+
+class ArchitectReactivateRequest(BaseModel):
+    """Reactivate a dormant module by name."""
+    name: str = Field(..., min_length=1, max_length=256)
+
+
+class EpisodicPlanRequest(BaseModel):
+    """Plan a minimum-free-energy path between two state vectors."""
+    start_state: list[float] = Field(..., min_length=1, max_length=4096)
+    goal_state: list[float] = Field(..., min_length=1, max_length=4096)
+    horizon: int = Field(20, ge=1, le=4096)
+
+
+class SemanticQueryRequest(BaseModel):
+    """Query the semantic index for the k nearest entries."""
+    vec: list[float] = Field(..., min_length=1, max_length=4096)
+    k: int = Field(5, ge=1, le=1024)
+
+
+class LogicRuleRequest(BaseModel):
+    """Register a fuzzy logic rule."""
+    name: str = Field(..., min_length=1, max_length=256)
+    antecedents: list[str] = Field(default_factory=list, max_length=256)
+    consequent: str = Field(..., min_length=1, max_length=256)
+    weight: float = Field(1.0, ge=0.0, le=1000.0)
+    description: str = Field("", max_length=4096)
+
+
+class LogicPredicateRequest(BaseModel):
+    """Set a predicate truth value (clamped to [0, 1])."""
+    name: str = Field(..., min_length=1, max_length=256)
+    value: float = Field(..., ge=0.0, le=1.0)
+
+
+class CausalTransitionRequest(BaseModel):
+    """Set the causal transition matrix (must be a square 2-D matrix)."""
+    matrix: list[list[float]] = Field(..., min_length=1, max_length=4096)
+
+
+class CausalDoRequest(BaseModel):
+    """Apply a single do-intervention: do(X[index] = value)."""
+    index: int = Field(..., ge=0, le=4095)
+    value: float
+
+
+class CausalInferenceCounterfactualRequest(BaseModel):
+    """Estimate a counterfactual state under do(X[index] = value)."""
+    observed: list[float] = Field(..., min_length=1, max_length=4096)
+    index: int = Field(..., ge=0, le=4095)
+    value: float
+
+
+class CausalConfoundersRequest(BaseModel):
+    """Identify potential confounders between two target variables."""
+    var_a: int = Field(..., ge=0, le=4095)
+    var_b: int = Field(..., ge=0, le=4095)
+
+
+class ExperimentSelectBestRequest(BaseModel):
+    """Select the best candidate experiment given current uncertainty."""
+    current_uncertainty: float = Field(0.5, ge=0.0, le=1.0)
+
+
+class ExperimentRecordRequest(BaseModel):
+    """Record the outcome of an executed candidate experiment."""
+    candidate_id: int = Field(..., ge=0, le=1000000)
+    fe_before: float
+    fe_after: float
+
+
+# --------------------------------------------------------------------------- #
 # Request tracing middleware (X-Request-ID, structured access log)
 # --------------------------------------------------------------------------- #
 
@@ -1129,6 +1406,11 @@ def create_app() -> FastAPI:
         docs_url=None if is_production else "/docs",
         redoc_url=None if is_production else "/redoc",
         openapi_url=None if is_production else "/openapi.json",
+        openapi_tags=[
+            {"name": "core", "description": "Core cognitive operations"},
+            {"name": "phase7", "description": "Phase 7 cognitive upgrade modules"},
+            {"name": "versioning", "description": "API version information"},
+        ],
     )
 
     # Register the rate-limit middleware + handler when slowapi is present.
@@ -1175,6 +1457,78 @@ def create_app() -> FastAPI:
     # match the configured allow-list (host-header injection / cache
     # poisoning).
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=_allowed_hosts)
+
+    # ---------------------------------------------------------------- #
+    # Security middleware layer (token-bucket rate limit, request-size
+    # guard, browser-facing security response headers).
+    #
+    # Starlette ``add_middleware`` / ``app.middleware("http")`` are LIFO:
+    # the LAST registered middleware is the OUTERMOST (runs first on
+    # inbound, last on the outbound response). We register in this order
+    # so that the OUTERMOST middleware is ``SecurityHeadersMiddleware`` --
+    # that way *every* response (including 429 from the rate limiter and
+    # 413 from the size guard, which short-circuit by returning a
+    # ``JSONResponse`` directly) still carries the security headers on the
+    # way out. Execution order (outermost first):
+    #   SecurityHeaders -> RequestSizeLimit -> rate_limit
+    #   -> TrustedHost -> CORS -> request_tracing -> _limit_body_size
+    #   -> slowapi -> endpoint.
+    # ---------------------------------------------------------------- #
+    # Rate-limit middleware (token-bucket, per-client). Health/readiness
+    # and metrics/docs paths are exempt so probes and Prometheus scrapes
+    # (which do not carry credentials) are never throttled. Configurable
+    # via ZDM_RATE_LIMIT_RPM (default 60) and ZDM_RATE_LIMIT_BURST
+    # (default 10). WebSocket endpoints bypass the HTTP middleware chain
+    # entirely; they must call ``RateLimiter.check`` in their own handler.
+    _rate_limiter = RateLimiter(
+        requests_per_minute=int(os.environ.get("ZDM_RATE_LIMIT_RPM", "60")),
+        burst=int(os.environ.get("ZDM_RATE_LIMIT_BURST", "10")),
+    )
+    _rate_limit_exempt_paths = frozenset(
+        {
+            "/",
+            "/health",
+            "/ready",
+            "/version",
+            "/metrics",
+            "/docs",
+            "/redoc",
+            "/openapi.json",
+            # v1 mirrors of health/readiness/version are also probe-class
+            # paths and must never be throttled.
+            "/v1/health",
+            "/v1/ready",
+            "/v1/version",
+        }
+    )
+
+    @app.middleware("http")
+    async def rate_limit_middleware(request: Request, call_next):  # type: ignore[no-untyped-def]
+        if request.url.path in _rate_limit_exempt_paths:
+            return await call_next(request)
+        if not _rate_limiter.check(request):
+            request_id = getattr(request.state, "request_id", "-")
+            return JSONResponse(
+                status_code=429,
+                content={
+                    "detail": "Rate limit exceeded. Try again later.",
+                    "request_id": request_id,
+                },
+                headers={"Retry-After": "60"},
+            )
+        return await call_next(request)
+
+    # Coarse outer DoS guard on the declared Content-Length. The stricter
+    # per-route cap (MAX_BODY = 4 MiB inside ``_limit_body_size``) remains
+    # the authoritative application limit; this 10 MiB guard rejects
+    # pathologically large uploads before they reach the inner stack.
+    app.add_middleware(
+        RequestSizeLimitMiddleware, max_size=10 * 1024 * 1024
+    )
+    # Security response headers on every response (outermost). Registered
+    # last so it is the OUTERMOST middleware and wraps all short-circuit
+    # responses (429 / 413 / 401 / 500) too.
+    app.add_middleware(SecurityHeadersMiddleware)
 
     # Prometheus instrumentator (optional). The instrumentator still
     # collects the default HTTP metrics, but the /metrics endpoint is
@@ -1272,6 +1626,63 @@ def create_app() -> FastAPI:
         )
 
     # ---------------------------------------------------------------- #
+    # API versioning (Phase: /v1 prefix + backward-compat root paths)
+    # ---------------------------------------------------------------- #
+    # All business endpoints are registered on ``v1_router`` and mounted
+    # twice: once under ``/v1`` (canonical) and once at the root (legacy,
+    # hidden from OpenAPI, marked deprecated by the middleware below).
+    # ``/metrics``, ``/`` stay on ``app`` directly (root only, never
+    # deprecated). ``/health`` and ``/ready`` live on ``v1_router`` so they
+    # are reachable at both ``/health`` and ``/v1/health`` (health probes must
+    # not be version-gated); they are exempt from the deprecation header.
+    v1_router = APIRouter()
+
+    # Root paths that must NOT carry the ``X-Deprecated`` header. Everything
+    # else served at the root (i.e. legacy mirrors of /v1 endpoints) is
+    # flagged deprecated with a ``Link`` pointing at the successor version.
+    _non_deprecated_root_paths = frozenset(
+        {
+            "/",
+            "/health",
+            "/ready",
+            "/version",
+            "/metrics",
+            "/docs",
+            "/redoc",
+            "/openapi.json",
+        }
+    )
+
+    # Version negotiation via Accept header. A caller requesting a future
+    # version (e.g. ``application/vnd.zdm.v2+json``) gets a 501 pointing them
+    # at v1. Registered outermost so it can short-circuit before auth/CORS.
+    @app.middleware("http")
+    async def version_negotiation(request: Request, call_next):  # type: ignore[no-untyped-def]
+        accept = request.headers.get("accept", "")
+        if "application/vnd.zdm.v2+json" in accept:
+            return JSONResponse(
+                status_code=501,
+                content={"detail": "v2 not yet implemented. Use v1."},
+                headers={"X-Content-Type-Options": "nosniff"},
+            )
+        return await call_next(request)
+
+    # Backward-compat deprecation marker. Any non-/v1, non-exempt path served
+    # at the root is a legacy mirror of the /v1 endpoint and is flagged with
+    # ``X-Deprecated: true`` plus a ``Link`` to the successor version.
+    @app.middleware("http")
+    async def deprecate_root_paths(request: Request, call_next):  # type: ignore[no-untyped-def]
+        response = await call_next(request)
+        path = request.url.path
+        if (
+            not path.startswith("/v1")
+            and path not in _non_deprecated_root_paths
+        ):
+            response.headers["X-Deprecated"] = "true"
+            response.headers["Link"] = f'</v1{path}>; rel="successor-version"'
+        return response
+
+    # ---------------------------------------------------------------- #
     # Health / readiness (cheap liveness; readiness probes the model)
     # ---------------------------------------------------------------- #
     @app.get(
@@ -1314,7 +1725,7 @@ def create_app() -> FastAPI:
             },
         )
 
-    @app.get(
+    @v1_router.get(
         "/health",
         response_model=HealthResponse,
         responses={
@@ -1339,7 +1750,7 @@ def create_app() -> FastAPI:
             )
         return HealthResponse(status="ok")
 
-    @app.get(
+    @v1_router.get(
         "/ready",
         response_model=ReadyResponse,
         responses={
@@ -1388,18 +1799,26 @@ def create_app() -> FastAPI:
     # ---------------------------------------------------------------- #
     # Cognitive endpoints
     # ---------------------------------------------------------------- #
-    @app.post(
+    @v1_router.post(
         "/think",
         response_model=ThinkResponse,
         tags=["cognitive"],
         dependencies=[Depends(verify_api_key)],
     )
     @_limit("10/minute")
-    def think(
+    async def think(
         request: Request,
         req: ThinkRequest | None = Body(default=None),  # noqa: B008
     ) -> ThinkResponse:
-        """Run one thought cycle. With no ``input`` the model self-generates."""
+        """Run one thought cycle. With no ``input`` the model self-generates.
+
+        P2.16 异步改造: ``think()`` 是 CPU 密集的同步调用（毫秒级到
+        秒级），原同步 handler 会阻塞 FastAPI 事件循环的工作线程，
+        导致其他异步端点（``/perceive-topology``、``/discover-causal-dynamics``
+        等）排队等待。改为 ``async def`` 并用 ``asyncio.to_thread``
+        把 ``model.think`` 调度到默认线程池，释放事件循环处理其他
+        请求。Prometheus 指标与 cycle_count 读取逻辑保持不变。
+        """
         model = get_model()
         body = req or ThinkRequest()
         input_data = (
@@ -1408,7 +1827,8 @@ def create_app() -> FastAPI:
         if input_data is not None:
             _ensure_finite(input_data, "input")
         start = time.perf_counter()
-        signal = model.think(input_data)
+        # P2.16: 把同步 think() 卸载到线程池，避免阻塞事件循环。
+        signal = await asyncio.to_thread(model.think, input_data)
         if _think_duration is not None:
             _think_duration.observe(time.perf_counter() - start)
         # Round-8 audit CONCUR8-8: read cycle_count and the last free energy
@@ -1435,7 +1855,7 @@ def create_app() -> FastAPI:
             confidence=float(signal.confidence),
         )
 
-    @app.post(
+    @v1_router.post(
         "/classify",
         response_model=ClassifyResponse,
         tags=["nlp"],
@@ -1457,7 +1877,7 @@ def create_app() -> FastAPI:
             topic, conf = model.classify_text(req.text)
         return ClassifyResponse(topic=str(topic), confidence=float(conf))
 
-    @app.post(
+    @v1_router.post(
         "/similarity",
         response_model=SimilarityResponse,
         tags=["nlp"],
@@ -1472,7 +1892,7 @@ def create_app() -> FastAPI:
             score = model.text_similarity(req.a, req.b)
         return SimilarityResponse(similarity=float(score))
 
-    @app.post(
+    @v1_router.post(
         "/generate",
         response_model=GenerateResponse,
         tags=["nlp"],
@@ -1487,7 +1907,7 @@ def create_app() -> FastAPI:
             text = model.generate_text(req.seed, length=req.length)
         return GenerateResponse(text=str(text))
 
-    @app.post(
+    @v1_router.post(
         "/forecast",
         response_model=ForecastResponse,
         tags=["analytics"],
@@ -1508,7 +1928,7 @@ def create_app() -> FastAPI:
             forecast=[float(x) for x in np.asarray(preds).flatten().tolist()]
         )
 
-    @app.post(
+    @v1_router.post(
         "/anomalies",
         response_model=AnomaliesResponse,
         tags=["analytics"],
@@ -1527,7 +1947,7 @@ def create_app() -> FastAPI:
             mask = model.detect_anomalies(series)
         return AnomaliesResponse(anomalies=[bool(x) for x in np.asarray(mask).tolist()])
 
-    @app.post(
+    @v1_router.post(
         "/trend",
         response_model=TrendResponse,
         tags=["analytics"],
@@ -1552,7 +1972,7 @@ def create_app() -> FastAPI:
             isomorphism_score=float(out["isomorphism_score"]),
         )
 
-    @app.post(
+    @v1_router.post(
         "/recognize",
         response_model=RecognizeResponse,
         tags=["vision"],
@@ -1602,7 +2022,7 @@ def create_app() -> FastAPI:
             shape, conf = model.recognize_pattern(image)
         return RecognizeResponse(shape=str(shape), confidence=float(conf))
 
-    @app.post(
+    @v1_router.post(
         "/save",
         response_model=SaveResponse,
         status_code=201,
@@ -1640,10 +2060,10 @@ def create_app() -> FastAPI:
         return JSONResponse(
             status_code=201,
             content={"saved": True, "name": req.name},
-            headers={"Location": f"/load/{req.name}"},
+            headers={"Location": f"/v1/load/{req.name}"},
         )
 
-    @app.post(
+    @v1_router.post(
         "/load",
         response_model=LoadResponse,
         tags=["persistence"],
@@ -1697,7 +2117,7 @@ def create_app() -> FastAPI:
     # ---------------------------------------------------------------- #
     # Causal emergence endpoints (spec §2.3)
     # ---------------------------------------------------------------- #
-    @app.post(
+    @v1_router.post(
         "/emergence/perceive",
         response_model=EmergencePerceiveResponse,
         tags=["emergence"],
@@ -1733,7 +2153,7 @@ def create_app() -> FastAPI:
             persistence_diagram=diagram,
         )
 
-    @app.post(
+    @v1_router.post(
         "/emergence/causal",
         response_model=EmergenceCausalResponse,
         tags=["emergence"],
@@ -1767,7 +2187,7 @@ def create_app() -> FastAPI:
             var_names=[str(x) for x in result["var_names"]],
         )
 
-    @app.post(
+    @v1_router.post(
         "/emergence/trajectory",
         response_model=EmergenceTrajectoryResponse,
         tags=["emergence"],
@@ -1829,7 +2249,7 @@ def create_app() -> FastAPI:
             ),
         )
 
-    @app.post(
+    @v1_router.post(
         "/emergence/sample",
         response_model=EmergenceSampleResponse,
         tags=["emergence"],
@@ -1868,7 +2288,7 @@ def create_app() -> FastAPI:
             ],  # V4-NEW-L004
         )
 
-    @app.post(
+    @v1_router.post(
         "/emergence/recall",
         response_model=EmergenceRecallResponse,
         tags=["emergence"],
@@ -1903,7 +2323,7 @@ def create_app() -> FastAPI:
             ),  # V4-NEW-L003
         )
 
-    @app.post(
+    @v1_router.post(
         "/emergence/cycle",
         tags=["emergence"],
     )
@@ -1933,7 +2353,7 @@ def create_app() -> FastAPI:
     # ------------------------------------------------------------------ #
     # Phase 6 — Memory / Planning / Multimodal / RL endpoints.
     # ------------------------------------------------------------------ #
-    @app.post("/memory/encode", tags=["memory"])
+    @v1_router.post("/memory/encode", tags=["memory"])
     @_limit("30/minute")
     async def memory_encode(  # noqa: ANN202
         request: Request,
@@ -1948,7 +2368,7 @@ def create_app() -> FastAPI:
             result = model.encode_memory(obs, label=req.label)
         return _to_jsonable(result)
 
-    @app.post("/memory/retrieve", tags=["memory"])
+    @v1_router.post("/memory/retrieve", tags=["memory"])
     @_limit("30/minute")
     async def memory_retrieve(  # noqa: ANN202
         request: Request,
@@ -1963,7 +2383,7 @@ def create_app() -> FastAPI:
             result = model.retrieve_memory(query, top_k=req.top_k)
         return _to_jsonable(result)
 
-    @app.post("/memory/consolidate", tags=["memory"])
+    @v1_router.post("/memory/consolidate", tags=["memory"])
     @_limit("10/minute")
     async def memory_consolidate(  # noqa: ANN202
         request: Request,
@@ -1975,7 +2395,7 @@ def create_app() -> FastAPI:
             result = model.consolidate_memory()
         return _to_jsonable(result)
 
-    @app.post("/planning/trajectory", tags=["planning"])
+    @v1_router.post("/planning/trajectory", tags=["planning"])
     @_limit("30/minute")
     async def planning_trajectory(  # noqa: ANN202
         request: Request,
@@ -2012,7 +2432,7 @@ def create_app() -> FastAPI:
             )
         return _to_jsonable(result)
 
-    @app.post("/planning/decompose", tags=["planning"])
+    @v1_router.post("/planning/decompose", tags=["planning"])
     @_limit("30/minute")
     async def planning_decompose(  # noqa: ANN202
         request: Request,
@@ -2025,7 +2445,7 @@ def create_app() -> FastAPI:
             result = model.decompose_goal(req.goal, max_depth=req.max_depth)
         return _to_jsonable(result)
 
-    @app.post("/planning/sequence", tags=["planning"])
+    @v1_router.post("/planning/sequence", tags=["planning"])
     @_limit("30/minute")
     async def planning_sequence(  # noqa: ANN202
         request: Request,
@@ -2045,7 +2465,7 @@ def create_app() -> FastAPI:
             result = model.sequence_actions(adj)
         return _to_jsonable(result)
 
-    @app.post("/multimodal/align", tags=["multimodal"])
+    @v1_router.post("/multimodal/align", tags=["multimodal"])
     @_limit("30/minute")
     async def multimodal_align(  # noqa: ANN202
         request: Request,
@@ -2068,7 +2488,7 @@ def create_app() -> FastAPI:
             aligned = model.align_cross_modal(a[0], source="a")
         return _to_jsonable({"fit": fit, "aligned": aligned})
 
-    @app.post("/multimodal/fuse", tags=["multimodal"])
+    @v1_router.post("/multimodal/fuse", tags=["multimodal"])
     @_limit("30/minute")
     async def multimodal_fuse(  # noqa: ANN202
         request: Request,
@@ -2084,7 +2504,7 @@ def create_app() -> FastAPI:
             result = model.fuse_modalities(embeddings, strategy=req.strategy)
         return _to_jsonable(result)
 
-    @app.post("/multimodal/contrastive", tags=["multimodal"])
+    @v1_router.post("/multimodal/contrastive", tags=["multimodal"])
     @_limit("30/minute")
     async def multimodal_contrastive(  # noqa: ANN202
         request: Request,
@@ -2106,7 +2526,7 @@ def create_app() -> FastAPI:
             result = model.contrastive_loss(a, b)
         return _to_jsonable(result)
 
-    @app.post("/rl/step", tags=["rl"])
+    @v1_router.post("/rl/step", tags=["rl"])
     @_limit("60/minute")
     async def rl_step(  # noqa: ANN202
         request: Request,
@@ -2119,7 +2539,7 @@ def create_app() -> FastAPI:
             result = model.step_mdp(req.state, req.action)
         return _to_jsonable(result)
 
-    @app.post("/rl/train-q", tags=["rl"])
+    @v1_router.post("/rl/train-q", tags=["rl"])
     @_limit("5/minute")  # expensive — training loop
     async def rl_train_q(  # noqa: ANN202
         request: Request,
@@ -2135,7 +2555,7 @@ def create_app() -> FastAPI:
             )
         return _to_jsonable(result)
 
-    @app.post("/rl/search-mcts", tags=["rl"])
+    @v1_router.post("/rl/search-mcts", tags=["rl"])
     @_limit("10/minute")
     async def rl_search_mcts(  # noqa: ANN202
         request: Request,
@@ -2155,7 +2575,7 @@ def create_app() -> FastAPI:
     # ------------------------------------------------------------------
     # Phase 7 — Audio endpoints.
     # ------------------------------------------------------------------
-    @app.post("/audio/encode", tags=["audio"])
+    @v1_router.post("/audio/encode", tags=["audio"])
     @_limit("30/minute")
     async def audio_encode(  # noqa: ANN202
         request: Request,
@@ -2170,7 +2590,7 @@ def create_app() -> FastAPI:
             embedding = model.encode_audio(signal, sample_rate=req.sample_rate)
         return {"embedding": _to_jsonable(embedding)}
 
-    @app.post("/audio/onsets", tags=["audio"])
+    @v1_router.post("/audio/onsets", tags=["audio"])
     @_limit("30/minute")
     async def audio_onsets(  # noqa: ANN202
         request: Request,
@@ -2185,7 +2605,7 @@ def create_app() -> FastAPI:
             result = model.detect_onsets(signal, sample_rate=req.sample_rate)
         return _to_jsonable(result)
 
-    @app.post("/audio/pitch", tags=["audio"])
+    @v1_router.post("/audio/pitch", tags=["audio"])
     @_limit("30/minute")
     async def audio_pitch(  # noqa: ANN202
         request: Request,
@@ -2200,7 +2620,7 @@ def create_app() -> FastAPI:
             result = model.detect_pitch(signal, sample_rate=req.sample_rate)
         return _to_jsonable(result)
 
-    @app.post("/audio/classify", tags=["audio"])
+    @v1_router.post("/audio/classify", tags=["audio"])
     @_limit("30/minute")
     async def audio_classify(  # noqa: ANN202
         request: Request,
@@ -2215,7 +2635,7 @@ def create_app() -> FastAPI:
             result = model.classify_audio(signal, sample_rate=req.sample_rate)
         return _to_jsonable(result)
 
-    @app.post("/audio/segment", tags=["audio"])
+    @v1_router.post("/audio/segment", tags=["audio"])
     @_limit("30/minute")
     async def audio_segment(  # noqa: ANN202
         request: Request,
@@ -2230,7 +2650,7 @@ def create_app() -> FastAPI:
             result = model.segment_speech(signal, sample_rate=req.sample_rate)
         return _to_jsonable(result)
 
-    @app.post("/audio/music", tags=["audio"])
+    @v1_router.post("/audio/music", tags=["audio"])
     @_limit("30/minute")
     async def audio_music(  # noqa: ANN202
         request: Request,
@@ -2248,7 +2668,7 @@ def create_app() -> FastAPI:
     # ------------------------------------------------------------------
     # Phase 7 — Graph endpoints.
     # ------------------------------------------------------------------
-    @app.post("/graph/encode", tags=["graph"])
+    @v1_router.post("/graph/encode", tags=["graph"])
     @_limit("30/minute")
     async def graph_encode(  # noqa: ANN202
         request: Request,
@@ -2267,7 +2687,7 @@ def create_app() -> FastAPI:
             embedding = model.encode_graph(adjacency, node_features=node_features)
         return {"embedding": _to_jsonable(embedding)}
 
-    @app.post("/graph/communities", tags=["graph"])
+    @v1_router.post("/graph/communities", tags=["graph"])
     @_limit("30/minute")
     async def graph_communities(  # noqa: ANN202
         request: Request,
@@ -2282,7 +2702,7 @@ def create_app() -> FastAPI:
             result = model.detect_communities(adjacency)
         return _to_jsonable(result)
 
-    @app.post("/graph/path", tags=["graph"])
+    @v1_router.post("/graph/path", tags=["graph"])
     @_limit("30/minute")
     async def graph_path(  # noqa: ANN202
         request: Request,
@@ -2297,7 +2717,7 @@ def create_app() -> FastAPI:
             result = model.find_path(adjacency, req.source, req.target)
         return _to_jsonable(result)
 
-    @app.post("/graph/centrality", tags=["graph"])
+    @v1_router.post("/graph/centrality", tags=["graph"])
     @_limit("30/minute")
     async def graph_centrality(  # noqa: ANN202
         request: Request,
@@ -2312,7 +2732,7 @@ def create_app() -> FastAPI:
             result = model.analyze_centrality(adjacency)
         return _to_jsonable(result)
 
-    @app.post("/graph/isomorphism", tags=["graph"])
+    @v1_router.post("/graph/isomorphism", tags=["graph"])
     @_limit("30/minute")
     async def graph_isomorphism(  # noqa: ANN202
         request: Request,
@@ -2329,7 +2749,7 @@ def create_app() -> FastAPI:
             result = model.check_isomorphism(adj_a, adj_b)
         return _to_jsonable(result)
 
-    @app.post("/graph/track", tags=["graph"])
+    @v1_router.post("/graph/track", tags=["graph"])
     @_limit("20/minute")
     async def graph_track(  # noqa: ANN202
         request: Request,
@@ -2345,7 +2765,7 @@ def create_app() -> FastAPI:
             result = model.track_dynamic_graph(snapshots)
         return _to_jsonable(result)
 
-    @app.post("/graph/spanning", tags=["graph"])
+    @v1_router.post("/graph/spanning", tags=["graph"])
     @_limit("30/minute")
     async def graph_spanning(  # noqa: ANN202
         request: Request,
@@ -2363,7 +2783,7 @@ def create_app() -> FastAPI:
     # ------------------------------------------------------------------
     # Phase 7 — Robotics endpoints.
     # ------------------------------------------------------------------
-    @app.post("/robotics/motion", tags=["robotics"])
+    @v1_router.post("/robotics/motion", tags=["robotics"])
     @_limit("30/minute")
     async def robotics_motion(  # noqa: ANN202
         request: Request,
@@ -2378,7 +2798,7 @@ def create_app() -> FastAPI:
             result = model.plan_motion(waypoints, n_steps=req.n_steps)
         return _to_jsonable(result)
 
-    @app.post("/robotics/forward", tags=["robotics"])
+    @v1_router.post("/robotics/forward", tags=["robotics"])
     @_limit("30/minute")
     async def robotics_forward(  # noqa: ANN202
         request: Request,
@@ -2393,7 +2813,7 @@ def create_app() -> FastAPI:
             position = model.forward_kinematics(angles)
         return {"position": _to_jsonable(position)}
 
-    @app.post("/robotics/inverse", tags=["robotics"])
+    @v1_router.post("/robotics/inverse", tags=["robotics"])
     @_limit("30/minute")
     async def robotics_inverse(  # noqa: ANN202
         request: Request,
@@ -2412,7 +2832,7 @@ def create_app() -> FastAPI:
             result = model.inverse_kinematics(target, seed=seed)
         return _to_jsonable(result)
 
-    @app.post("/robotics/fuse", tags=["robotics"])
+    @v1_router.post("/robotics/fuse", tags=["robotics"])
     @_limit("30/minute")
     async def robotics_fuse(  # noqa: ANN202
         request: Request,
@@ -2442,7 +2862,7 @@ def create_app() -> FastAPI:
             fused = model.fuse_sensors(measurements, list(req.variances))
         return {"fused": _to_jsonable(fused)}
 
-    @app.post("/robotics/kalman", tags=["robotics"])
+    @v1_router.post("/robotics/kalman", tags=["robotics"])
     @_limit("30/minute")
     async def robotics_kalman(  # noqa: ANN202
         request: Request,
@@ -2461,7 +2881,7 @@ def create_app() -> FastAPI:
             )
         return _to_jsonable(result)
 
-    @app.post("/robotics/gait", tags=["robotics"])
+    @v1_router.post("/robotics/gait", tags=["robotics"])
     @_limit("30/minute")
     async def robotics_gait(  # noqa: ANN202
         request: Request,
@@ -2474,7 +2894,7 @@ def create_app() -> FastAPI:
             result = model.generate_gait(n_steps=req.n_steps, gait_type=req.gait_type)
         return _to_jsonable(result)
 
-    @app.post("/robotics/optimize", tags=["robotics"])
+    @v1_router.post("/robotics/optimize", tags=["robotics"])
     @_limit("30/minute")
     async def robotics_optimize(  # noqa: ANN202
         request: Request,
@@ -2489,7 +2909,7 @@ def create_app() -> FastAPI:
             result = model.optimize_trajectory(trajectory, n_iter=req.n_iter)
         return _to_jsonable(result)
 
-    @app.post("/robotics/collision", tags=["robotics"])
+    @v1_router.post("/robotics/collision", tags=["robotics"])
     @_limit("30/minute")
     async def robotics_collision(  # noqa: ANN202
         request: Request,
@@ -2505,7 +2925,7 @@ def create_app() -> FastAPI:
             result = model.check_collision(obstacles, position, radius=req.radius)
         return _to_jsonable(result)
 
-    @app.post("/robotics/path-collision", tags=["robotics"])
+    @v1_router.post("/robotics/path-collision", tags=["robotics"])
     @_limit("30/minute")
     async def robotics_path_collision(  # noqa: ANN202
         request: Request,
@@ -2521,7 +2941,7 @@ def create_app() -> FastAPI:
             result = model.check_path_collision(obstacles, path, radius=req.radius)
         return _to_jsonable(result)
 
-    @app.post("/robotics/mpc", tags=["robotics"])
+    @v1_router.post("/robotics/mpc", tags=["robotics"])
     @_limit("30/minute")
     async def robotics_mpc(  # noqa: ANN202
         request: Request,
@@ -2544,7 +2964,7 @@ def create_app() -> FastAPI:
     # ------------------------------------------------------------------
     # Phase 7 — Time endpoints.
     # ------------------------------------------------------------------
-    @app.post("/time/encode", tags=["time"])
+    @v1_router.post("/time/encode", tags=["time"])
     @_limit("60/minute")
     async def time_encode(  # noqa: ANN202
         request: Request,
@@ -2559,7 +2979,7 @@ def create_app() -> FastAPI:
             emb = model.encode_time_series(series)
         return {"embedding": _to_jsonable(emb)}
 
-    @app.post("/time/seasonality", tags=["time"])
+    @v1_router.post("/time/seasonality", tags=["time"])
     @_limit("60/minute")
     async def time_seasonality(  # noqa: ANN202
         request: Request,
@@ -2574,7 +2994,7 @@ def create_app() -> FastAPI:
             result = model.detect_seasonality(series)
         return _to_jsonable(result)
 
-    @app.post("/time/frequency", tags=["time"])
+    @v1_router.post("/time/frequency", tags=["time"])
     @_limit("60/minute")
     async def time_frequency(  # noqa: ANN202
         request: Request,
@@ -2589,7 +3009,7 @@ def create_app() -> FastAPI:
             result = model.analyze_frequency(series)
         return _to_jsonable(result)
 
-    @app.post("/time/events", tags=["time"])
+    @v1_router.post("/time/events", tags=["time"])
     @_limit("60/minute")
     async def time_events(  # noqa: ANN202
         request: Request,
@@ -2604,7 +3024,7 @@ def create_app() -> FastAPI:
             result = model.analyze_event_timestamps(ts)
         return _to_jsonable(result)
 
-    @app.post("/time/anomaly", tags=["time"])
+    @v1_router.post("/time/anomaly", tags=["time"])
     @_limit("60/minute")
     async def time_anomaly(  # noqa: ANN202
         request: Request,
@@ -2619,7 +3039,7 @@ def create_app() -> FastAPI:
             result = model.detect_anomalous_timing(ts)
         return _to_jsonable(result)
 
-    @app.post("/time/cycle", tags=["time"])
+    @v1_router.post("/time/cycle", tags=["time"])
     @_limit("60/minute")
     async def time_cycle(  # noqa: ANN202
         request: Request,
@@ -2634,7 +3054,7 @@ def create_app() -> FastAPI:
             result = model.track_cycle_phase(series, period=req.period)
         return _to_jsonable(result)
 
-    @app.post("/time/forecast", tags=["time"])
+    @v1_router.post("/time/forecast", tags=["time"])
     @_limit("60/minute")
     async def time_forecast(  # noqa: ANN202
         request: Request,
@@ -2652,7 +3072,7 @@ def create_app() -> FastAPI:
     # ------------------------------------------------------------------
     # Phase 7 — Code endpoints.
     # ------------------------------------------------------------------
-    @app.post("/code/encode", tags=["code"])
+    @v1_router.post("/code/encode", tags=["code"])
     @_limit("60/minute")
     async def code_encode(  # noqa: ANN202
         request: Request,
@@ -2665,7 +3085,7 @@ def create_app() -> FastAPI:
             emb = model.encode_code(req.source)
         return {"embedding": _to_jsonable(emb)}
 
-    @app.post("/code/ast", tags=["code"])
+    @v1_router.post("/code/ast", tags=["code"])
     @_limit("60/minute")
     async def code_ast(  # noqa: ANN202
         request: Request,
@@ -2678,7 +3098,7 @@ def create_app() -> FastAPI:
             result = model.analyze_ast(req.source)
         return _to_jsonable(result)
 
-    @app.post("/code/compare", tags=["code"])
+    @v1_router.post("/code/compare", tags=["code"])
     @_limit("60/minute")
     async def code_compare(  # noqa: ANN202
         request: Request,
@@ -2691,7 +3111,7 @@ def create_app() -> FastAPI:
             result = model.compare_code(req.source_a, req.source_b)
         return _to_jsonable(result)
 
-    @app.post("/code/defects", tags=["code"])
+    @v1_router.post("/code/defects", tags=["code"])
     @_limit("60/minute")
     async def code_defects(  # noqa: ANN202
         request: Request,
@@ -2704,7 +3124,7 @@ def create_app() -> FastAPI:
             result = model.detect_code_defects(req.source)
         return _to_jsonable(result)
 
-    @app.post("/code/control-flow", tags=["code"])
+    @v1_router.post("/code/control-flow", tags=["code"])
     @_limit("60/minute")
     async def code_control_flow(  # noqa: ANN202
         request: Request,
@@ -2717,7 +3137,7 @@ def create_app() -> FastAPI:
             result = model.analyze_control_flow(req.source)
         return _to_jsonable(result)
 
-    @app.post("/code/style", tags=["code"])
+    @v1_router.post("/code/style", tags=["code"])
     @_limit("60/minute")
     async def code_style(  # noqa: ANN202
         request: Request,
@@ -2730,7 +3150,7 @@ def create_app() -> FastAPI:
             result = model.analyze_code_style(req.source)
         return _to_jsonable(result)
 
-    @app.post("/code/dependencies", tags=["code"])
+    @v1_router.post("/code/dependencies", tags=["code"])
     @_limit("60/minute")
     async def code_dependencies(  # noqa: ANN202
         request: Request,
@@ -2746,7 +3166,7 @@ def create_app() -> FastAPI:
     # ------------------------------------------------------------------
     # Phase 7 — Reasoning endpoints.
     # ------------------------------------------------------------------
-    @app.post("/reasoning/prop-infer", tags=["reasoning"])
+    @v1_router.post("/reasoning/prop-infer", tags=["reasoning"])
     @_limit("30/minute")
     async def reasoning_prop_infer(  # noqa: ANN202
         request: Request,
@@ -2769,7 +3189,7 @@ def create_app() -> FastAPI:
             result = model.infer_logical()
         return _to_jsonable(result)
 
-    @app.post("/reasoning/syllogism", tags=["reasoning"])
+    @v1_router.post("/reasoning/syllogism", tags=["reasoning"])
     @_limit("30/minute")
     async def reasoning_syllogism(  # noqa: ANN202
         request: Request,
@@ -2784,7 +3204,7 @@ def create_app() -> FastAPI:
             result = model.syllogism(major, minor)
         return _to_jsonable(result)
 
-    @app.post("/reasoning/induct", tags=["reasoning"])
+    @v1_router.post("/reasoning/induct", tags=["reasoning"])
     @_limit("30/minute")
     async def reasoning_induct(  # noqa: ANN202
         request: Request,
@@ -2802,7 +3222,7 @@ def create_app() -> FastAPI:
             result = model.induct_rule(req.examples, req.labels)
         return _to_jsonable(result)
 
-    @app.post("/reasoning/analogize", tags=["reasoning"])
+    @v1_router.post("/reasoning/analogize", tags=["reasoning"])
     @_limit("30/minute")
     async def reasoning_analogize(  # noqa: ANN202
         request: Request,
@@ -2815,7 +3235,7 @@ def create_app() -> FastAPI:
             result = model.analogize(req.source, req.target)
         return _to_jsonable(result)
 
-    @app.post("/reasoning/abduce", tags=["reasoning"])
+    @v1_router.post("/reasoning/abduce", tags=["reasoning"])
     @_limit("30/minute")
     async def reasoning_abduce(  # noqa: ANN202
         request: Request,
@@ -2835,7 +3255,7 @@ def create_app() -> FastAPI:
             )
         return _to_jsonable(result)
 
-    @app.post("/reasoning/defaults", tags=["reasoning"])
+    @v1_router.post("/reasoning/defaults", tags=["reasoning"])
     @_limit("30/minute")
     async def reasoning_defaults(  # noqa: ANN202
         request: Request,
@@ -2852,7 +3272,7 @@ def create_app() -> FastAPI:
             result = model.conclude_defaults(req.facts)
         return _to_jsonable(result)
 
-    @app.post("/reasoning/causal", tags=["reasoning"])
+    @v1_router.post("/reasoning/causal", tags=["reasoning"])
     @_limit("30/minute")
     async def reasoning_causal(  # noqa: ANN202
         request: Request,
@@ -2871,7 +3291,7 @@ def create_app() -> FastAPI:
     # ------------------------------------------------------------------
     # Phase 7 — Causal endpoints.
     # ------------------------------------------------------------------
-    @app.post("/causal/decision-tree", tags=["causal"])
+    @v1_router.post("/causal/decision-tree", tags=["causal"])
     @_limit("30/minute")
     async def causal_decision_tree(  # noqa: ANN202
         request: Request,
@@ -2892,7 +3312,7 @@ def create_app() -> FastAPI:
             result = model.fit_decision_tree(features, labels)
         return _to_jsonable(result)
 
-    @app.post("/causal/game", tags=["causal"])
+    @v1_router.post("/causal/game", tags=["causal"])
     @_limit("30/minute")
     async def causal_game(  # noqa: ANN202
         request: Request,
@@ -2911,7 +3331,7 @@ def create_app() -> FastAPI:
             result = model.analyze_game(payoff_a, payoff_b)
         return _to_jsonable(result)
 
-    @app.post("/causal/counterfactual", tags=["causal"])
+    @v1_router.post("/causal/counterfactual", tags=["causal"])
     @_limit("30/minute")
     async def causal_counterfactual(  # noqa: ANN202
         request: Request,
@@ -2927,7 +3347,7 @@ def create_app() -> FastAPI:
             result = model.counterfactual(observed, intervention)
         return _to_jsonable(result)
 
-    @app.post("/causal/bandit", tags=["causal"])
+    @v1_router.post("/causal/bandit", tags=["causal"])
     @_limit("30/minute")
     async def causal_bandit(  # noqa: ANN202
         request: Request,
@@ -2940,7 +3360,7 @@ def create_app() -> FastAPI:
             result = model.select_bandit_arm(req.rewards_history)
         return _to_jsonable(result)
 
-    @app.post("/causal/pomdp", tags=["causal"])
+    @v1_router.post("/causal/pomdp", tags=["causal"])
     @_limit("30/minute")
     async def causal_pomdp(  # noqa: ANN202
         request: Request,
@@ -2962,7 +3382,7 @@ def create_app() -> FastAPI:
             result = model.solve_pomdp(transitions, observations, rewards)
         return _to_jsonable(result)
 
-    @app.post("/causal/discover-graph", tags=["causal"])
+    @v1_router.post("/causal/discover-graph", tags=["causal"])
     @_limit("30/minute")
     async def causal_discover_graph(  # noqa: ANN202
         request: Request,
@@ -2977,7 +3397,7 @@ def create_app() -> FastAPI:
             result = model.discover_causal_graph(data, var_names=req.var_names)
         return _to_jsonable(result)
 
-    @app.post("/causal/intervene", tags=["causal"])
+    @v1_router.post("/causal/intervene", tags=["causal"])
     @_limit("30/minute")
     async def causal_intervene(  # noqa: ANN202
         request: Request,
@@ -2993,6 +3413,692 @@ def create_app() -> FastAPI:
                 data, req.intervention_var, req.intervention_value
             )
         return _to_jsonable(result)
+
+    # ------------------------------------------------------------------ #
+    # Phase 7 cognitive-upgrade endpoints (plasticity / cogtime / cogmem /
+    # knowledge / metacog / experiment / multiagent). Each module is gated
+    # behind an ``enable_*`` feature flag (or not yet integrated, for the
+    # multiagent modules); when the attribute is ``None`` the endpoint
+    # returns 503 ``{"detail": "module X not enabled", "enabled": false}``.
+    # ------------------------------------------------------------------ #
+
+    # --- plasticity / architect ---------------------------------------
+    @v1_router.get("/architect/stats", tags=["architect"])
+    @_limit("30/minute")
+    @_log_phase7("architect", "stats")
+    async def architect_stats(  # noqa: ANN202
+        request: Request,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Return the architecture optimizer's summary statistics."""
+        # P2.11 性能优化: 架构统计仅在每 eval_interval 周期更新一次，
+        # 用 30s TTL 缓存避免每次请求都获取模型锁并重算 stats。
+        result = _cached_architect_stats()
+        if result is _CACHE_DISABLED:
+            return _module_disabled_response("architect")
+        return result
+
+    @v1_router.get("/architect/dormant", tags=["architect"])
+    @_limit("30/minute")
+    @_log_phase7("architect", "dormant")
+    async def architect_dormant(  # noqa: ANN202
+        request: Request,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """List the names of currently dormant modules."""
+        # P2.11 性能优化: 休眠模块列表变化缓慢，用 30s TTL 缓存。
+        result = _cached_architect_dormant()
+        if result is _CACHE_DISABLED:
+            return _module_disabled_response("architect")
+        return result
+
+    @v1_router.post("/architect/reactivate", tags=["architect"])
+    @_limit("30/minute")
+    @_log_phase7("architect", "reactivate")
+    async def architect_reactivate(  # noqa: ANN202
+        request: Request,
+        req: ArchitectReactivateRequest,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Reactivate a dormant module by name."""
+        model = get_model()
+        with model._lock:
+            arch = model.architect
+            if arch is None:
+                return _module_disabled_response("architect")
+            ok = arch.reactivate(model.modules, req.name)
+        return {"reactivated": bool(ok), "name": req.name}
+
+    # --- cogtime / temporal_memory ------------------------------------
+    @v1_router.get("/temporal_memory/context", tags=["temporal_memory"])
+    @_limit("30/minute")
+    @_log_phase7("temporal_memory", "context")
+    async def temporal_memory_context(  # noqa: ANN202
+        request: Request,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Return the current temporal-memory hidden-state context vector."""
+        model = get_model()
+        with model._lock:
+            tm = model.temporal_memory
+            if tm is None:
+                return _module_disabled_response("temporal_memory")
+            return {"context": _to_jsonable(tm.get_context())}
+
+    @v1_router.get("/temporal_memory/spectral_radius", tags=["temporal_memory"])
+    @_limit("30/minute")
+    @_log_phase7("temporal_memory", "spectral_radius")
+    async def temporal_memory_spectral_radius(  # noqa: ANN202
+        request: Request,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Return the spectral radius of the temporal-memory recurrent weight."""
+        model = get_model()
+        with model._lock:
+            tm = model.temporal_memory
+            if tm is None:
+                return _module_disabled_response("temporal_memory")
+            return {"spectral_radius": float(tm.spectral_radius)}
+
+    # --- cogtime / layered_predictor ----------------------------------
+    @v1_router.get("/layered_predictor/context", tags=["layered_predictor"])
+    @_limit("30/minute")
+    @_log_phase7("layered_predictor", "context")
+    async def layered_predictor_context(  # noqa: ANN202
+        request: Request,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Return the concatenated [L0, L1, L2] layered-predictor context."""
+        model = get_model()
+        with model._lock:
+            lp = model.layered_predictor
+            if lp is None:
+                return _module_disabled_response("layered_predictor")
+            return {"context": _to_jsonable(lp.get_context())}
+
+    @v1_router.get("/layered_predictor/rhythm", tags=["layered_predictor"])
+    @_limit("30/minute")
+    @_log_phase7("layered_predictor", "rhythm")
+    async def layered_predictor_rhythm(  # noqa: ANN202
+        request: Request,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Return the rhythmic-confidence heuristic of the layered predictor."""
+        model = get_model()
+        with model._lock:
+            lp = model.layered_predictor
+            if lp is None:
+                return _module_disabled_response("layered_predictor")
+            return {"rhythm": float(lp.predict_rhythm())}
+
+    # --- cogmem / episodic_graph --------------------------------------
+    @v1_router.get("/episodic_graph/recent", tags=["episodic_graph"])
+    @_limit("30/minute")
+    @_log_phase7("episodic_graph", "recent")
+    async def episodic_graph_recent(  # noqa: ANN202
+        request: Request,
+        n: int = 10,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Return the ``n`` most recent episodes (by step)."""
+        if n < 1 or n > 1000:
+            raise HTTPException(
+                status_code=400, detail="n must be in [1, 1000]"
+            )
+        # P2.11 性能优化: 情节图历史变化缓慢，用 60s TTL 缓存（按 n 分键）。
+        result = _cached_episodic_recent(n)
+        if result is _CACHE_DISABLED:
+            return _module_disabled_response("episodic_graph")
+        return result
+
+    @v1_router.get("/episodic_graph/node_count", tags=["episodic_graph"])
+    @_limit("30/minute")
+    @_log_phase7("episodic_graph", "node_count")
+    async def episodic_graph_node_count(  # noqa: ANN202
+        request: Request,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Return the current episodic-graph node count."""
+        # P2.11 性能优化: 节点数随周期增长但变化缓慢，用 60s TTL 缓存。
+        result = _cached_episodic_node_count()
+        if result is _CACHE_DISABLED:
+            return _module_disabled_response("episodic_graph")
+        return result
+
+    @v1_router.post("/episodic_graph/plan", tags=["episodic_graph"])
+    @_limit("30/minute")
+    @_log_phase7("episodic_graph", "plan")
+    async def episodic_graph_plan(  # noqa: ANN202
+        request: Request,
+        req: EpisodicPlanRequest,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Plan a minimum-free-energy path between two state vectors."""
+        start_state = np.asarray(req.start_state, dtype=float)
+        goal_state = np.asarray(req.goal_state, dtype=float)
+        _ensure_finite(start_state, "start_state")
+        _ensure_finite(goal_state, "goal_state")
+        model = get_model()
+        with model._lock:
+            eg = model.episodic_graph
+            if eg is None:
+                return _module_disabled_response("episodic_graph")
+            path = eg.plan(start_state, goal_state, horizon=req.horizon)
+        return {"path": path}
+
+    # --- cogmem / semantic_index --------------------------------------
+    @v1_router.get("/semantic_index/size", tags=["semantic_index"])
+    @_limit("30/minute")
+    @_log_phase7("semantic_index", "size")
+    async def semantic_index_size(  # noqa: ANN202
+        request: Request,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Return the number of entries in the semantic index."""
+        model = get_model()
+        with model._lock:
+            si = model.semantic_index
+            if si is None:
+                return _module_disabled_response("semantic_index")
+            return {"size": int(si.size)}
+
+    @v1_router.post("/semantic_index/query", tags=["semantic_index"])
+    @_limit("30/minute")
+    @_log_phase7("semantic_index", "query")
+    async def semantic_index_query(  # noqa: ANN202
+        request: Request,
+        req: SemanticQueryRequest,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Query the semantic index for the k nearest entries."""
+        vec = np.asarray(req.vec, dtype=float)
+        _ensure_finite(vec, "vec")
+        model = get_model()
+        with model._lock:
+            si = model.semantic_index
+            if si is None:
+                return _module_disabled_response("semantic_index")
+            results = si.query(vec, k=req.k)
+        return {
+            "results": [
+                {"node_id": nid, "similarity": float(sim), "metadata": meta}
+                for nid, sim, meta in results
+            ]
+        }
+
+    # --- knowledge / logic_layer --------------------------------------
+    @v1_router.get("/logic_layer/rules", tags=["logic_layer"])
+    @_limit("30/minute")
+    @_log_phase7("logic_layer", "rules")
+    async def logic_layer_rules(  # noqa: ANN202
+        request: Request,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """List all registered fuzzy logic rules."""
+        model = get_model()
+        with model._lock:
+            ll = model.logic_layer
+            if ll is None:
+                return _module_disabled_response("logic_layer")
+            return {"rules": _to_jsonable([vars(r) for r in ll.rules])}
+
+    @v1_router.post("/logic_layer/rule", tags=["logic_layer"])
+    @_limit("30/minute")
+    @_log_phase7("logic_layer", "rule")
+    async def logic_layer_add_rule(  # noqa: ANN202
+        request: Request,
+        req: LogicRuleRequest,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Register a new fuzzy logic rule."""
+        model = get_model()
+        with model._lock:
+            ll = model.logic_layer
+            if ll is None:
+                return _module_disabled_response("logic_layer")
+            ll.add_rule(
+                req.name,
+                list(req.antecedents),
+                req.consequent,
+                weight=req.weight,
+                description=req.description,
+            )
+        return {"registered": req.name}
+
+    @v1_router.post("/logic_layer/predicate", tags=["logic_layer"])
+    @_limit("30/minute")
+    @_log_phase7("logic_layer", "predicate")
+    async def logic_layer_set_predicate(  # noqa: ANN202
+        request: Request,
+        req: LogicPredicateRequest,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Set a predicate truth value (clamped to [0, 1])."""
+        model = get_model()
+        with model._lock:
+            ll = model.logic_layer
+            if ll is None:
+                return _module_disabled_response("logic_layer")
+            ll.set_predicate(req.name, req.value)
+        return {"name": req.name, "value": req.value}
+
+    @v1_router.get("/logic_layer/check", tags=["logic_layer"])
+    @_limit("30/minute")
+    @_log_phase7("logic_layer", "check")
+    async def logic_layer_check(  # noqa: ANN202
+        request: Request,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Evaluate all rules and summarize violations."""
+        model = get_model()
+        with model._lock:
+            ll = model.logic_layer
+            if ll is None:
+                return _module_disabled_response("logic_layer")
+            return _to_jsonable(ll.check_all())
+
+    @v1_router.get("/logic_layer/penalty", tags=["logic_layer"])
+    @_limit("30/minute")
+    @_log_phase7("logic_layer", "penalty")
+    async def logic_layer_penalty(  # noqa: ANN202
+        request: Request,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Return the per-rule penalty signal vector."""
+        model = get_model()
+        with model._lock:
+            ll = model.logic_layer
+            if ll is None:
+                return _module_disabled_response("logic_layer")
+            return {"penalty": _to_jsonable(ll.get_penalty_signal())}
+
+    # --- knowledge / causal_inference ---------------------------------
+    @v1_router.post("/causal_inference/transition", tags=["causal_inference"])
+    @_limit("30/minute")
+    @_log_phase7("causal_inference", "transition")
+    async def causal_inference_set_transition(  # noqa: ANN202
+        request: Request,
+        req: CausalTransitionRequest,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Set the causal transition matrix (must be a square 2-D matrix)."""
+        matrix = np.asarray(req.matrix, dtype=float)
+        if matrix.ndim != 2 or matrix.shape[0] != matrix.shape[1]:
+            raise HTTPException(
+                status_code=400,
+                detail="matrix must be a square 2-D array",
+            )
+        _ensure_finite(matrix, "matrix")
+        model = get_model()
+        with model._lock:
+            ci = model.causal_inference
+            if ci is None:
+                return _module_disabled_response("causal_inference")
+            ci.set_transition(matrix)
+        return {"shape": list(matrix.shape)}
+
+    @v1_router.post("/causal_inference/do", tags=["causal_inference"])
+    @_limit("30/minute")
+    @_log_phase7("causal_inference", "do")
+    async def causal_inference_do(  # noqa: ANN202
+        request: Request,
+        req: CausalDoRequest,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Apply a single do-intervention do(X[index] = value)."""
+        intervention = {req.index: req.value}
+        model = get_model()
+        with model._lock:
+            ci = model.causal_inference
+            if ci is None:
+                return _module_disabled_response("causal_inference")
+            result = ci.do_calculus(intervention)
+        return _to_jsonable(result)
+
+    @v1_router.post("/causal_inference/counterfactual", tags=["causal_inference"])
+    @_limit("30/minute")
+    @_log_phase7("causal_inference", "counterfactual")
+    async def causal_inference_counterfactual(  # noqa: ANN202
+        request: Request,
+        req: CausalInferenceCounterfactualRequest,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Estimate a counterfactual state under do(X[index] = value)."""
+        observed = np.asarray(req.observed, dtype=float)
+        _ensure_finite(observed, "observed")
+        intervention = {req.index: req.value}
+        model = get_model()
+        with model._lock:
+            ci = model.causal_inference
+            if ci is None:
+                return _module_disabled_response("causal_inference")
+            result = ci.counterfactual(observed, intervention)
+        return {"counterfactual": _to_jsonable(result)}
+
+    @v1_router.post("/causal_inference/confounders", tags=["causal_inference"])
+    @_limit("30/minute")
+    @_log_phase7("causal_inference", "confounders")
+    async def causal_inference_confounders(  # noqa: ANN202
+        request: Request,
+        req: CausalConfoundersRequest,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Identify potential confounders between two target variables."""
+        model = get_model()
+        with model._lock:
+            ci = model.causal_inference
+            if ci is None:
+                return _module_disabled_response("causal_inference")
+            confs = ci.identify_confounders(req.var_a, req.var_b)
+        return {"confounders": confs}
+
+    # --- metacog / meta_cognition -------------------------------------
+    @v1_router.get("/meta_cognition/confidence", tags=["meta_cognition"])
+    @_limit("30/minute")
+    @_log_phase7("meta_cognition", "confidence")
+    async def meta_cognition_confidence(  # noqa: ANN202
+        request: Request,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Return the current meta-cognitive confidence in [0, 1]."""
+        model = get_model()
+        with model._lock:
+            mc = model.meta_cognition
+            if mc is None:
+                return _module_disabled_response("meta_cognition")
+            return {"confidence": float(mc.get_confidence())}
+
+    @v1_router.get("/meta_cognition/uncertainty", tags=["meta_cognition"])
+    @_limit("30/minute")
+    @_log_phase7("meta_cognition", "uncertainty")
+    async def meta_cognition_uncertainty(  # noqa: ANN202
+        request: Request,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Return the per-dimension uncertainty vector."""
+        model = get_model()
+        with model._lock:
+            mc = model.meta_cognition
+            if mc is None:
+                return _module_disabled_response("meta_cognition")
+            return {"uncertainty": _to_jsonable(mc.get_uncertainty_vector())}
+
+    @v1_router.get("/meta_cognition/should_seek_info", tags=["meta_cognition"])
+    @_limit("30/minute")
+    @_log_phase7("meta_cognition", "should_seek_info")
+    async def meta_cognition_should_seek_info(  # noqa: ANN202
+        request: Request,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Return whether the model should actively seek information."""
+        model = get_model()
+        with model._lock:
+            mc = model.meta_cognition
+            if mc is None:
+                return _module_disabled_response("meta_cognition")
+            return {"should_seek_info": bool(mc.should_seek_info())}
+
+    @v1_router.get("/meta_cognition/stats", tags=["meta_cognition"])
+    @_limit("30/minute")
+    @_log_phase7("meta_cognition", "stats")
+    async def meta_cognition_stats(  # noqa: ANN202
+        request: Request,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Return the meta-cognition summary statistics."""
+        model = get_model()
+        with model._lock:
+            mc = model.meta_cognition
+            if mc is None:
+                return _module_disabled_response("meta_cognition")
+            return _to_jsonable(mc.stats)
+
+    # --- experiment / experiment_planner ------------------------------
+    @v1_router.get("/experiment_planner/candidates", tags=["experiment_planner"])
+    @_limit("30/minute")
+    @_log_phase7("experiment_planner", "candidates")
+    async def experiment_planner_candidates(  # noqa: ANN202
+        request: Request,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """List all candidate experiments."""
+        model = get_model()
+        with model._lock:
+            ep = model.experiment_planner
+            if ep is None:
+                return _module_disabled_response("experiment_planner")
+            cands = list(ep.candidates)
+        return {
+            "candidates": _to_jsonable([vars(c) for c in cands]),
+            "count": len(cands),
+        }
+
+    @v1_router.post("/experiment_planner/select_best", tags=["experiment_planner"])
+    @_limit("30/minute")
+    @_log_phase7("experiment_planner", "select_best")
+    async def experiment_planner_select_best(  # noqa: ANN202
+        request: Request,
+        req: ExperimentSelectBestRequest,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Select the best unexecuted candidate by predicted info gain."""
+        model = get_model()
+        with model._lock:
+            ep = model.experiment_planner
+            if ep is None:
+                return _module_disabled_response("experiment_planner")
+            best = ep.select_best(req.current_uncertainty)
+        if best is None:
+            return {"best": None}
+        return {"best": _to_jsonable(vars(best))}
+
+    @v1_router.post("/experiment_planner/record_result", tags=["experiment_planner"])
+    @_limit("30/minute")
+    @_log_phase7("experiment_planner", "record_result")
+    async def experiment_planner_record_result(  # noqa: ANN202
+        request: Request,
+        req: ExperimentRecordRequest,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Record the outcome of an executed candidate experiment."""
+        model = get_model()
+        with model._lock:
+            ep = model.experiment_planner
+            if ep is None:
+                return _module_disabled_response("experiment_planner")
+            cands = list(ep.candidates)
+            if req.candidate_id < 0 or req.candidate_id >= len(cands):
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"candidate_id {req.candidate_id} not found",
+                )
+            candidate = cands[req.candidate_id]
+            ep.record_result(candidate, req.fe_before, req.fe_after)
+        return {
+            "recorded": True,
+            "candidate_id": req.candidate_id,
+            "actual_gain": float(candidate.actual_gain),
+        }
+
+    @v1_router.get("/experiment_planner/stats", tags=["experiment_planner"])
+    @_limit("30/minute")
+    @_log_phase7("experiment_planner", "stats")
+    async def experiment_planner_stats(  # noqa: ANN202
+        request: Request,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Return the experiment-planner summary statistics."""
+        model = get_model()
+        with model._lock:
+            ep = model.experiment_planner
+            if ep is None:
+                return _module_disabled_response("experiment_planner")
+            return _to_jsonable(ep.stats)
+
+    # --- experiment / hypothesis_tester -------------------------------
+    @v1_router.get("/hypothesis_tester/hypotheses", tags=["hypothesis_tester"])
+    @_limit("30/minute")
+    @_log_phase7("hypothesis_tester", "hypotheses")
+    async def hypothesis_tester_hypotheses(  # noqa: ANN202
+        request: Request,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """List all generated hypotheses."""
+        model = get_model()
+        with model._lock:
+            ht = model.hypothesis_tester
+            if ht is None:
+                return _module_disabled_response("hypothesis_tester")
+            hyps = list(ht.hypotheses)
+        return {
+            "hypotheses": _to_jsonable([vars(h) for h in hyps]),
+            "count": len(hyps),
+        }
+
+    @v1_router.get("/hypothesis_tester/supported", tags=["hypothesis_tester"])
+    @_limit("30/minute")
+    @_log_phase7("hypothesis_tester", "supported")
+    async def hypothesis_tester_supported(  # noqa: ANN202
+        request: Request,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """List the tested-and-supported hypotheses."""
+        model = get_model()
+        with model._lock:
+            ht = model.hypothesis_tester
+            if ht is None:
+                return _module_disabled_response("hypothesis_tester")
+            supported = ht.get_supported()
+        return {
+            "supported": _to_jsonable([vars(h) for h in supported]),
+            "count": len(supported),
+        }
+
+    @v1_router.get("/hypothesis_tester/stats", tags=["hypothesis_tester"])
+    @_limit("30/minute")
+    @_log_phase7("hypothesis_tester", "stats")
+    async def hypothesis_tester_stats(  # noqa: ANN202
+        request: Request,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Return the hypothesis-tester summary statistics."""
+        model = get_model()
+        with model._lock:
+            ht = model.hypothesis_tester
+            if ht is None:
+                return _module_disabled_response("hypothesis_tester")
+            return _to_jsonable(ht.stats)
+
+    # --- multiagent / world (not integrated -> always 503) ------------
+    @v1_router.get("/world/collaboration_stats", tags=["world"])
+    @_limit("30/minute")
+    @_log_phase7("world", "collaboration_stats")
+    async def world_collaboration_stats(  # noqa: ANN202
+        request: Request,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Return multiagent-world collaboration statistics."""
+        return _module_disabled_response("world")
+
+    @v1_router.get("/world/agent_count", tags=["world"])
+    @_limit("30/minute")
+    @_log_phase7("world", "agent_count")
+    async def world_agent_count(  # noqa: ANN202
+        request: Request,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Return the number of agents in the multiagent world."""
+        return _module_disabled_response("world")
+
+    @v1_router.get("/world/step_count", tags=["world"])
+    @_limit("30/minute")
+    @_log_phase7("world", "step_count")
+    async def world_step_count(  # noqa: ANN202
+        request: Request,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Return the multiagent-world step count."""
+        return _module_disabled_response("world")
+
+    # --- multiagent / communication (not integrated -> always 503) ----
+    @v1_router.get("/communication/emergent_meanings", tags=["communication"])
+    @_limit("30/minute")
+    @_log_phase7("communication", "emergent_meanings")
+    async def communication_emergent_meanings(  # noqa: ANN202
+        request: Request,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Return the emergent symbol->meaning mapping."""
+        return _module_disabled_response("communication")
+
+    @v1_router.get("/communication/stats", tags=["communication"])
+    @_limit("30/minute")
+    @_log_phase7("communication", "stats")
+    async def communication_stats(  # noqa: ANN202
+        request: Request,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Return the communication-channel summary statistics."""
+        return _module_disabled_response("communication")
+
+    # --- multiagent / culture (not integrated -> always 503) ----------
+    @v1_router.get("/culture/knowledge_curve", tags=["culture"])
+    @_limit("30/minute")
+    @_log_phase7("culture", "knowledge_curve")
+    async def culture_knowledge_curve(  # noqa: ANN202
+        request: Request,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Return the [(gen_id, knowledge_graph_size), ...] knowledge curve."""
+        return _module_disabled_response("culture")
+
+    @v1_router.get("/culture/stats", tags=["culture"])
+    @_limit("30/minute")
+    @_log_phase7("culture", "stats")
+    async def culture_stats(  # noqa: ANN202
+        request: Request,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """Return the culture-propagation summary statistics."""
+        return _module_disabled_response("culture")
+
+    @v1_router.get("/culture/generations", tags=["culture"])
+    @_limit("30/minute")
+    @_log_phase7("culture", "generations")
+    async def culture_generations(  # noqa: ANN202
+        request: Request,
+        _api_key: str = Depends(verify_api_key),
+    ) -> dict:
+        """List all recorded generations."""
+        return _module_disabled_response("culture")
+
+    # ---------------------------------------------------------------- #
+    # Versioning: /v1/version info endpoint (also mirrored at /version
+    # via the legacy root mount, exempt from the deprecation header).
+    # ---------------------------------------------------------------- #
+    @v1_router.get("/version", tags=["versioning"])
+    def version() -> dict:
+        """Report the API version and the supported/deprecated version set."""
+        return {
+            "version": "1.0.0",
+            "supported_versions": ["1"],
+            "deprecated_versions": [],
+            "latest": "1",
+        }
+
+    # ---------------------------------------------------------------- #
+    # Router registration
+    # ---------------------------------------------------------------- #
+    # Canonical mount: every business endpoint under /v1 (appears in the
+    # OpenAPI schema). Legacy mount: the SAME router is also served at the
+    # root with ``include_in_schema=False`` so existing root-path callers
+    # keep working, but the routes are hidden from the docs and flagged
+    # deprecated by ``deprecate_root_paths`` above. /metrics and / stay on
+    # ``app`` directly (root-only, never deprecated); /health, /ready and
+    # /version live on v1_router and are therefore reachable at both /v1
+    # and the root (exempt from deprecation).
+    app.include_router(v1_router, prefix="/v1")
+    app.include_router(v1_router, prefix="", include_in_schema=False)
 
     return app
 

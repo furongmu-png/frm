@@ -1,0 +1,173 @@
+{
+  "n_snapshots": 20,
+  "n_csv_rows": 1000,
+  "snapshot_features": {
+    "n_vars": 19,
+    "var_names": [
+      "fe_t",
+      "expl_step",
+      "mean_act_err",
+      "belief_pc0",
+      "belief_pc1",
+      "belief_pc2",
+      "belief_pc3",
+      "ws_attn_pc0",
+      "ws_attn_pc1",
+      "ws_attn_pc2",
+      "ws_attn_pc3",
+      "ws_sum_pc0",
+      "ws_sum_pc1",
+      "ws_sum_pc2",
+      "ws_sum_pc3",
+      "topos_pc0",
+      "topos_pc1",
+      "topos_pc2",
+      "topos_pc3"
+    ],
+    "n_edges": 14,
+    "method": "pc",
+    "is_acyclic": true,
+    "edges": [
+      {
+        "src": "mean_act_err",
+        "tgt": "fe_t",
+        "weight": 1.0
+      },
+      {
+        "src": "belief_pc0",
+        "tgt": "fe_t",
+        "weight": 1.0
+      },
+      {
+        "src": "belief_pc0",
+        "tgt": "expl_step",
+        "weight": 1.0
+      },
+      {
+        "src": "belief_pc2",
+        "tgt": "ws_sum_pc2",
+        "weight": 1.0
+      },
+      {
+        "src": "belief_pc3",
+        "tgt": "topos_pc3",
+        "weight": 1.0
+      },
+      {
+        "src": "ws_attn_pc0",
+        "tgt": "ws_sum_pc2",
+        "weight": 1.0
+      },
+      {
+        "src": "ws_attn_pc1",
+        "tgt": "topos_pc0",
+        "weight": 1.0
+      },
+      {
+        "src": "ws_attn_pc3",
+        "tgt": "topos_pc1",
+        "weight": 1.0
+      },
+      {
+        "src": "ws_sum_pc0",
+        "tgt": "expl_step",
+        "weight": 1.0
+      },
+      {
+        "src": "ws_sum_pc0",
+        "tgt": "topos_pc0",
+        "weight": 1.0
+      },
+      {
+        "src": "topos_pc0",
+        "tgt": "expl_step",
+        "weight": 1.0
+      },
+      {
+        "src": "topos_pc1",
+        "tgt": "belief_pc1",
+        "weight": 1.0
+      },
+      {
+        "src": "topos_pc1",
+        "tgt": "ws_sum_pc2",
+        "weight": 1.0
+      },
+      {
+        "src": "topos_pc2",
+        "tgt": "belief_pc1",
+        "weight": 1.0
+      }
+    ]
+  },
+  "csv_features": {
+    "n_vars": 9,
+    "var_names": [
+      "free_energy",
+      "action_vec_norm",
+      "beta",
+      "info_gain",
+      "agent_cx",
+      "agent_cy",
+      "agent_vx",
+      "agent_vy",
+      "frame_mean"
+    ],
+    "n_edges": 10,
+    "method": "pc",
+    "is_acyclic": true,
+    "edges": [
+      {
+        "src": "free_energy",
+        "tgt": "beta",
+        "weight": 1.0
+      },
+      {
+        "src": "info_gain",
+        "tgt": "free_energy",
+        "weight": 1.0
+      },
+      {
+        "src": "info_gain",
+        "tgt": "action_vec_norm",
+        "weight": 1.0
+      },
+      {
+        "src": "info_gain",
+        "tgt": "beta",
+        "weight": 1.0
+      },
+      {
+        "src": "agent_cx",
+        "tgt": "agent_vy",
+        "weight": 1.0
+      },
+      {
+        "src": "agent_cy",
+        "tgt": "agent_vy",
+        "weight": 1.0
+      },
+      {
+        "src": "agent_vx",
+        "tgt": "agent_vy",
+        "weight": 1.0
+      },
+      {
+        "src": "frame_mean",
+        "tgt": "free_energy",
+        "weight": 1.0
+      },
+      {
+        "src": "frame_mean",
+        "tgt": "action_vec_norm",
+        "weight": 1.0
+      },
+      {
+        "src": "frame_mean",
+        "tgt": "beta",
+        "weight": 1.0
+      }
+    ]
+  },
+  "interpretation": "Discovered 14 edges from snapshot features. Meaningful edges: 'belief_pc0 -> fe_t' suggests the belief/attention state CAUSES free-energy variation (uncertainty drives surprise) CSV-based analysis discovered 10 edges from the dense per-step log \u2014 useful for sanity-checking action-environment couplings (e.g. agent_vx -> agent_cx)."
+}

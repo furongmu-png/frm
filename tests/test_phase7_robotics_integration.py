@@ -315,7 +315,7 @@ class TestCLIRobotics:
 class TestAPIRobotics:
     def test_api_motion(self, client, waypoints_list):
         r = client.post(
-            "/robotics/motion",
+            "/v1/robotics/motion",
             json={"waypoints": waypoints_list, "n_steps": 20},
         )
         assert r.status_code == 200, r.text
@@ -323,21 +323,21 @@ class TestAPIRobotics:
 
     def test_api_forward(self, client, joint_angles_list):
         r = client.post(
-            "/robotics/forward",
+            "/v1/robotics/forward",
             json={"joint_angles": joint_angles_list},
         )
         assert r.status_code == 200, r.text
         assert "position" in r.json()
 
     def test_api_inverse(self, client, target):
-        r = client.post("/robotics/inverse", json={"target": target})
+        r = client.post("/v1/robotics/inverse", json={"target": target})
         assert r.status_code == 200, r.text
         body = r.json()
         assert "joint_angles" in body and "success" in body
 
     def test_api_fuse(self, client, measurements, variances):
         r = client.post(
-            "/robotics/fuse",
+            "/v1/robotics/fuse",
             json={"measurements": measurements, "variances": variances},
         )
         assert r.status_code == 200, r.text
@@ -345,7 +345,7 @@ class TestAPIRobotics:
 
     def test_api_kalman(self, client, prior, measurement):
         r = client.post(
-            "/robotics/kalman",
+            "/v1/robotics/kalman",
             json={
                 "prior": prior, "prior_var": 1.0,
                 "measurement": measurement, "meas_var": 0.5,
@@ -356,7 +356,7 @@ class TestAPIRobotics:
 
     def test_api_gait(self, client):
         r = client.post(
-            "/robotics/gait",
+            "/v1/robotics/gait",
             json={"n_steps": 20, "gait_type": "trot"},
         )
         assert r.status_code == 200, r.text
@@ -364,7 +364,7 @@ class TestAPIRobotics:
 
     def test_api_optimize(self, client, trajectory):
         r = client.post(
-            "/robotics/optimize",
+            "/v1/robotics/optimize",
             json={"trajectory": trajectory, "n_iter": 5},
         )
         assert r.status_code == 200, r.text
@@ -372,7 +372,7 @@ class TestAPIRobotics:
 
     def test_api_collision(self, client, obstacles, position):
         r = client.post(
-            "/robotics/collision",
+            "/v1/robotics/collision",
             json={"obstacles": obstacles, "position": position, "radius": 0.1},
         )
         assert r.status_code == 200, r.text
@@ -380,7 +380,7 @@ class TestAPIRobotics:
 
     def test_api_path_collision(self, client, obstacles, path):
         r = client.post(
-            "/robotics/path-collision",
+            "/v1/robotics/path-collision",
             json={"obstacles": obstacles, "path": path, "radius": 0.1},
         )
         assert r.status_code == 200, r.text
@@ -388,7 +388,7 @@ class TestAPIRobotics:
 
     def test_api_mpc(self, client):
         r = client.post(
-            "/robotics/mpc",
+            "/v1/robotics/mpc",
             json={"current_state": [0.0, 0.0], "target_state": [1.0, 1.0]},
         )
         assert r.status_code == 200, r.text
@@ -396,7 +396,7 @@ class TestAPIRobotics:
 
     def test_api_mpc_with_obstacles(self, client, obstacles):
         r = client.post(
-            "/robotics/mpc",
+            "/v1/robotics/mpc",
             json={
                 "current_state": [0.0, 0.0],
                 "target_state": [1.0, 1.0],
@@ -409,28 +409,28 @@ class TestAPIRobotics:
     # --- negative paths (Pydantic rejection -> 422) ---
     def test_api_motion_single_waypoint_rejected(self, client):
         r = client.post(
-            "/robotics/motion",
+            "/v1/robotics/motion",
             json={"waypoints": [[0.0, 0.0]], "n_steps": 20},
         )
         assert r.status_code in (400, 422)
 
     def test_api_optimize_short_trajectory_rejected(self, client):
         r = client.post(
-            "/robotics/optimize",
+            "/v1/robotics/optimize",
             json={"trajectory": [[0.0], [1.0], [2.0]], "n_iter": 5},
         )
         assert r.status_code in (400, 422)
 
     def test_api_gait_invalid_type_rejected(self, client):
         r = client.post(
-            "/robotics/gait",
+            "/v1/robotics/gait",
             json={"n_steps": 20, "gait_type": "gallop"},
         )
         assert r.status_code in (400, 422)
 
     def test_api_kalman_nonpositive_var_rejected(self, client, prior, measurement):
         r = client.post(
-            "/robotics/kalman",
+            "/v1/robotics/kalman",
             json={
                 "prior": prior, "prior_var": 0.0,
                 "measurement": measurement, "meas_var": 0.5,
@@ -440,7 +440,7 @@ class TestAPIRobotics:
 
     def test_api_fuse_length_mismatch_rejected(self, client, measurements):
         r = client.post(
-            "/robotics/fuse",
+            "/v1/robotics/fuse",
             json={"measurements": measurements, "variances": [0.1, 0.2]},
         )
         # Manual length check inside the handler -> 400.

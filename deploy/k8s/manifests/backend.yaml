@@ -1,0 +1,100 @@
+# Backend: REST API (:8000) + WebSocket streamer (:8765).
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: zdm-backend
+  namespace: zdm
+  labels:
+    app.kubernetes.io/name: zero-data-model
+    app.kubernetes.io/component: backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: zero-data-model
+      app.kubernetes.io/component: backend
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: zero-data-model
+        app.kubernetes.io/component: backend
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+      containers:
+        - name: backend
+          image: zero-data-model-backend:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: rest
+              containerPort: 8000
+              protocol: TCP
+            - name: ws
+              containerPort: 8765
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: zdm-backend
+            - secretRef:
+                name: zdm-backend
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: rest
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: rest
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 500m
+              memory: 512Mi
+            limits:
+              cpu: 2000m
+              memory: 2Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+      terminationGracePeriodSeconds: 45
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: zdm-backend
+  namespace: zdm
+  labels:
+    app.kubernetes.io/name: zero-data-model
+    app.kubernetes.io/component: backend
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: zero-data-model
+    app.kubernetes.io/component: backend
+  ports:
+    - name: rest
+      port: 8000
+      targetPort: rest
+      protocol: TCP
+    - name: ws
+      port: 8765
+      targetPort: ws
+      protocol: TCP

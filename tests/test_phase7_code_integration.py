@@ -247,12 +247,12 @@ class TestCLICode:
 
 class TestAPICode:
     def test_api_encode(self, client, source):
-        r = client.post("/code/encode", json={"source": source})
+        r = client.post("/v1/code/encode", json={"source": source})
         assert r.status_code == 200, r.text
         assert "embedding" in r.json()
 
     def test_api_ast(self, client, source):
-        r = client.post("/code/ast", json={"source": source})
+        r = client.post("/v1/code/ast", json={"source": source})
         assert r.status_code == 200, r.text
         body = r.json()
         assert "foo" in body["functions"]
@@ -260,29 +260,29 @@ class TestAPICode:
 
     def test_api_compare(self, client, source):
         r = client.post(
-            "/code/compare",
+            "/v1/code/compare",
             json={"source_a": source, "source_b": source},
         )
         assert r.status_code == 200, r.text
         assert r.json()["similarity"] == pytest.approx(1.0, abs=1e-6)
 
     def test_api_defects(self, client, defect_source):
-        r = client.post("/code/defects", json={"source": defect_source})
+        r = client.post("/v1/code/defects", json={"source": defect_source})
         assert r.status_code == 200, r.text
         assert r.json()["total"] == 3
 
     def test_api_control_flow(self, client, source):
-        r = client.post("/code/control-flow", json={"source": source})
+        r = client.post("/v1/code/control-flow", json={"source": source})
         assert r.status_code == 200, r.text
         assert r.json()["total_functions"] == 2
 
     def test_api_style(self, client, bad_style_source):
-        r = client.post("/code/style", json={"source": bad_style_source})
+        r = client.post("/v1/code/style", json={"source": bad_style_source})
         assert r.status_code == 200, r.text
         assert r.json()["total"] >= 3
 
     def test_api_dependencies(self, client, source):
-        r = client.post("/code/dependencies", json={"source": source})
+        r = client.post("/v1/code/dependencies", json={"source": source})
         assert r.status_code == 200, r.text
         body = r.json()
         assert "__main__" in body["nodes"]
@@ -290,12 +290,12 @@ class TestAPICode:
 
     # --- negative paths (Pydantic rejection -> 422) ---
     def test_api_empty_source_rejected(self, client):
-        r = client.post("/code/encode", json={"source": ""})
+        r = client.post("/v1/code/encode", json={"source": ""})
         assert r.status_code in (400, 422)
 
     def test_api_compare_missing_field_rejected(self, client, source):
         r = client.post(
-            "/code/compare",
+            "/v1/code/compare",
             json={"source_a": source},  # missing source_b
         )
         assert r.status_code in (400, 422)
