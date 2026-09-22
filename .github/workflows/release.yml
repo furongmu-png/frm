@@ -127,7 +127,7 @@ jobs:
         env:
           REPO_LOWER: ${{ github.repository }}
       - name: Upload chart artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: helm-chart-${{ needs.validate-version.outputs.version }}
           path: .chart/*.tgz
